@@ -23,7 +23,8 @@ mod wave;
 pub use error::ExecutionError;
 pub use executor::{ExecutorConfig, SimpleExecutor, TransactionOutput};
 pub use parallel_payment::{
-    MAX_PAYMENT_WORKERS, execute_payments_parallel, execute_signed_parallel,
+    ExecutionPolicy, MAX_PAYMENT_WORKERS, execute_parallel, execute_payments_parallel,
+    execute_signed_parallel,
 };
 pub use payment::{PAYMENT_PRICES, PaymentSession, execute_payments, payment_resources};
 pub use scheduler::{ExecutionScheduler, GreedyScheduler, SerialScheduler};

@@ -29,6 +29,7 @@ impl PeerNode {
             ));
         };
         match message {
+            node::network_wire::NetworkMessage::Governance(value) => node.submit_governance(value),
             node::network_wire::NetworkMessage::PotbAdmission(value) => {
                 node.submit_potb_admission(value)
             }

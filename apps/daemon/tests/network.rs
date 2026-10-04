@@ -39,6 +39,9 @@ impl Fixture {
         Self::with_activation(version, committee_size, false)
     }
     fn with_activation(version: u16, committee_size: usize, potb: bool) -> Self {
+        Self::with_governance(version, committee_size, potb, false)
+    }
+    fn with_governance(version: u16, committee_size: usize, potb: bool, governed: bool) -> Self {
         let path = std::env::temp_dir().join(format!(
             "astrolune-network-process-{}-{}",
             std::process::id(),
@@ -74,7 +77,14 @@ impl Fixture {
                 amount: 1_000_000,
             }],
         };
-        let profile = potb.then(|| potb_profile(&genesis));
+        let profile = potb.then(|| {
+            let base = potb_profile(&genesis);
+            if governed {
+                potb_support::governed(base)
+            } else {
+                base
+            }
+        });
         let namespace = profile.as_ref().map_or_else(
             || genesis.commitment().unwrap(),
             consensus::potb_transition::PotbConfiguration::commitment,
@@ -654,6 +664,19 @@ fn verify_account_proof(fixture: &Fixture, process: &Process) {
     );
     let key = state::account_key(Address([77; 32]));
     let proof = client.state_proof(&key).unwrap();
+    let historical = client
+        .state_proof_at(&key, proof.header.unwrap().height)
+        .unwrap()
+        .unwrap();
+    assert_eq!(historical, proof);
+    let genesis_proof = client.state_proof_at(&key, 0).unwrap().unwrap();
+    assert_eq!(
+        genesis_proof
+            .verify(&fixture.genesis, &fixture.keys, &key, 0)
+            .unwrap(),
+        None
+    );
+    assert!(client.state_proof_at(&key, u64::MAX).unwrap().is_none());
     assert_eq!(
         proof
             .verify(&fixture.genesis, &fixture.keys, &key, 1)
@@ -862,6 +885,13 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
         consensus::rotation::HandoffVerifier::new(&fixture.genesis, &fixture.keys).unwrap();
     fresh.apply(&first).unwrap();
     assert_eq!(fresh.current().context().unwrap().members().count(), 3);
+    let historical = client
+        .state_proof_at(&genesis::genesis_key(), 2)
+        .unwrap()
+        .unwrap();
+    historical
+        .verify_with_handoffs(&fresh, &genesis::genesis_key(), 2)
+        .unwrap();
 }
 
 #[test]
@@ -936,6 +966,13 @@ fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     let first = client.potb_handoff(1).unwrap().unwrap();
     let mut fresh = consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
     fresh.apply(&first).unwrap();
+    let historical = client
+        .state_proof_at(&genesis::genesis_key(), 2)
+        .unwrap()
+        .unwrap();
+    historical
+        .verify_with_potb(&fresh, &genesis::genesis_key(), 2)
+        .unwrap();
     assert_eq!(
         fresh
             .current()
@@ -1006,5 +1043,50 @@ fn potb_rpc_authenticates_and_persists_pending_admission_without_claiming_finali
         .state_proof(&key)
         .unwrap()
         .verify_potb_genesis(&profile, &fixture.keys, &key)
+        .unwrap();
+}
+
+#[test]
+fn governance_rpc_persists_only_valid_current_quorum_and_survives_restart() {
+    let fixture = Fixture::with_governance(2, 3, true, true);
+    let profile = potb_support::governed(potb_profile(&fixture.genesis));
+    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+    let peers = vec![reserved.local_addr().unwrap().to_string()];
+    drop(reserved);
+    let process = fixture.start(1, &peers);
+    let client =
+        rpc::TcpRpcClient::new(process.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    let trusted = consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
+    let certificate = potb_support::parameters(trusted.current(), trusted.parent());
+    assert_eq!(
+        client.submit_governance(&certificate).unwrap(),
+        certificate.request().id()
+    );
+    assert_eq!(client.chain_status().unwrap().finalized_height, 0);
+    let mut invalid = certificate.to_bytes().unwrap();
+    *invalid.last_mut().unwrap() ^= 1;
+    assert!(
+        call(
+            &process.1,
+            "submit_governance",
+            &format!(r#"{{"data":"{}"}}"#, hex(&invalid))
+        )
+        .get("error")
+        .is_some()
+    );
+    let saved = std::fs::read(fixture.path.join("1/consensus-cache.bin")).unwrap();
+    assert!(node::network_wire::decode_exchange(profile.commitment(), &saved).unwrap().iter().any(|message| matches!(message, node::network_wire::NetworkMessage::Governance(value) if value == &certificate)));
+    drop(process);
+    let restarted = fixture.start(1, &peers);
+    let client =
+        rpc::TcpRpcClient::new(restarted.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        client.submit_governance(&certificate).unwrap(),
+        certificate.request().id()
+    );
+    client
+        .state_proof(&genesis::genesis_key())
+        .unwrap()
+        .verify_potb_genesis(&profile, &fixture.keys, &genesis::genesis_key())
         .unwrap();
 }

@@ -19,8 +19,8 @@ mod rotation;
 use std::collections::BTreeMap;
 
 use execution::{
-    ExecutionError, ExecutorConfig, SignedSession, SimpleExecutor, TransactionOutput,
-    execute_payments_parallel, execute_signed_parallel,
+    ExecutionError, ExecutionPolicy, ExecutorConfig, SignedSession, SimpleExecutor,
+    TransactionOutput, execute_parallel,
 };
 use mempool::{Mempool, MempoolError, PoolEntry, PoolLimits};
 use state::{InMemoryState, StateDatabase, StateDiff};
@@ -313,7 +313,8 @@ impl BlockProducer {
                 context,
                 self.admission_capacity()?,
                 self.contracts_enabled(),
-            );
+            )
+            .with_prices(self.current_prices());
             let output = session.execute(&tx)?;
             transaction::ValidatedTransaction {
                 id: output.receipt.transaction,
@@ -398,7 +399,8 @@ impl BlockProducer {
                 self.validation_context(),
                 capacity,
                 self.contracts_enabled(),
-            );
+            )
+            .with_prices(self.current_prices());
             let mut accepted = Vec::new();
             let mut outputs = Vec::new();
             for tx in transactions {
@@ -568,6 +570,9 @@ impl BlockProducer {
         self.state = staged;
         self.rotation = next_rotation;
         self.contributions = None;
+        if let Some(trusted) = &next_potb {
+            self.config.block_capacity = trusted.current().committee().capacity();
+        }
         self.potb = next_potb;
         self.potb_batch = None;
         let selected_keys: Vec<_> = proposal
@@ -709,6 +714,14 @@ impl BlockProducer {
         }
     }
 
+    /// Prices authenticated by the finalized parent for this height.
+    #[must_use]
+    pub fn current_prices(&self) -> Resources {
+        self.potb_state()
+            .and_then(consensus::potb_transition::PotbState::governance)
+            .map_or(execution::PAYMENT_PRICES, |state| state.active().prices)
+    }
+
     fn execute_application_transactions(
         &self,
         staged: &mut InMemoryState,
@@ -716,22 +729,17 @@ impl BlockProducer {
         capacity: Resources,
     ) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
         let parent = staged.root();
-        if self.account_execution && self.contracts_enabled() {
-            execute_signed_parallel(
+        if self.account_execution {
+            execute_parallel(
                 staged,
                 transactions,
                 parent,
                 self.validation_context(),
-                capacity,
-                std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
-            )
-        } else if self.account_execution {
-            execute_payments_parallel(
-                staged,
-                transactions,
-                parent,
-                self.validation_context(),
-                capacity,
+                ExecutionPolicy {
+                    capacity,
+                    prices: self.current_prices(),
+                    contracts: self.contracts_enabled(),
+                },
                 std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
             )
         } else {

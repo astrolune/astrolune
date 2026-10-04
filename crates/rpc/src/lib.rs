@@ -48,10 +48,19 @@ pub enum RpcRequest {
     SubmitPotbAdmission(Vec<u8>),
     /// Submits historical evidence against the current finalized history frontier.
     SubmitPotbEvidence(Vec<u8>),
+    /// Submits an incumbent-quorum next-epoch parameter update.
+    SubmitGovernance(Vec<u8>),
     /// Returns one finalized account view.
     Account(Address),
     /// Returns a value/absence proof and its finalized head certificate.
     StateProof(types::StateKey),
+    /// Reads a certified state proof at an exact retained historical height.
+    StateProofAt {
+        /// Requested state key, including absence queries.
+        key: types::StateKey,
+        /// Exact finalized height, including genesis height zero.
+        height: u64,
+    },
     /// Submits canonical signed transaction bytes.
     SubmitTransaction(Vec<u8>),
 }
@@ -82,6 +91,8 @@ pub enum RpcResponse {
     Receipt(Option<Vec<u8>>),
     /// Serialized `CertifiedStateProof`, assembled from one immutable snapshot.
     StateProof(Vec<u8>),
+    /// Historical proof; None means unavailable history, not an absent state key.
+    StateProofAt(Option<Vec<u8>>),
     /// Accepted transaction identifier.
     TransactionAccepted(Hash256),
 }
@@ -182,13 +193,14 @@ impl RpcService for InMemoryRpcService {
     fn handle(&self, request: RpcRequest) -> Result<RpcResponse, RpcError> {
         match request {
             RpcRequest::Receipt { .. } => Ok(RpcResponse::Receipt(None)),
-            RpcRequest::StateProof(_) => Err(RpcError::Unavailable),
+            RpcRequest::StateProofAt { .. } => Ok(RpcResponse::StateProofAt(None)),
             RpcRequest::Block(_) => Ok(RpcResponse::Block(None)),
             RpcRequest::CommitteeHandoff(_) => Ok(RpcResponse::CommitteeHandoff(None)),
             RpcRequest::PotbHandoff(_) => Ok(RpcResponse::PotbHandoff(None)),
-            RpcRequest::SubmitPotbAdmission(_) | RpcRequest::SubmitPotbEvidence(_) => {
-                Err(RpcError::Unavailable)
-            }
+            RpcRequest::StateProof(_)
+            | RpcRequest::SubmitPotbAdmission(_)
+            | RpcRequest::SubmitPotbEvidence(_)
+            | RpcRequest::SubmitGovernance(_) => Err(RpcError::Unavailable),
             RpcRequest::ChainStatus => Ok(RpcResponse::ChainStatus {
                 chain_id: self.chain_id,
                 finalized_height: self.finalized_height,

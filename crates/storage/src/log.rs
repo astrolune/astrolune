@@ -50,6 +50,7 @@ pub struct AppendOnlyStorage {
     checkpoint: Option<Checkpoint>,
     index: BTreeMap<u64, Location>,
     transactions: crate::receipts::RecentTransactions,
+    history: crate::history::StateHistory,
     poisoned: bool,
     #[cfg(test)]
     fault: Option<Fault>,
@@ -127,6 +128,7 @@ impl AppendOnlyStorage {
             checkpoint: None,
             index: BTreeMap::new(),
             transactions: crate::receipts::RecentTransactions::default(),
+            history: crate::history::StateHistory::default(),
             poisoned: false,
             #[cfg(test)]
             fault: None,
@@ -143,7 +145,7 @@ impl AppendOnlyStorage {
             while log.end < end {
                 let (record, location) = read_record(&mut log.file, log.end, end, log.tip)?;
                 log.index_record(&record, location);
-                let (cp, state) = apply(record, log.checkpoint, &log.state)?;
+                let (cp, state) = log.replay_record(&record)?;
                 log.state = state;
                 log.checkpoint = Some(cp);
                 log.end = location.end;
@@ -177,6 +179,16 @@ impl AppendOnlyStorage {
     #[must_use]
     pub const fn state(&self) -> &InMemoryState {
         &self.state
+    }
+
+    /// Reconstructs recent state using a bounded reverse index rebuilt from committed records.
+    /// Missing history means unavailable, never an authenticated absent value.
+    pub fn read_state_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        self.ready()?;
+        self.history.read(height, self.checkpoint, &self.state)
     }
     /// Number of retained block bodies (excludes an imported/genesis anchor).
     #[must_use]
@@ -276,6 +288,18 @@ impl AppendOnlyStorage {
             self.transactions.insert(&batch.block);
             self.index.insert(batch.block.header.height, location);
         }
+    }
+
+    fn replay_record(
+        &mut self,
+        record: &Record,
+    ) -> Result<(Checkpoint, InMemoryState), StorageError> {
+        let (checkpoint, state) = apply(record, self.checkpoint, &self.state)?;
+        if let Record::Batch(batch) = record {
+            self.history
+                .record(self.checkpoint, checkpoint, &self.state, &batch.state_diffs);
+        }
+        Ok((checkpoint, state))
     }
 
     fn ready(&self) -> Result<(), StorageError> {
@@ -392,6 +416,8 @@ impl NodeStorage for AppendOnlyStorage {
         let payload = log_record::batch(batch)?;
         let (cp, state) = prepare_batch(batch, self.checkpoint, &self.state)?;
         let location = self.append(&payload)?;
+        self.history
+            .record(self.checkpoint, cp, &self.state, &batch.state_diffs);
         self.index.insert(cp.height, location);
         self.transactions.insert(&batch.block);
         self.checkpoint = Some(cp);
@@ -415,7 +441,7 @@ impl NodeStorage for AppendOnlyStorage {
         let mut state = InMemoryState::new();
         while end < self.end {
             let (record, location) = read_record(&mut file, end, self.end, tip)?;
-            let (next, next_state) = apply(record, cp, &state)?;
+            let (next, next_state) = apply(&record, cp, &state)?;
             cp = Some(next);
             state = next_state;
             end = location.end;
@@ -483,13 +509,13 @@ fn prepare_batch(
 }
 
 fn apply(
-    record: Record,
+    record: &Record,
     current: Option<Checkpoint>,
     state: &InMemoryState,
 ) -> Result<(Checkpoint, InMemoryState), StorageError> {
     match record {
-        Record::Anchor(cp, state) if current.is_none() => Ok((cp, state)),
-        Record::Batch(batch) => prepare_batch(&batch, current, state),
+        Record::Anchor(cp, state) if current.is_none() => Ok((*cp, state.clone())),
+        Record::Batch(batch) => prepare_batch(batch, current, state),
         Record::Anchor(..) => Err(StorageError::Corrupt),
     }
 }
@@ -663,6 +689,15 @@ mod tests {
             };
             assert_eq!(log.commit(&batch), Err(error));
             assert_eq!(log.checkpoint(), Some(&cp));
+            if fault == Fault::AppendSynced {
+                assert!(log.read_state_at(1).unwrap().is_none());
+                assert_eq!(log.read_state_at(0).unwrap().unwrap().0, cp);
+            } else {
+                assert!(matches!(
+                    log.read_state_at(0),
+                    Err(StorageError::DurabilityUnknown)
+                ));
+            }
             if fault != Fault::AppendSynced {
                 assert_eq!(log.commit(&batch), Err(StorageError::DurabilityUnknown));
                 assert_eq!(log.recover(), Err(StorageError::DurabilityUnknown));
@@ -672,6 +707,7 @@ mod tests {
             let mut recovered = AppendOnlyStorage::open(&path).unwrap();
             if fault == Fault::HeadRenamed {
                 assert_eq!(recovered.checkpoint().unwrap().height, 1);
+                assert_eq!(recovered.read_state_at(0).unwrap().unwrap().0, cp);
                 assert_eq!(recovered.read_finalized(1).unwrap().unwrap().0, batch.block);
             } else {
                 assert_eq!(recovered.checkpoint(), Some(&cp));

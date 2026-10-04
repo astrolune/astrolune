@@ -234,17 +234,47 @@ impl TcpRpcClient {
         &self,
         key: &types::StateKey,
     ) -> Result<crate::CertifiedStateProof, ClientError> {
+        self.read_state_proof(key, None)?
+            .ok_or(ClientError::Protocol("missing proof response"))
+    }
+
+    /// Fetches a proof for exactly this height. None means unavailable retained history.
+    /// Callers must still authenticate the certificate and state witnesses independently.
+    pub fn state_proof_at(
+        &self,
+        key: &types::StateKey,
+        height: u64,
+    ) -> Result<Option<crate::CertifiedStateProof>, ClientError> {
+        self.read_state_proof(key, Some(height))
+    }
+
+    fn read_state_proof(
+        &self,
+        key: &types::StateKey,
+        height: Option<u64>,
+    ) -> Result<Option<crate::CertifiedStateProof>, ClientError> {
         if key.len() > state::MAX_STATE_KEY_BYTES {
             return Err(ClientError::LimitExceeded);
         }
+        let mut fields = vec![(
+            "key".into(),
+            JsonValue::String(crate::proof::hex(key.as_bytes())),
+        )];
+        if let Some(height) = height {
+            fields.push(("height".into(), JsonValue::String(height.to_string())));
+        }
         let value = self.call_bounded(
-            "state_proof",
-            JsonValue::Object(vec![(
-                "key".into(),
-                JsonValue::String(crate::proof::hex(key.as_bytes())),
-            )]),
+            if height.is_some() {
+                "state_proof_at"
+            } else {
+                "state_proof"
+            },
+            JsonValue::Object(fields),
             8 * 1024 * 1024,
         )?;
+        if height.is_some() && value == JsonValue::Null {
+            return Ok(None);
+        }
         let hex = value
             .as_str()
             .ok_or(ClientError::Protocol("invalid proof response"))?;
@@ -265,8 +295,12 @@ impl TcpRpcClient {
                 u8::from_str_radix(text, 16).map_err(|_| ClientError::Protocol("invalid proof hex"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        crate::CertifiedStateProof::from_bytes(&bytes)
-            .map_err(|_| ClientError::Protocol("invalid canonical proof"))
+        let proof = crate::CertifiedStateProof::from_bytes(&bytes)
+            .map_err(|_| ClientError::Protocol("invalid canonical proof"))?;
+        if height.is_some_and(|height| proof.header.map_or(0, |header| header.height) != height) {
+            return Err(ClientError::Protocol("state proof height mismatch"));
+        }
+        Ok(Some(proof))
     }
 
     /// Fetches a retained receipt proof. None does not prove that a transaction never finalized.

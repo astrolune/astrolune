@@ -14,11 +14,13 @@ use types::{Hash256, hash::domain_hash};
 pub struct PotbConfiguration {
     genesis: Genesis,
     policy: PotbPolicy,
+    governance: Option<crate::governance::GovernancePolicy>,
 }
 
 impl PotbConfiguration {
     /// Maximum configuration size, including bounded genesis allocations.
-    pub const MAX_BYTES: usize = 12 + genesis::MAX_GENESIS_BYTES + 56;
+    pub const MAX_BYTES: usize =
+        12 + genesis::MAX_GENESIS_BYTES + 56 + crate::governance::GovernancePolicy::BYTES;
 
     /// Requires rotating base parameters and uniform policy starting weights.
     /// Maximum weight must be safe for every possible bounded roster, not just
@@ -37,7 +39,39 @@ impl PotbConfiguration {
         {
             return Err(ConsensusError::InvalidCommittee);
         }
-        Ok(Self { genesis, policy })
+        Ok(Self {
+            genesis,
+            policy,
+            governance: None,
+        })
+    }
+
+    /// Explicitly selects the version-two parameter-governance namespace.
+    pub fn with_governance(
+        mut self,
+        policy: crate::governance::GovernancePolicy,
+    ) -> Result<Self, ConsensusError> {
+        policy.permits(crate::governance::NetworkParameters {
+            capacity: self.genesis.capacity,
+            prices: types::Resources {
+                compute: 1,
+                ..types::Resources::ZERO
+            },
+        })?;
+        self.governance = Some(policy);
+        Ok(self)
+    }
+
+    /// Immutable bounds selected by the independently trusted configuration.
+    #[must_use]
+    pub const fn governance(&self) -> Option<crate::governance::GovernancePolicy> {
+        self.governance
+    }
+
+    /// Recognizes supported explicit configuration envelopes, without decoding or trusting them.
+    #[must_use]
+    pub fn is_envelope(bytes: &[u8]) -> bool {
+        bytes.starts_with(b"ALPTCF01") || bytes.starts_with(b"ALPTCF02")
     }
 
     /// Base allocations, capacity and runtime. Its legacy hash is not this profile's anchor.
@@ -55,7 +89,12 @@ impl PotbConfiguration {
     /// Independent namespace for parent linkage, VRF, admission and committee history.
     #[must_use]
     pub fn commitment(&self) -> Hash256 {
-        domain_hash(b"astrolune.potb.configuration.v1", &self.to_bytes())
+        let domain: &[u8] = if self.governance.is_some() {
+            b"astrolune.potb.configuration.v2"
+        } else {
+            b"astrolune.potb.configuration.v1"
+        };
+        domain_hash(domain, &self.to_bytes())
     }
 
     /// Materializes allocations and the explicit initial policy authority together.
@@ -88,11 +127,19 @@ impl PotbConfiguration {
     #[must_use]
     #[allow(clippy::cast_possible_truncation)] // Private validated genesis is bounded below u32::MAX.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = b"ALPTCF01".to_vec();
+        let mut bytes = if self.governance.is_some() {
+            b"ALPTCF02"
+        } else {
+            b"ALPTCF01"
+        }
+        .to_vec();
         let genesis = self.genesis.to_bytes();
         bytes.extend_from_slice(&(genesis.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&genesis);
         write_policy(&mut bytes, self.policy);
+        if let Some(policy) = self.governance {
+            bytes.extend_from_slice(&policy.to_bytes());
+        }
         bytes
     }
 
@@ -102,13 +149,28 @@ impl PotbConfiguration {
             return Err(DecodeError::LimitExceeded);
         }
         let mut decoder = Decoder::new(bytes);
-        if decoder.read_exact(8)? != b"ALPTCF01" {
-            return Err(DecodeError::Unsupported);
-        }
+        let governed = match decoder.read_exact(8)? {
+            b"ALPTCF01" => false,
+            b"ALPTCF02" => true,
+            _ => return Err(DecodeError::Unsupported),
+        };
         let genesis = read_field(&mut decoder, genesis::MAX_GENESIS_BYTES)?;
         let policy = read_policy(&mut decoder)?;
+        let governance = if governed {
+            Some(crate::governance::GovernancePolicy::from_bytes(
+                decoder.read_exact(crate::governance::GovernancePolicy::BYTES)?,
+            )?)
+        } else {
+            None
+        };
         decoder.finish()?;
-        Self::new(Genesis::decode(genesis)?, policy).map_err(|_| DecodeError::NonCanonical)
+        let result =
+            Self::new(Genesis::decode(genesis)?, policy).map_err(|_| DecodeError::NonCanonical)?;
+        governance.map_or(Ok(result.clone()), |policy| {
+            result
+                .with_governance(policy)
+                .map_err(|_| DecodeError::NonCanonical)
+        })
     }
 }
 

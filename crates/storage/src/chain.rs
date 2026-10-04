@@ -74,6 +74,14 @@ impl ChainStorage {
     pub fn state(&self) -> &InMemoryState {
         dispatch!(&self.0, s => s.state())
     }
+
+    /// Reads an exact historical state within the backend's retained index window.
+    pub fn read_state_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        dispatch!(&self.0, s => s.read_state_at(height))
+    }
     /// Retained block body count.
     #[must_use]
     pub fn block_count(&self) -> usize {

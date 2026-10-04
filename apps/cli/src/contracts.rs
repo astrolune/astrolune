@@ -193,7 +193,7 @@ pub(super) fn validate(tx: &Transaction) -> Result<ContractPayload, CliError> {
         || tx.nonce == u64::MAX
         || tx.expires_at == 0
         || tx.lane != TransactionLane::Contracts
-        || tx.resource_prices != execution::PAYMENT_PRICES
+        || tx.resource_limit.checked_cost(tx.resource_prices).is_none()
         || tx.resource_limit.compute == 0
         || tx.resource_limit.compute > 10_000_000
         || tx.access_list != access(tx, &payload.action)
@@ -222,7 +222,12 @@ pub(super) fn print(tx: &Transaction) -> Result<(), CliError> {
         ),
         ContractAction::Call { address, .. } => println!("contract: {address}"),
     }
-    println!("maximum_fee: {}", tx.resource_limit.compute);
+    println!(
+        "maximum_fee: {}",
+        tx.resource_limit
+            .checked_cost(tx.resource_prices)
+            .ok_or_else(|| error("fee overflow"))?
+    );
     println!("nonce: {}", tx.nonce);
     println!("expires_at: {}", tx.expires_at);
     Ok(())

@@ -52,6 +52,7 @@ pub struct PotbState {
     history: CommitteeHistory,
     records: BTreeMap<ValidatorId, PotbRecord>,
     last_batch: Hash256,
+    governance: Option<crate::governance::GovernanceState>,
 }
 
 impl PotbState {
@@ -83,6 +84,21 @@ impl PotbState {
             policy: config.policy(),
             records,
             last_batch: Hash256::ZERO,
+            governance: config
+                .governance()
+                .map(|policy| {
+                    crate::governance::GovernanceState::new(
+                        policy,
+                        crate::governance::NetworkParameters {
+                            capacity: config.genesis().capacity,
+                            prices: types::Resources {
+                                compute: 1,
+                                ..types::Resources::ZERO
+                            },
+                        },
+                    )
+                })
+                .transpose()?,
         };
         result.validate()?;
         Ok(result)
@@ -92,6 +108,22 @@ impl PotbState {
     #[must_use]
     pub const fn committee(&self) -> &CommitteeState {
         &self.committee
+    }
+
+    /// Current parameters and any authenticated next-epoch update.
+    #[must_use]
+    pub const fn governance(&self) -> Option<&crate::governance::GovernanceState> {
+        self.governance.as_ref()
+    }
+
+    /// Format-specific resource bound; legacy charging stays byte-for-byte unchanged.
+    #[must_use]
+    pub const fn encoded_bound(&self) -> usize {
+        if self.governance.is_some() {
+            Self::MAX_BYTES
+        } else {
+            Self::LEGACY_MAX_BYTES
+        }
     }
 
     /// History of outgoing committees committed in the preceding finalized state.
@@ -174,9 +206,17 @@ impl PotbState {
             }
         }
         let roster = weighted_roster(self.policy, &records)?;
-        let committee = self
+        let mut committee = self
             .committee
             .transition_potb(batch.contributions(), roster)?;
+        let governance = match &self.governance {
+            Some(current) => Some(current.stage(&self.committee, parent, batch.governance())?),
+            None if batch.governance().is_some() => return Err(ConsensusError::InvalidTransition),
+            None => None,
+        };
+        if let Some(parameters) = &governance {
+            committee = committee.with_potb_capacity(parameters.active().capacity)?;
+        }
         let mut history = self.history.clone();
         history.append(&self.committee.context()?)?;
         let result = Self {
@@ -185,6 +225,7 @@ impl PotbState {
             history,
             records,
             last_batch: batch_id,
+            governance,
         };
         result.validate()?;
         Ok(result)
@@ -193,6 +234,12 @@ impl PotbState {
     fn validate(&self) -> Result<(), ConsensusError> {
         configuration::validate_policy(self.policy)?;
         let height = self.committee.height();
+        if let Some(governance) = &self.governance {
+            governance.validate(height)?;
+            if governance.active().capacity != self.committee.capacity() {
+                return Err(ConsensusError::InvalidTransition);
+            }
+        }
         if self.records.is_empty()
             || self.records.len() > MAX_ROTATION_VALIDATORS
             || self.history.entries().checked_add(1) != Some(height)

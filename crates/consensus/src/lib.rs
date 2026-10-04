@@ -13,6 +13,7 @@ pub mod committee;
 pub mod error;
 pub mod evidence;
 pub mod finality;
+pub mod governance;
 pub mod history;
 pub mod local;
 pub mod potb;

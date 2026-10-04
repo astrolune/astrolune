@@ -27,6 +27,74 @@ pub fn identity(seed: u8) -> ValidatorId {
     ValidatorId(crypto::blake2s_hash(&ed25519_public_key(&[seed; 32])).0)
 }
 
+pub fn governed(profile: PotbConfiguration) -> PotbConfiguration {
+    profile
+        .with_governance(consensus::governance::GovernancePolicy {
+            epoch_blocks: 2,
+            minimum_capacity: Resources {
+                compute: 500_000,
+                memory: 131_072,
+                io: 16_384,
+                bandwidth: 65_536,
+            },
+            maximum_capacity: Resources {
+                compute: 2_000_000,
+                memory: 2_000_000,
+                io: 2_000_000,
+                bandwidth: 2_000_000,
+            },
+            maximum_prices: Resources {
+                compute: 10,
+                memory: 10,
+                io: 10,
+                bandwidth: 10,
+            },
+        })
+        .unwrap()
+}
+
+pub fn parameter_approvals(
+    request: &consensus::governance::GovernanceIntent,
+    ids: impl Iterator<Item = ValidatorId>,
+) -> Vec<consensus::governance::GovernanceApproval> {
+    ids.map(|id| {
+        let mut bytes = b"ALGVAP01".to_vec();
+        bytes.extend_from_slice(&request.id().0);
+        bytes.extend_from_slice(&id.0);
+        bytes.extend_from_slice(&ed25519_sign(&[seed(id); 32], &request.approval_hash(id).0));
+        consensus::governance::GovernanceApproval::from_bytes(&bytes).unwrap()
+    })
+    .collect()
+}
+
+pub fn parameters(
+    state: &PotbState,
+    parent: Hash256,
+) -> consensus::governance::GovernanceCertificate {
+    let policy = state.governance().unwrap();
+    let parameters = consensus::governance::NetworkParameters {
+        capacity: Resources {
+            compute: 600_000,
+            memory: 200_000,
+            io: 20_000,
+            bandwidth: 70_000,
+        },
+        prices: Resources {
+            compute: 2,
+            memory: 1,
+            io: 2,
+            bandwidth: 1,
+        },
+    };
+    let current = state.committee();
+    let request = policy.request(current, parent, parameters).unwrap();
+    let approvals = parameter_approvals(&request, current.context().unwrap().members());
+    consensus::governance::GovernanceCertificate::assemble(
+        request, approvals, current, parent, policy,
+    )
+    .unwrap()
+}
+
 pub fn seed(id: ValidatorId) -> u8 {
     (1..=99).find(|s| identity(*s) == id).unwrap()
 }

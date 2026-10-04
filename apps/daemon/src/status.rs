@@ -48,34 +48,13 @@ impl RpcService for ChainStatus {
                 Ok(RpcResponse::Receipt(proof))
             }
             RpcRequest::StateProof(key) if self.accounts_enabled => {
-                let snapshot = node
-                    .storage()
-                    .state()
-                    .snapshot()
-                    .map_err(|_| RpcError::Unavailable)?;
-                let height = node
-                    .storage()
-                    .checkpoint()
-                    .ok_or(RpcError::Unavailable)?
-                    .height;
-                let finality = if height == 0 {
-                    None
-                } else {
-                    let (block, certificate) = node
-                        .storage()
-                        .read_finalized(height)
-                        .map_err(|_| RpcError::Unavailable)?
-                        .ok_or(RpcError::Unavailable)?;
-                    Some((block.header, certificate))
-                };
-                let proof = rpc::CertifiedStateProof::create(snapshot.as_ref(), &key, finality)?;
-                Ok(RpcResponse::StateProof(proof.to_bytes()?))
+                state_proof(node.storage(), &key, None)
+            }
+            RpcRequest::StateProofAt { key, height } if self.accounts_enabled => {
+                state_proof(node.storage(), &key, Some(height))
             }
             RpcRequest::CommitteeHandoff(_) => Ok(RpcResponse::CommitteeHandoff(None)),
             RpcRequest::PotbHandoff(_) => Ok(RpcResponse::PotbHandoff(None)),
-            RpcRequest::SubmitPotbAdmission(_) | RpcRequest::SubmitPotbEvidence(_) => {
-                Err(RpcError::Unavailable)
-            }
             RpcRequest::Block(height) => {
                 let block = node
                     .storage()
@@ -113,9 +92,44 @@ impl RpcService for ChainStatus {
                 })?;
                 Ok(RpcResponse::TransactionAccepted(id))
             }
-            RpcRequest::Account(_)
+            RpcRequest::SubmitPotbAdmission(_)
+            | RpcRequest::SubmitPotbEvidence(_)
+            | RpcRequest::SubmitGovernance(_)
+            | RpcRequest::Account(_)
             | RpcRequest::SubmitTransaction(_)
-            | RpcRequest::StateProof(_) => Err(RpcError::Unavailable),
+            | RpcRequest::StateProof(_)
+            | RpcRequest::StateProofAt { .. } => Err(RpcError::Unavailable),
         }
     }
+}
+
+fn state_proof(
+    storage: &FileBackedStorage,
+    key: &types::StateKey,
+    requested: Option<u64>,
+) -> Result<RpcResponse, RpcError> {
+    let height = requested
+        .or_else(|| storage.checkpoint().map(|cp| cp.height))
+        .ok_or(RpcError::Unavailable)?;
+    let Some((_, state)) = storage
+        .read_state_at(height)
+        .map_err(|_| RpcError::Unavailable)?
+    else {
+        return Ok(RpcResponse::StateProofAt(None));
+    };
+    let finality = if height == 0 {
+        None
+    } else {
+        let (block, certificate) = storage
+            .read_finalized(height)
+            .map_err(|_| RpcError::Unavailable)?
+            .ok_or(RpcError::Unavailable)?;
+        Some((block.header, certificate))
+    };
+    let bytes = rpc::CertifiedStateProof::create(&state, key, finality)?.to_bytes()?;
+    Ok(if requested.is_some() {
+        RpcResponse::StateProofAt(Some(bytes))
+    } else {
+        RpcResponse::StateProof(bytes)
+    })
 }

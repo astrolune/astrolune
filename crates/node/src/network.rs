@@ -134,7 +134,7 @@ impl StaticNetwork {
     /// Decodes an independently supplied genesis or explicitly tagged `PoTB` configuration.
     pub fn decode(bytes: &[u8], keys: Vec<[u8; 32]>) -> Result<Self, NetworkNodeError> {
         use codec::CanonicalDecode;
-        if bytes.starts_with(b"ALPTCF01") {
+        if consensus::potb_transition::PotbConfiguration::is_envelope(bytes) {
             Self::with_potb(PotbConfiguration::from_bytes(bytes).map_err(input)?, keys)
         } else {
             Self::new(genesis::Genesis::decode(bytes).map_err(input)?, keys)
@@ -322,6 +322,7 @@ impl StaticNetwork {
 /// Network-driven participant. Only durable certificates advance its public checkpoint.
 pub struct NetworkNode {
     admissions: BTreeMap<ValidatorId, consensus::admission::AdmissionCertificate>,
+    governance: Option<consensus::governance::GovernanceCertificate>,
     inclusions: BTreeMap<ValidatorId, consensus::history::HistoricalEvidence>,
     network: StaticNetwork,
     participant: Option<RoundRobinValidator>,
@@ -362,6 +363,7 @@ impl NetworkNode {
         let (participant, standby) = Self::bind_height(&network, producer, signer)?;
         let mut result = Self {
             admissions: BTreeMap::new(),
+            governance: None,
             inclusions: BTreeMap::new(),
             evidence: crate::evidence::EvidenceStore::open(
                 directory,
@@ -461,6 +463,12 @@ impl NetworkNode {
     fn consensus_messages(&self) -> Vec<NetworkMessage> {
         let mut messages = Vec::new();
         messages.extend(
+            self.governance
+                .iter()
+                .cloned()
+                .map(NetworkMessage::Governance),
+        );
+        messages.extend(
             self.admissions
                 .values()
                 .cloned()
@@ -527,6 +535,9 @@ impl NetworkNode {
             return Ok(());
         }
         match message {
+            NetworkMessage::Governance(certificate) => {
+                self.submit_governance(certificate)?;
+            }
             NetworkMessage::PotbAdmission(certificate) => {
                 self.submit_potb_admission(certificate)?;
             }
@@ -549,25 +560,7 @@ impl NetworkNode {
                 self.receive_peer_vote(vote)?;
             }
             NetworkMessage::ValidValue { block, proof } => {
-                let proof =
-                    PrevoteCertificate::decode(self.participant().local().committee(), &proof)
-                        .map_err(input)?;
-                if proof.block() != block.header.compute_hash() || proof.round() > self.round() {
-                    return Err(input("invalid available-value evidence"));
-                }
-                if self
-                    .valid
-                    .as_ref()
-                    .is_some_and(|(_, previous)| previous.round() >= proof.round())
-                {
-                    return Ok(());
-                }
-                self.producer_mut().prepare_received_vrf(&block)?;
-                self.participant()
-                    .producer()
-                    .execute_received_block(block.clone())?;
-                self.valid = Some((block, proof));
-                self.persist_cache()?;
+                self.receive_valid_value(block, &proof)?;
             }
             NetworkMessage::Proposal {
                 envelope,
@@ -616,6 +609,32 @@ impl NetworkNode {
                 self.accept_available(&proposal)?;
             }
         }
+        Ok(())
+    }
+
+    fn receive_valid_value(
+        &mut self,
+        block: types::Block,
+        proof: &[u8],
+    ) -> Result<(), NetworkNodeError> {
+        let proof = PrevoteCertificate::decode(self.participant().local().committee(), proof)
+            .map_err(input)?;
+        if proof.block() != block.header.compute_hash() || proof.round() > self.round() {
+            return Err(input("invalid available-value evidence"));
+        }
+        if self
+            .valid
+            .as_ref()
+            .is_some_and(|(_, previous)| previous.round() >= proof.round())
+        {
+            return Ok(());
+        }
+        self.producer_mut().prepare_received_vrf(&block)?;
+        self.participant()
+            .producer()
+            .execute_received_block(block.clone())?;
+        self.valid = Some((block, proof));
+        self.persist_cache()?;
         Ok(())
     }
 
@@ -813,6 +832,7 @@ impl NetworkNode {
         };
         (self.participant, self.standby) = Self::bind_height(&self.network, producer, signer)?;
         self.admissions.clear();
+        self.governance = None;
         self.inclusions.clear();
         self.start_contributions()?;
         self.proposal = None;

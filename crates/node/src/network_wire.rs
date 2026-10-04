@@ -57,6 +57,8 @@ pub enum NetworkMessage {
     PotbAdmission(consensus::admission::AdmissionCertificate),
     /// Double-vote evidence authenticated against the current finalized history frontier.
     PotbEvidence(consensus::history::HistoricalEvidence),
+    /// Current-incumbent quorum authorizing parameters for the next epoch.
+    Governance(consensus::governance::GovernanceCertificate),
 }
 
 /// Request for one finalized height or the live consensus messages at that height.
@@ -177,6 +179,10 @@ pub fn encode_exchange(
     );
     for message in messages {
         match message {
+            NetworkMessage::Governance(certificate) => {
+                bytes.push(8);
+                put_blob(&mut bytes, &certificate.to_bytes()?)?;
+            }
             NetworkMessage::PotbAdmission(certificate) => {
                 bytes.push(6);
                 put_blob(&mut bytes, &certificate.to_bytes()?)?;
@@ -246,6 +252,12 @@ pub fn decode_exchange(genesis: Hash256, bytes: &[u8]) -> Result<Vec<NetworkMess
     let mut messages = Vec::new();
     for _ in 0..count {
         messages.push(match reader.read_u8()? {
+            8 => NetworkMessage::Governance(
+                consensus::governance::GovernanceCertificate::from_bytes(blob(
+                    &mut reader,
+                    consensus::governance::GovernanceCertificate::MAX_BYTES,
+                )?)?,
+            ),
             6 => NetworkMessage::PotbAdmission(
                 consensus::admission::AdmissionCertificate::from_bytes(blob(
                     &mut reader,

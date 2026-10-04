@@ -140,6 +140,13 @@ fn delta_replay_matches_reference_and_reconstructs_historical_snapshots() {
         );
     }
     for cp in checkpoints {
+        let (indexed, historical) = log.read_state_at(cp.height).unwrap().unwrap();
+        let (_, expected_state) = reference.read_state_at(cp.height).unwrap().unwrap();
+        assert_eq!(indexed, cp);
+        assert_eq!(
+            historical.export_snapshot(),
+            expected_state.export_snapshot()
+        );
         let mut actual = Chunks::default();
         let mut expected = Chunks::default();
         log.export_snapshot(cp, &mut actual).unwrap();
@@ -147,6 +154,39 @@ fn delta_replay_matches_reference_and_reconstructs_historical_snapshots() {
         assert_eq!(actual.0, expected.0);
     }
     assert_eq!(log.read_finalized(u64::MAX).unwrap(), None);
+}
+
+#[test]
+fn historical_index_evicts_a_bounded_window_and_rebuilds_only_published_changes() {
+    let fixture = Fixture::new();
+    let mut log = AppendOnlyStorage::open(fixture.path()).unwrap();
+    let genesis = log
+        .initialize_genesis(Hash256([5; 32]), InMemoryState::new())
+        .unwrap();
+    assert_eq!(log.read_state_at(0).unwrap().unwrap().0, genesis);
+    let mut reference = Vec::new();
+    for _ in 0..storage::MAX_STATE_HISTORY_BLOCKS + 4 {
+        let next = batch(log.state(), log.checkpoint().copied());
+        let checkpoint = log.commit(&next).unwrap();
+        reference.push((checkpoint, log.state().export_snapshot()));
+    }
+    assert!(log.read_state_at(3).unwrap().is_none());
+    assert!(log.read_state_at(u64::MAX).unwrap().is_none());
+    let head = *log.checkpoint().unwrap();
+    let mut invalid = batch(log.state(), Some(head));
+    invalid.block.header.state_root = Hash256::ZERO;
+    assert_eq!(log.commit(&invalid), Err(StorageError::VerificationFailed));
+    assert_eq!(log.checkpoint(), Some(&head));
+    drop(log);
+    let log = AppendOnlyStorage::open(fixture.path()).unwrap();
+    assert!(log.read_state_at(3).unwrap().is_none());
+    for (checkpoint, bytes) in reference.into_iter().filter(|(cp, _)| cp.height >= 4) {
+        let (restored, state) = log.read_state_at(checkpoint.height).unwrap().unwrap();
+        assert_eq!(restored, checkpoint);
+        assert_eq!(state.export_snapshot(), bytes);
+    }
+    // Eviction of a derived index must not remove certified historical block bodies.
+    assert!(log.read_finalized(1).unwrap().is_some());
 }
 
 #[test]

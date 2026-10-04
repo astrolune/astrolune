@@ -20,6 +20,7 @@ use config::{NetworkConfig, NodeConfig, SecretRef};
 mod admission;
 mod contracts;
 mod evidence;
+mod governance;
 mod handoffs;
 mod network;
 mod potb;
@@ -77,6 +78,7 @@ Commands:
   wait-finality <genesis> <validators> <tx-id> <timeout-seconds> <output> [rpc-address]
            Wait for a certified receipt without resubmitting the transaction
   state-proof <genesis> <validators> <key-hex> <minimum-height> <output> [rpc-address]
+  state-proof-at <genesis> <validators> <key-hex> <exact-height> <output> [rpc-address]
            Fetch, authenticate and save finalized state membership or absence
   verify-state-proof <genesis> <validators> <key-hex> <minimum-height> <file>
            Authenticate a saved state proof offline
@@ -85,6 +87,7 @@ Commands:
   wallet-encrypt <raw-seed> <new-vault>  Encrypt an existing wallet; password from stdin
   sign-payment <chain-id> <seed-file> <recipient> <amount> <nonce> <expires-at> <output>
            Sign a payment offline and save it without overwriting any file
+  reprice-transaction <file> <seed-or-vault> <prices> <output>  Sign with explicit resource prices
   inspect-payment <file>  Verify and display a signed payment offline
   sign-deploy <genesis> <seed-file> <wasm> <nonce> <expires-at> <output>
            Sign ABI-v2 deployment offline (genesis runtime_version must be 2)
@@ -106,6 +109,16 @@ Commands:
            Verify saved authorization against the independently trusted profile
   admission-submit <genesis> <validators> <request> <certificate> [rpc-address]
            Submit quorum authorization for inclusion in the current PoTB height
+  governance-config <potb-configuration> <epoch-blocks> <minimum-capacity> <maximum-capacity> <maximum-prices> <output>
+           Create a separate network identity with immutable governance bounds
+  governance-request <configuration> <validators> <height> <capacity> <prices> <output> [rpc-address]
+           Prepare a next-epoch update with authenticated history
+  governance-inspect <configuration> <validators> <request>
+  governance-approve <configuration> <validators> <request> <validator-seed> <journal> <output>
+  governance-assemble <configuration> <validators> <request> <output> <approval>...
+  governance-verify <configuration> <validators> <request> <certificate>
+  governance-submit <configuration> <validators> <request> <certificate> [rpc-address]
+           Resource vectors use compute,memory,io,bandwidth (unsigned integers)
   potb-config <genesis-v2> <epoch-blocks> <initial-weight> <age-increment> <maximum-weight> <output>
            Create an explicit PoTB configuration with a separate network identity
   potb-evidence <configuration> <validators> <double-vote> <inclusion-height> <output> [rpc-address]
@@ -161,11 +174,12 @@ fn run() -> Result<(), CliError> {
             | "keys"
             | "wallet-address"
             | "sign-payment"
+            | "reprice-transaction"
             | "inspect-payment"
             | "inspect-transaction"
             | "submit"),
         ) => wallet::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
-        Some(command @ ("state-proof" | "verify-state-proof")) => {
+        Some(command @ ("state-proof" | "state-proof-at" | "verify-state-proof")) => {
             proofs::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }
         Some(command @ ("receipt" | "verify-receipt" | "wait-finality")) => {
@@ -186,6 +200,15 @@ fn run() -> Result<(), CliError> {
             command @ ("admission-request" | "admission-inspect" | "admission-approve"
             | "admission-assemble" | "admission-verify" | "admission-submit"),
         ) => admission::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
+        Some(
+            command @ ("governance-config"
+            | "governance-request"
+            | "governance-inspect"
+            | "governance-approve"
+            | "governance-assemble"
+            | "governance-verify"
+            | "governance-submit"),
+        ) => governance::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
         Some(command @ ("potb-config" | "potb-evidence" | "potb-submit-evidence")) => {
             potb::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }

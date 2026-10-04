@@ -138,6 +138,40 @@ impl DurableSigner {
         ))
     }
 
+    /// Explicitly approves typed network parameters through the protected consensus key.
+    /// The caller authenticates the current committee and activation policy. Like admission,
+    /// operator approvals do not reserve BFT votes or change the consensus journal.
+    ///
+    /// # Errors
+    /// Rejects unprotected signers, foreign namespaces, stale heights and conflicting contexts.
+    pub fn approve_governance(
+        &self,
+        intent: &crate::governance::GovernanceIntent,
+    ) -> Result<[u8; 64], KeystoreError> {
+        if !self.is_protected() || intent.validate().is_err() {
+            return Err(KeystoreError::InvalidSafety);
+        }
+        if intent.chain_id != self.context.chain_id || intent.genesis != self.context.genesis {
+            return Err(KeystoreError::ContextMismatch);
+        }
+        if let Some(position) = self.last_position() {
+            if position.height > intent.height {
+                return Err(KeystoreError::StalePosition);
+            }
+            if position.height == intent.height
+                && self
+                    .safety()
+                    .is_none_or(|safety| safety.committee_root != intent.committee_root)
+            {
+                return Err(KeystoreError::InvalidSafety);
+            }
+        }
+        Ok(ed25519_sign(
+            &self.seed,
+            &intent.approval_hash(self.validator).0,
+        ))
+    }
+
     fn initialize(
         path: &Path,
         context: SigningContext,

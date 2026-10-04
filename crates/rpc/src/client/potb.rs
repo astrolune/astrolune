@@ -119,6 +119,20 @@ impl TcpRpcClient {
         )
     }
 
+    /// Submits a canonical update; caller independently authenticates current authority first.
+    pub fn submit_governance(
+        &self,
+        certificate: &consensus::governance::GovernanceCertificate,
+    ) -> Result<Hash256, ClientError> {
+        self.submit_potb(
+            "submit_governance",
+            &certificate
+                .to_bytes()
+                .map_err(|_| ClientError::Protocol("invalid governance certificate"))?,
+            certificate.request().id(),
+        )
+    }
+
     fn submit_potb(
         &self,
         method: &str,

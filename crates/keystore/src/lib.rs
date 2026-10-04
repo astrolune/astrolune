@@ -8,6 +8,7 @@
 pub mod admission;
 mod durable;
 pub mod error;
+pub mod governance;
 mod journal;
 pub mod key;
 pub mod mock;

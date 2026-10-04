@@ -147,6 +147,86 @@ fn batch() -> Vec<Transaction> {
 }
 
 #[test]
+fn governed_mixed_lane_prices_preserve_parallel_results_fees_and_first_error() {
+    let initial = funded();
+    let prices = Resources {
+        compute: 3,
+        memory: 1,
+        io: 0,
+        bandwidth: 2,
+    };
+    let txs: Vec<_> = batch()
+        .into_iter()
+        .map(|mut tx| {
+            let seed = (1..=3).find(|seed| address(*seed) == tx.sender).unwrap();
+            tx.resource_prices = prices;
+            sign(tx, seed)
+        })
+        .collect();
+    let policy = execution::ExecutionPolicy {
+        capacity: capacity(),
+        prices,
+        contracts: true,
+    };
+    let mut serial = initial.clone();
+    let expected =
+        execution::execute_parallel(&mut serial, &txs, initial.root(), context(), policy, 1)
+            .unwrap();
+    for workers in [2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        assert_eq!(
+            execution::execute_parallel(
+                &mut parallel,
+                &txs,
+                initial.root(),
+                context(),
+                policy,
+                workers
+            )
+            .unwrap(),
+            expected
+        );
+    }
+    for seed in 1..=3 {
+        let total: u64 = txs
+            .iter()
+            .zip(&expected.0)
+            .filter(|(tx, _)| tx.sender == address(seed))
+            .map(|(_, output)| output.receipt.resources.checked_cost(prices).unwrap())
+            .sum();
+        assert_eq!(
+            read_account(serial.snapshot().unwrap().as_ref(), address(seed))
+                .unwrap()
+                .unwrap()
+                .balance,
+            1_000_000 - total
+        );
+    }
+    let mut bad = txs;
+    bad[2].resource_prices = execution::PAYMENT_PRICES;
+    bad[2] = sign(bad[2].clone(), 1);
+    let mut reference = None;
+    for workers in [1, 2, 8] {
+        let mut state = initial.clone();
+        let error = execution::execute_parallel(
+            &mut state,
+            &bad,
+            initial.root(),
+            context(),
+            policy,
+            workers,
+        )
+        .unwrap_err();
+        assert_eq!(state.root(), initial.root());
+        if let Some(expected) = &reference {
+            assert_eq!(&error, expected);
+        } else {
+            reference = Some(error);
+        }
+    }
+}
+
+#[test]
 fn mixed_waves_match_serial_and_isolate_contract_state() {
     let initial = funded();
     let txs = batch();

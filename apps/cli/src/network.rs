@@ -216,7 +216,7 @@ pub(crate) fn init_validator() -> Result<(), CliError> {
         .take(consensus::potb_transition::PotbConfiguration::MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(error)?;
-    let profile = if bytes.starts_with(b"ALPTCF01") {
+    let profile = if consensus::potb_transition::PotbConfiguration::is_envelope(&bytes) {
         Some(consensus::potb_transition::PotbConfiguration::from_bytes(&bytes).map_err(error)?)
     } else {
         None

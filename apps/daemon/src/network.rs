@@ -349,6 +349,47 @@ struct NetworkStatus {
     storage_failed: Arc<AtomicBool>,
 }
 impl NetworkStatus {
+    fn state_proof(
+        &self,
+        node: &PeerNode,
+        key: &types::StateKey,
+        requested: Option<u64>,
+    ) -> Result<RpcResponse, RpcError> {
+        let height = requested
+            .or_else(|| node.storage().checkpoint().map(|cp| cp.height))
+            .ok_or(RpcError::Unavailable)?;
+        let Some((_, state)) = node.storage().read_state_at(height).map_err(|error| {
+            self.storage_failed.store(true, Ordering::Release);
+            self.metrics.add(NodeMetric::LocalFailures, 1);
+            eprintln!("Historical state read failed: {error}");
+            RpcError::Unavailable
+        })?
+        else {
+            return Ok(RpcResponse::StateProofAt(None));
+        };
+        let finality = if height == 0 {
+            None
+        } else {
+            let (block, certificate) = node
+                .storage()
+                .read_finalized(height)
+                .map_err(|error| {
+                    self.storage_failed.store(true, Ordering::Release);
+                    self.metrics.add(NodeMetric::LocalFailures, 1);
+                    eprintln!("Finalized proof read failed: {error}");
+                    RpcError::Unavailable
+                })?
+                .ok_or(RpcError::Unavailable)?;
+            Some((block.header, certificate))
+        };
+        let bytes = rpc::CertifiedStateProof::create(&state, key, finality)?.to_bytes()?;
+        Ok(if requested.is_some() {
+            RpcResponse::StateProofAt(Some(bytes))
+        } else {
+            RpcResponse::StateProof(bytes)
+        })
+    }
+
     fn receipt(
         &self,
         node: &PeerNode,
@@ -386,9 +427,9 @@ impl RpcService for NetworkStatus {
     fn handle(&self, request: RpcRequest) -> Result<RpcResponse, RpcError> {
         let mut node = self.node.lock().map_err(|_| RpcError::Unavailable)?;
         match request {
-            request @ (RpcRequest::SubmitPotbAdmission(_) | RpcRequest::SubmitPotbEvidence(_)) => {
-                self.submit_potb(&mut node, request)
-            }
+            request @ (RpcRequest::SubmitPotbAdmission(_)
+            | RpcRequest::SubmitPotbEvidence(_)
+            | RpcRequest::SubmitGovernance(_)) => self.submit_potb(&mut node, request),
             RpcRequest::PotbHandoff(height) => self.potb_handoff(&node, height),
             RpcRequest::Receipt { id, height } => self.receipt(&node, id, height),
             RpcRequest::CommitteeHandoff(height) => {
@@ -405,35 +446,8 @@ impl RpcService for NetworkStatus {
                     .map_err(|_| RpcError::Unavailable)?;
                 Ok(RpcResponse::CommitteeHandoff(bytes))
             }
-            RpcRequest::StateProof(key) => {
-                let snapshot = node
-                    .storage()
-                    .state()
-                    .snapshot()
-                    .map_err(|_| RpcError::Unavailable)?;
-                let height = node
-                    .storage()
-                    .checkpoint()
-                    .ok_or(RpcError::Unavailable)?
-                    .height;
-                let finality = if height == 0 {
-                    None
-                } else {
-                    let (block, certificate) = node
-                        .storage()
-                        .read_finalized(height)
-                        .map_err(|error| {
-                            self.storage_failed.store(true, Ordering::Release);
-                            self.metrics.add(NodeMetric::LocalFailures, 1);
-                            eprintln!("Finalized proof read failed: {error}");
-                            RpcError::Unavailable
-                        })?
-                        .ok_or(RpcError::Unavailable)?;
-                    Some((block.header, certificate))
-                };
-                let proof = rpc::CertifiedStateProof::create(snapshot.as_ref(), &key, finality)?;
-                Ok(RpcResponse::StateProof(proof.to_bytes()?))
-            }
+            RpcRequest::StateProof(key) => self.state_proof(&node, &key, None),
+            RpcRequest::StateProofAt { key, height } => self.state_proof(&node, &key, Some(height)),
             RpcRequest::Block(height) => {
                 let block = node.storage().read_finalized(height).map_err(|error| {
                     // A locally corrupt certified block must stop voting even when
@@ -491,6 +505,10 @@ impl NetworkStatus {
         request: RpcRequest,
     ) -> Result<RpcResponse, RpcError> {
         let message = match request {
+            RpcRequest::SubmitGovernance(bytes) => node::network_wire::NetworkMessage::Governance(
+                consensus::governance::GovernanceCertificate::from_bytes(&bytes)
+                    .map_err(|_| RpcError::InvalidRequest)?,
+            ),
             RpcRequest::SubmitPotbAdmission(bytes) => {
                 node::network_wire::NetworkMessage::PotbAdmission(
                     consensus::admission::AdmissionCertificate::from_bytes(&bytes)

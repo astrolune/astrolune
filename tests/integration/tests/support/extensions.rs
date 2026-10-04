@@ -16,7 +16,8 @@ pub fn check(bytes: &[u8]) -> usize {
         + check_base(bytes)
         + check_history(bytes)
         + check_admission(bytes)
-        + check_potb(bytes);
+        + check_potb(bytes)
+        + check_governance(bytes);
     if let Ok(proof) = crypto::VrfOutput::decode(bytes) {
         assert_eq!(proof.encode().unwrap().as_slice(), bytes);
         let key = crypto::blake2s::ed25519_public_key(&[1; 32]);
@@ -221,5 +222,15 @@ fn check_potb(bytes: &[u8]) -> usize {
         assert_eq!(value.to_bytes().unwrap(), bytes);
         accepted += 1;
     }
+    accepted
+}
+
+fn check_governance(bytes: &[u8]) -> usize {
+    use consensus::governance::{GovernanceIntent, GovernanceApproval, GovernanceCertificate, GovernanceState};
+    let mut accepted = 0;
+    if let Ok(value) = GovernanceIntent::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
+    if let Ok(value) = GovernanceApproval::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
+    if let Ok(value) = GovernanceCertificate::from_bytes(bytes) { assert_eq!(value.to_bytes().unwrap(), bytes); accepted += 1; }
+    if let Ok(value) = GovernanceState::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
     accepted
 }

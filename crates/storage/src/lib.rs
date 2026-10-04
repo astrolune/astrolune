@@ -21,6 +21,7 @@ use types::{Block, Hash256};
 
 mod archive;
 mod chain;
+mod history;
 mod log;
 mod log_record;
 mod persistent;
@@ -31,6 +32,7 @@ pub use receipts::{
 };
 
 pub use chain::ChainStorage;
+pub use history::{MAX_STATE_HISTORY_BLOCKS, MAX_STATE_HISTORY_BYTES, MAX_STATE_HISTORY_CHANGES};
 pub use log::AppendOnlyStorage;
 pub use persistent::FileBackedStorage;
 
@@ -201,6 +203,21 @@ impl InMemoryStorage {
     #[must_use]
     pub fn state(&self) -> &InMemoryState {
         &self.state
+    }
+
+    /// Reads a retained state and its exact checkpoint; absence means unavailable history.
+    pub fn read_state_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        let Some(checkpoint) = self.checkpoints.get(&height) else {
+            return Ok(None);
+        };
+        let state = self.snapshots.get(&height).ok_or(StorageError::Corrupt)?;
+        if state.root() != checkpoint.state_root {
+            return Err(StorageError::Corrupt);
+        }
+        Ok(Some((*checkpoint, state.clone())))
     }
 
     /// Returns a block by its hash.

@@ -91,7 +91,7 @@ impl BlockEffects {
                     &types::StateKey(types::domain::POTB_STATE_KEY.to_vec()),
                 )
                 .map_err(|_| StorageError::VerificationFailed)?;
-            if value.is_none_or(|bytes| bytes.is_empty() || bytes.len() > 7509) {
+            if value.is_none_or(|bytes| bytes.is_empty() || bytes.len() > 7762) {
                 return Err(StorageError::VerificationFailed);
             }
         }
@@ -262,7 +262,7 @@ mod tests {
         let key = types::StateKey(types::domain::POTB_STATE_KEY.to_vec());
         let mut diff = StateDiff::new();
         diff.put(genesis::genesis_key(), vec![7; 32]);
-        diff.put(key.clone(), vec![9; 7509]);
+        diff.put(key.clone(), vec![9; 7762]);
         db.commit(db.root(), &[diff]).unwrap();
         let snapshot = db.snapshot().unwrap();
         let mut effects = BlockEffects {
@@ -296,7 +296,7 @@ mod tests {
         effects.potb = Some(effects.genesis.clone());
         assert!(effects.validate_header(&header).is_err());
         let mut diff = StateDiff::new();
-        diff.put(key.clone(), vec![9; 7510]);
+        diff.put(key.clone(), vec![9; 7763]);
         db.commit(db.root(), &[diff]).unwrap();
         let snapshot = db.snapshot().unwrap();
         effects.genesis =

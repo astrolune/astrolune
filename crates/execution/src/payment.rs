@@ -46,6 +46,7 @@ pub struct PaymentSession<'a> {
     context: ValidationContext,
     capacity: Resources,
     used: Resources,
+    prices: Resources,
 }
 
 impl<'a> PaymentSession<'a> {
@@ -62,7 +63,15 @@ impl<'a> PaymentSession<'a> {
             context,
             capacity,
             used: Resources::ZERO,
+            prices: PAYMENT_PRICES,
         }
+    }
+
+    /// Uses prices authenticated by the caller for this execution height.
+    #[must_use]
+    pub fn with_prices(mut self, prices: Resources) -> Self {
+        self.prices = prices;
+        self
     }
 
     fn account(&self, address: Address) -> Result<Option<AccountState>, ExecutionError> {
@@ -88,7 +97,7 @@ impl<'a> PaymentSession<'a> {
                 },
             )]),
             self.capacity,
-            PAYMENT_PRICES,
+            self.prices,
         );
         let validated = validator.validate(tx.clone(), self.context)?;
         let resources = payment_resources(tx)?;
@@ -106,14 +115,14 @@ impl<'a> PaymentSession<'a> {
         }
         let reserve = tx
             .resource_limit
-            .checked_cost(PAYMENT_PRICES)
+            .checked_cost(self.prices)
             .and_then(|fee| fee.checked_add(payment.amount))
             .ok_or(TransactionError::InsufficientResources)?;
         if sender.balance < reserve {
             return Err(TransactionError::InsufficientResources.into());
         }
         let fee = resources
-            .checked_cost(PAYMENT_PRICES)
+            .checked_cost(self.prices)
             .ok_or(ExecutionError::ResourceLimit)?;
         let mut next_sender = AccountState {
             nonce: sender

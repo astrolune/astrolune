@@ -180,6 +180,7 @@ impl ObserverNode {
             NetworkMessage::VrfContribution { .. }
             | NetworkMessage::PotbAdmission(_)
             | NetworkMessage::PotbEvidence(_)
+            | NetworkMessage::Governance(_)
             | NetworkMessage::Proposal { .. }
             | NetworkMessage::Vote(_)
             | NetworkMessage::ValidValue { .. } => {}

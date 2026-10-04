@@ -73,11 +73,35 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
             println!("submission: not sent");
             Ok(())
         }
+        ("reprice-transaction", [path, seed, prices, output]) => {
+            reprice(path, seed, prices, output)
+        }
         ("inspect-payment", [path]) => print_payment(&read_payment(Path::new(path))?),
         ("inspect-transaction", [path]) => print_transaction(&read_transaction(Path::new(path))?),
         ("submit", [path] | [path, _]) => submit(Path::new(path), &client(args.get(1))?),
         _ => Err(error("invalid arguments; run cli help for command usage")),
     }
+}
+
+fn reprice(
+    path: &OsString,
+    seed: &OsString,
+    prices: &OsString,
+    output: &OsString,
+) -> Result<(), CliError> {
+    if Path::new(output).exists() {
+        return Err(error("output already exists"));
+    }
+    let mut tx = read_transaction(Path::new(path))?;
+    let seed = read_seed(Path::new(seed))?;
+    if address_from_public_key(&ed25519_public_key(&seed)) != tx.sender {
+        return Err(error("signer does not match transaction sender"));
+    }
+    tx.resource_prices = crate::governance::resources(prices)?;
+    tx.signature = ed25519_sign(&seed, signing_hash(&tx).as_bytes());
+    print_transaction(&tx)?;
+    write_new(Path::new(output), &tx.to_bytes())?;
+    Ok(())
 }
 
 pub(super) fn client(address: Option<&OsString>) -> Result<TcpRpcClient, CliError> {
@@ -191,7 +215,11 @@ fn validate_payment(tx: &Transaction) -> Result<Payment, CliError> {
         || tx.expires_at == 0
         || payment.amount == u64::MAX
         || tx.lane != TransactionLane::Payments
-        || tx.resource_prices != execution::PAYMENT_PRICES
+        || tx
+            .resource_limit
+            .checked_cost(tx.resource_prices)
+            .and_then(|fee| fee.checked_add(payment.amount))
+            .is_none()
         || tx.resource_limit != execution::payment_resources(tx).map_err(error)?
         || tx.access_list != payment_access(tx.sender, payment.recipient)
         || tx.sender != address_from_public_key(&payment.public_key)
@@ -255,7 +283,12 @@ fn print_payment(tx: &Transaction) -> Result<(), CliError> {
     println!("sender: {}", tx.sender);
     println!("recipient: {}", payment.recipient);
     println!("amount: {}", payment.amount);
-    println!("fee: 1");
+    println!(
+        "fee: {}",
+        tx.resource_limit
+            .checked_cost(tx.resource_prices)
+            .ok_or_else(|| error("fee overflow"))?
+    );
     println!("nonce: {}", tx.nonce);
     println!("expires_at: {}", tx.expires_at);
     Ok(())

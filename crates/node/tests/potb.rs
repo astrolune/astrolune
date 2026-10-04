@@ -121,6 +121,116 @@ fn payment(profile: &PotbConfiguration, nonce: u64) -> Transaction {
 }
 
 #[test]
+fn governed_fees_capacity_boundary_and_recovery_match_serial_and_parallel() {
+    for archive in [false, true] {
+        let (base, keys) = fixture();
+        let profile = support::governed(base);
+        let (dir, mut store) = storage(&profile, &keys, archive);
+        let mut trusted = PotbVerifier::new(&profile, &keys).unwrap();
+        let mut producer = producer(&profile, &store, &trusted);
+        let certificate = support::parameters(trusted.current(), trusted.parent());
+        let prices = certificate.request().prices;
+        let capacity = certificate.request().capacity;
+        let mut spent = 0;
+        for height in 1..=4 {
+            let active_prices = if height < 3 {
+                execution::PAYMENT_PRICES
+            } else {
+                prices
+            };
+            assert_eq!(producer.current_prices(), active_prices);
+            let mut tx = payment(&profile, height - 1);
+            if height >= 3 {
+                assert!(producer.submit_transaction(tx.clone()).is_err());
+                tx.resource_prices = prices;
+                tx.signature = ed25519_sign(&[98; 32], &signing_hash(&tx).0);
+            }
+            spent += 123
+                + execution::payment_resources(&tx)
+                    .unwrap()
+                    .checked_cost(active_prices)
+                    .unwrap();
+            let context = transaction::ValidationContext {
+                chain_id: profile.genesis().chain_id,
+                next_height: height,
+                max_transaction_bytes: 65536,
+            };
+            let mut outputs = None;
+            for workers in [1, 2, 8] {
+                let mut state = producer.state().clone();
+                let root = state.root();
+                let result = execution::execute_parallel(
+                    &mut state,
+                    &[tx.clone()],
+                    root,
+                    context,
+                    execution::ExecutionPolicy {
+                        capacity,
+                        prices: active_prices,
+                        contracts: true,
+                    },
+                    workers,
+                )
+                .unwrap();
+                if let Some(expected) = &outputs {
+                    assert_eq!(&result, expected);
+                } else {
+                    outputs = Some(result);
+                }
+            }
+            producer.submit_transaction(tx).unwrap();
+            let mut batch = support::batch(trusted.current());
+            if height == 1 {
+                batch = batch.with_governance(certificate.clone()).unwrap();
+            }
+            producer.set_potb_batch(batch).unwrap();
+            let proposal = producer.produce_block().unwrap();
+            assert_eq!(proposal.block.transactions.len(), 2);
+            assert_eq!(
+                proposal.block.header.capacity,
+                if height < 3 {
+                    profile.genesis().capacity
+                } else {
+                    capacity
+                }
+            );
+            let finality =
+                support::certificate(trusted.current().committee(), &proposal.block.header);
+            let handoff = producer.potb_handoff(&proposal, &finality).unwrap();
+            producer
+                .commit_certified_block(
+                    &proposal,
+                    &finality,
+                    &trusted.current().committee().context().unwrap(),
+                    &mut store,
+                )
+                .unwrap();
+            trusted.apply(&handoff).unwrap();
+            assert_eq!(producer.potb_state(), Some(trusted.current()));
+            let account = state::read_account(
+                producer.state().snapshot().unwrap().as_ref(),
+                address_from_public_key(&ed25519_public_key(&[98; 32])),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(account.balance, 100_000 - spent);
+            let (recovered, authority) =
+                BlockProducer::recover_potb(config(&profile), &profile, &keys, &store).unwrap();
+            assert_eq!(recovered.current_prices(), producer.current_prices());
+            assert_eq!(recovered.state().root(), producer.state().root());
+            assert_eq!(authority, trusted);
+            producer = recovered;
+        }
+        drop(store);
+        let reopened = ChainStorage::open(dir.0.join("chain.bin")).unwrap();
+        let (recovered, authority) =
+            BlockProducer::recover_potb(config(&profile), &profile, &keys, &reopened).unwrap();
+        assert_eq!(recovered.current_prices(), prices);
+        assert_eq!(authority.current().committee().capacity(), capacity);
+    }
+}
+
+#[test]
 fn payments_policy_admission_and_evidence_recover_from_both_storage_backends() {
     for archive in [false, true] {
         let (profile, keys) = fixture();

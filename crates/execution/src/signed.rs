@@ -16,6 +16,7 @@ pub struct SignedSession<'a> {
     capacity: Resources,
     used: Resources,
     contracts: bool,
+    prices: Resources,
 }
 
 impl<'a> SignedSession<'a> {
@@ -36,18 +37,32 @@ impl<'a> SignedSession<'a> {
             capacity,
             used: Resources::ZERO,
             contracts,
+            prices: crate::PAYMENT_PRICES,
         }
+    }
+
+    /// Sets authenticated prices before executing any transaction in this session.
+    #[must_use]
+    pub fn with_prices(mut self, prices: Resources) -> Self {
+        self.prices = prices;
+        self
     }
 
     /// Executes in canonical order. An error leaves every session field unchanged.
     pub fn execute(&mut self, tx: &Transaction) -> Result<TransactionOutput, ExecutionError> {
         let output = match tx.lane {
             TransactionLane::Payments => {
-                PaymentSession::new(&self.overlay, self.context, self.capacity).execute(tx)?
+                PaymentSession::new(&self.overlay, self.context, self.capacity)
+                    .with_prices(self.prices)
+                    .execute(tx)?
             }
-            TransactionLane::Contracts if self.contracts => {
-                crate::contract::execute_contract(&self.overlay, tx, self.context, self.capacity)?
-            }
+            TransactionLane::Contracts if self.contracts => crate::contract::execute_contract(
+                &self.overlay,
+                tx,
+                self.context,
+                self.capacity,
+                self.prices,
+            )?,
             _ => return Err(TransactionError::UnsupportedPayload.into()),
         };
         let used = self

@@ -13,6 +13,43 @@ use std::{
 use rpc::{ClientError, TcpRpcClient};
 use types::{AccountState, Address, Hash256};
 
+#[path = "../../consensus/tests/support/potb.rs"]
+mod support;
+
+#[test]
+fn historical_proofs_distinguish_unavailability_and_reject_a_wrong_height() {
+    use std::fmt::Write as _;
+    let (profile, keys) = support::fixture();
+    let state = profile.materialize(&keys).unwrap();
+    let key = genesis::genesis_key();
+    let proof = rpc::CertifiedStateProof::create(&state, &key, None).unwrap();
+    let mut encoded = String::new();
+    for byte in proof.to_bytes().unwrap() {
+        write!(&mut encoded, "{byte:02x}").unwrap();
+    }
+    for height in [0, 1, u64::MAX] {
+        let (address, worker) = peer(response(&format!("\"{encoded}\"")));
+        let result = client(address).state_proof_at(&key, height);
+        if height == 0 {
+            assert_eq!(result.unwrap(), Some(proof.clone()));
+        } else {
+            assert!(matches!(
+                result,
+                Err(ClientError::Protocol("state proof height mismatch"))
+            ));
+        }
+        let request = worker.join().unwrap();
+        assert!(request.contains(r#""method":"state_proof_at""#));
+        assert!(request.contains(&format!(r#""height":"{height}""#)));
+    }
+    let (address, worker) = peer(response("null"));
+    assert!(client(address).state_proof_at(&key, 5).unwrap().is_none());
+    worker.join().unwrap();
+    let (address, worker) = peer(response("null"));
+    assert!(client(address).state_proof(&key).is_err());
+    worker.join().unwrap();
+}
+
 fn peer(reply: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

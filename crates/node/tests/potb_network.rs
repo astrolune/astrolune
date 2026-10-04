@@ -81,6 +81,91 @@ fn advance(nodes: &mut [NetworkNode], height: u64) {
 }
 
 #[test]
+fn governance_gossip_survives_restart_activates_at_epoch_and_observer_authenticates_it() {
+    let (base, keys) = support::fixture();
+    let profile = support::governed(base);
+    let network = StaticNetwork::decode(&profile.to_bytes(), keys.clone()).unwrap();
+    let mut trusted = PotbVerifier::new(&profile, &keys).unwrap();
+    let certificate = support::parameters(trusted.current(), trusted.parent());
+    let directory = Directory(std::env::temp_dir().join(format!(
+        "astrolune-governance-network-{}",
+        std::process::id()
+    )));
+    std::fs::create_dir(&directory.0).unwrap();
+    for seed in 1..=4 {
+        let path = directory.0.join(seed.to_string());
+        std::fs::create_dir(&path).unwrap();
+        drop(
+            DurableSigner::create_protected(
+                path.join("signing.journal"),
+                SigningContext {
+                    chain_id: network.chain_id(),
+                    genesis: network.genesis_hash(),
+                },
+                [seed; 32],
+            )
+            .unwrap(),
+        );
+    }
+    let message = NetworkMessage::Governance(certificate.clone());
+    let bytes = encode_exchange(network.genesis_hash(), std::slice::from_ref(&message)).unwrap();
+    assert_eq!(
+        decode_exchange(network.genesis_hash(), &bytes).unwrap(),
+        vec![message]
+    );
+    let mut first = open(&directory, &network, 1);
+    assert_eq!(
+        first.submit_governance(certificate.clone()).unwrap(),
+        certificate.request().id()
+    );
+    drop(first);
+    let mut nodes: Vec<_> = (1..=4)
+        .map(|seed| open(&directory, &network, seed))
+        .collect();
+    advance(&mut nodes, 3);
+    for height in 1..=2 {
+        trusted
+            .apply(
+                &node::handoff::read_potb_handoff(nodes[0].storage(), height)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        trusted.current().governance().unwrap().active().prices,
+        certificate.request().prices
+    );
+    assert_eq!(
+        trusted.current().committee().capacity(),
+        certificate.request().capacity
+    );
+    assert!(nodes[0].submit_governance(certificate).is_err());
+    advance(&mut nodes, 5);
+    let observer_path = directory.0.join("observer");
+    std::fs::create_dir(&observer_path).unwrap();
+    let mut observer = ObserverNode::open(network.clone(), &observer_path).unwrap();
+    for _ in 0..4 {
+        observer
+            .receive(&nodes[0].respond(observer.request()).unwrap())
+            .unwrap();
+    }
+    assert_eq!(observer.request().height, 5);
+    drop(observer);
+    assert_eq!(
+        ObserverNode::open(network.clone(), &observer_path)
+            .unwrap()
+            .request()
+            .height,
+        5
+    );
+    drop(nodes);
+    for seed in 1..=4 {
+        assert_eq!(open(&directory, &network, seed).request().height, 5);
+    }
+}
+
+#[test]
 fn gossip_includes_quorum_admission_and_evidence_then_recovers_every_role() {
     let (profile, keys) = support::fixture();
     let network = StaticNetwork::decode(&profile.to_bytes(), keys.clone()).unwrap();

@@ -89,7 +89,7 @@ fn resolver(args: &[String]) -> Result<CertifiedResolver, String> {
         Path::new(&args[0]),
         consensus::potb_transition::PotbConfiguration::MAX_BYTES,
     )?;
-    let potb = if configuration.starts_with(b"ALPTCF01") {
+    let potb = if consensus::potb_transition::PotbConfiguration::is_envelope(&configuration) {
         Some(
             consensus::potb_transition::PotbConfiguration::from_bytes(&configuration)
                 .map_err(|e| e.to_string())?,

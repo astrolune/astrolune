@@ -72,7 +72,10 @@ impl BlockProducer {
             return Ok(());
         }
         let current = self.potb_state().ok_or(ConsensusError::InvalidTransition)?;
-        remaining(self.config.block_capacity, system_resources(&batch)?)?;
+        remaining(
+            self.config.block_capacity,
+            system_resources(current, &batch)?,
+        )?;
         let next = current.stage(self.parent_hash, &batch)?;
         let (tx, _) = system_effect(current, &batch, &next)?;
         if transaction::estimate_encoded_len(&tx) > self.config.max_transaction_bytes {
@@ -220,6 +223,7 @@ impl BlockProducer {
             producer.state = staged;
             producer.height = trusted.current().committee().height();
             producer.parent_hash = trusted.parent();
+            producer.config.block_capacity = trusted.current().committee().capacity();
             producer.potb = Some(trusted.clone());
         }
         if producer.state.root() != head.state_root
@@ -260,7 +264,7 @@ fn system_effect(
     next: &PotbState,
 ) -> Result<(Transaction, TransactionOutput), ProducerError> {
     let encoded = next.to_bytes().map_err(invalid)?;
-    let resources = system_resources(batch)?;
+    let resources = system_resources(current, batch)?;
     let committee = current.committee();
     let transaction = Transaction {
         version: types::TRANSACTION_VERSION,
@@ -297,15 +301,20 @@ fn system_effect(
 
 // Fixed integer protocol charges. Every count is already bounded by the codecs;
 // actual elapsed time, certificate subset and host concurrency have no effect.
-fn system_resources(batch: &PotbBatch) -> Result<Resources, ProducerError> {
+fn system_resources(current: &PotbState, batch: &PotbBatch) -> Result<Resources, ProducerError> {
     let bytes = batch.to_bytes().map_err(invalid)?.len() as u64;
-    let approvals: usize = batch.admissions().iter().map(|a| a.voters().count()).sum();
+    let approvals: usize = batch
+        .admissions()
+        .iter()
+        .map(|a| a.voters().count())
+        .sum::<usize>()
+        + batch.governance().map_or(0, |a| a.voters().count());
     Ok(Resources {
         compute: 10_000 * batch.contributions().entries().len() as u64
             + 25_000 * batch.evidence().len() as u64
             + 2_000 * approvals as u64,
-        memory: 16 * 1024 + PotbState::MAX_BYTES as u64 + bytes,
-        io: PotbState::MAX_BYTES as u64,
+        memory: 16 * 1024 + current.encoded_bound() as u64 + bytes,
+        io: current.encoded_bound() as u64,
         bandwidth: bytes + 512,
     })
 }
@@ -315,8 +324,8 @@ fn minimum_resources(state: &PotbState) -> Resources {
     let bytes = 23 + consensus::rotation::VrfContribution::BYTES as u64 * count;
     Resources {
         compute: 10_000 * count,
-        memory: 16 * 1024 + PotbState::MAX_BYTES as u64 + bytes,
-        io: PotbState::MAX_BYTES as u64,
+        memory: 16 * 1024 + state.encoded_bound() as u64 + bytes,
+        io: state.encoded_bound() as u64,
         bandwidth: bytes + 512,
     }
 }

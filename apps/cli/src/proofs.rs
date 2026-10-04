@@ -14,23 +14,29 @@ fn error(value: impl std::fmt::Display) -> CliError {
 }
 
 pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
-    if !(args.len() == 5 || (command == "state-proof" && args.len() == 6)) {
+    let fetch = matches!(command, "state-proof" | "state-proof-at");
+    if !(args.len() == 5 || (fetch && args.len() == 6)) {
         return Err(error(
-            "usage: cli state-proof|verify-state-proof <genesis> <validators> <key-hex> <minimum-height> <proof-file> [rpc-address]",
+            "usage: cli state-proof|state-proof-at|verify-state-proof <genesis> <validators> <key-hex> <height> <proof-file> [rpc-address]; state-proof-at requires that exact height",
         ));
     }
     let (genesis, keys) = anchors(Path::new(&args[0]), Path::new(&args[1]))?;
     let key = parse_key(wallet::text(&args[2])?)?;
     let minimum = wallet::integer(&args[3])?;
     let path = Path::new(&args[4]);
-    if command == "state-proof" && path.exists() {
+    if fetch && path.exists() {
         return Err(error("output already exists"));
     }
-    let client = (command == "state-proof")
-        .then(|| wallet::client(args.get(5)))
-        .transpose()?;
+    let client = fetch.then(|| wallet::client(args.get(5))).transpose()?;
     let proof = if let Some(client) = &client {
-        client.state_proof(&key).map_err(error)?
+        if command == "state-proof-at" {
+            client
+                .state_proof_at(&key, minimum)
+                .map_err(error)?
+                .ok_or_else(|| error("requested historical state is unavailable"))?
+        } else {
+            client.state_proof(&key).map_err(error)?
+        }
     } else {
         CertifiedStateProof::from_bytes(&read_bounded(path, CertifiedStateProof::MAX_BYTES)?)
             .map_err(error)?
@@ -57,7 +63,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
             Anchor::Genesis(genesis) => proof.verify(genesis, &keys, &key, minimum),
         },
     }.map_err(|_| error("state proof authentication failed for the trusted genesis, registry, key or minimum height"))?;
-    if command == "state-proof" {
+    if fetch {
         if let Some(trust) = &handoffs {
             trust.publish()?;
         }
@@ -112,7 +118,7 @@ pub(super) fn anchors(
         genesis_path,
         consensus::potb_transition::PotbConfiguration::MAX_BYTES,
     )?;
-    let genesis = if bytes.starts_with(b"ALPTCF01") {
+    let genesis = if consensus::potb_transition::PotbConfiguration::is_envelope(&bytes) {
         Anchor::Potb(
             consensus::potb_transition::PotbConfiguration::from_bytes(&bytes).map_err(error)?,
         )

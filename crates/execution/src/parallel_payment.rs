@@ -16,7 +16,6 @@ use types::{Hash256, Resources, StateKey, Transaction};
 
 use crate::{
     ExecutionError, ExecutionScheduler, GreedyScheduler, SignedSession, TransactionOutput,
-    execute_payments, execute_signed,
 };
 
 /// Maximum local payment workers. Worker count never enters protocol commitments.
@@ -40,9 +39,12 @@ pub fn execute_payments_parallel(
         transactions,
         parent,
         context,
-        capacity,
+        ExecutionPolicy {
+            capacity,
+            prices: crate::PAYMENT_PRICES,
+            contracts: false,
+        },
         workers,
-        false,
     )
 }
 
@@ -60,46 +62,52 @@ pub fn execute_signed_parallel(
         transactions,
         parent,
         context,
-        capacity,
+        ExecutionPolicy {
+            capacity,
+            prices: crate::PAYMENT_PRICES,
+            contracts: true,
+        },
         workers,
-        true,
     )
 }
 
-fn execute_parallel(
+/// Parent-authenticated execution parameters, shared by serial and parallel paths.
+#[derive(Clone, Copy, Debug)]
+pub struct ExecutionPolicy {
+    /// Application capacity after system resource reservation.
+    pub capacity: Resources,
+    /// Current consensus prices.
+    pub prices: Resources,
+    /// Explicit contract activation.
+    pub contracts: bool,
+}
+
+/// Executes under authenticated parameters, preserving serial errors and atomic publication.
+pub fn execute_parallel(
     database: &mut impl StateDatabase,
     transactions: &[Transaction],
     parent: Hash256,
     context: ValidationContext,
-    capacity: Resources,
+    policy: ExecutionPolicy,
     workers: usize,
-    contracts: bool,
 ) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
-    let serial = if contracts {
-        execute_signed
-    } else {
-        execute_payments
+    let capacity = policy.capacity;
+    let serial = |database: &mut _, transactions: &[_], parent, context| {
+        execute_serial(database, transactions, parent, context, policy)
     };
     if workers == 0 || workers > MAX_PAYMENT_WORKERS {
         return Err(ExecutionError::ResourceLimit);
     }
     if workers == 1 || transactions.len() < 2 {
-        return serial(database, transactions, parent, context, capacity);
+        return serial(database, transactions, parent, context);
     }
     let snapshot = database.snapshot()?;
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
-    let outputs = speculate(
-        snapshot.as_ref(),
-        transactions,
-        context,
-        capacity,
-        workers,
-        contracts,
-    );
+    let outputs = speculate(snapshot.as_ref(), transactions, context, policy, workers);
     let Ok(outputs) = outputs else {
-        return serial(database, transactions, parent, context, capacity);
+        return serial(database, transactions, parent, context);
     };
     let mut used = Resources::ZERO;
     for output in &outputs {
@@ -110,6 +118,33 @@ fn execute_parallel(
             return Err(ExecutionError::ResourceLimit);
         }
     }
+    let diffs: Vec<_> = outputs.iter().map(|output| output.diff.clone()).collect();
+    let root = database.commit(parent, &diffs)?;
+    Ok((outputs, root))
+}
+
+fn execute_serial(
+    database: &mut impl StateDatabase,
+    transactions: &[Transaction],
+    parent: Hash256,
+    context: ValidationContext,
+    policy: ExecutionPolicy,
+) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
+    let snapshot = database.snapshot()?;
+    if snapshot.root() != parent {
+        return Err(StateError::StaleSnapshot.into());
+    }
+    let mut session = SignedSession::new(
+        snapshot.as_ref(),
+        context,
+        policy.capacity,
+        policy.contracts,
+    )
+    .with_prices(policy.prices);
+    let outputs = transactions
+        .iter()
+        .map(|tx| session.execute(tx))
+        .collect::<Result<Vec<_>, _>>()?;
     let diffs: Vec<_> = outputs.iter().map(|output| output.diff.clone()).collect();
     let root = database.commit(parent, &diffs)?;
     Ok((outputs, root))
@@ -156,9 +191,8 @@ fn speculate(
     parent: &dyn StateSnapshot,
     transactions: &[Transaction],
     context: ValidationContext,
-    capacity: Resources,
+    policy: ExecutionPolicy,
     workers: usize,
-    contracts: bool,
 ) -> Result<Vec<TransactionOutput>, ExecutionError> {
     // Ensure declarations cover actual keys before trusting the wave planner.
     for tx in transactions {
@@ -177,7 +211,8 @@ fn speculate(
     let mut outputs = vec![None; transactions.len()];
     for wave in plan.waves {
         if let [index] = wave.transaction_indexes.as_slice() {
-            let output = SignedSession::new(&overlay, context, capacity, contracts)
+            let output = SignedSession::new(&overlay, context, policy.capacity, policy.contracts)
+                .with_prices(policy.prices)
                 .execute(&transactions[*index])?;
             overlay.apply(&output.diff);
             outputs[*index] = Some(output);
@@ -192,8 +227,13 @@ fn speculate(
                 .chunks(wave.transaction_indexes.len().div_ceil(workers))
             {
                 if let Ok(handle) = std::thread::Builder::new().spawn_scoped(scope, move || {
-                    let mut session =
-                        SignedSession::new(overlay_view, context, capacity, contracts);
+                    let mut session = SignedSession::new(
+                        overlay_view,
+                        context,
+                        policy.capacity,
+                        policy.contracts,
+                    )
+                    .with_prices(policy.prices);
                     chunk
                         .iter()
                         .map(|&index| {

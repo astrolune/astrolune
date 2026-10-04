@@ -7,6 +7,8 @@
 mod extensions;
 #[path = "../../../crates/consensus/tests/support/potb.rs"]
 mod potb_support;
+#[path = "support/governance_compatibility.rs"]
+mod governance_support;
 use contract_sdk::registry::{MAX_CALL, RegistryAction, RegistryCall, RegistryRecord};
 use crypto::{VrfInput, VrfRole};
 use state::StateDatabase;
@@ -92,6 +94,7 @@ fn seeds() -> Vec<Vec<u8>> {
     seeds.extend(rotation_seeds(&genesis, key));
     seeds.extend(admission_seeds(&genesis, key));
     seeds.extend(potb_seeds());
+    seeds.extend(governance_support::build().into_values());
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/protocol-v1");
     for line in include_str!("../fixtures/protocol-v1/MANIFEST.blake2s").lines() {
         let name = line.split_whitespace().nth(2).unwrap();

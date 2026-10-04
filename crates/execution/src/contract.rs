@@ -17,13 +17,14 @@ use transaction::{
 };
 use types::{AccountState, ExecutionReceipt, Resources, Transaction};
 
-use crate::{ExecutionError, PAYMENT_PRICES, TransactionOutput};
+use crate::{ExecutionError, TransactionOutput};
 
 pub(crate) fn execute_contract(
     snapshot: &dyn StateSnapshot,
     tx: &Transaction,
     context: ValidationContext,
     capacity: Resources,
+    prices: Resources,
 ) -> Result<TransactionOutput, ExecutionError> {
     let payload = ContractPayload::decode(&tx.payload)?;
     let sender = read_account(snapshot, tx.sender)?.ok_or(TransactionError::UnknownSender)?;
@@ -36,7 +37,7 @@ pub(crate) fn execute_contract(
             },
         )]),
         capacity,
-        PAYMENT_PRICES,
+        prices,
     )
     .validate(tx.clone(), context)?;
     let sender_key = account_key(tx.sender);
@@ -53,7 +54,7 @@ pub(crate) fn execute_contract(
         return Err(ExecutionError::ResourceLimit);
     }
     let fee = resources
-        .checked_cost(PAYMENT_PRICES)
+        .checked_cost(prices)
         .ok_or(ExecutionError::ResourceLimit)?;
     let next = AccountState {
         nonce: sender

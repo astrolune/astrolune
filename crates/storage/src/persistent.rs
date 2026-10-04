@@ -166,6 +166,14 @@ impl FileBackedStorage {
         self.inner.transaction_location(id)
     }
 
+    /// Reads one retained historical state and its exact published checkpoint.
+    pub fn read_state_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        self.inner.read_state_at(height)
+    }
+
     /// Reads retained receipt metadata after checking publication health.
     pub fn read_receipts(
         &self,

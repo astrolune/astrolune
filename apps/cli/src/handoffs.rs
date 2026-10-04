@@ -59,9 +59,11 @@ pub(super) fn anchor(
     }
     let mut verifier = match genesis {
         Anchor::Genesis(value) => {
-            Authority::Rotation(HandoffVerifier::new(value, keys).map_err(error)?)
+            Authority::Rotation(Box::new(HandoffVerifier::new(value, keys).map_err(error)?))
         }
-        Anchor::Potb(value) => Authority::Potb(PotbVerifier::new(value, keys).map_err(error)?),
+        Anchor::Potb(value) => {
+            Authority::Potb(Box::new(PotbVerifier::new(value, keys).map_err(error)?))
+        }
     };
     let mut suffix = path.as_os_str().to_owned();
     suffix.push(".handoffs");
@@ -139,8 +141,8 @@ pub(super) fn anchor(
 }
 
 pub(super) enum Authority {
-    Rotation(HandoffVerifier),
-    Potb(PotbVerifier),
+    Rotation(Box<HandoffVerifier>),
+    Potb(Box<PotbVerifier>),
 }
 impl Authority {
     pub(super) fn current(&self) -> &consensus::rotation::CommitteeState {

@@ -9,6 +9,14 @@ use crypto::VrfRole;
 use types::{Hash256, hash::domain_hash};
 
 impl CommitteeState {
+    pub(crate) fn with_potb_capacity(
+        mut self,
+        capacity: types::Resources,
+    ) -> Result<Self, ConsensusError> {
+        self.capacity = capacity;
+        self.validate()?;
+        Ok(self)
+    }
     pub(crate) fn bind_potb_namespace(mut self, genesis: Hash256) -> Self {
         self.genesis = genesis;
         self.randomness = domain_hash(b"astrolune.potb.randomness.genesis.v1", &genesis.0);

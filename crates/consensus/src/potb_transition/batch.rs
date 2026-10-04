@@ -18,6 +18,7 @@ pub struct PotbBatch {
     contributions: VrfBatch,
     evidence: Vec<HistoricalEvidence>,
     admissions: Vec<AdmissionCertificate>,
+    governance: Option<crate::governance::GovernanceCertificate>,
 }
 
 impl PotbBatch {
@@ -25,7 +26,9 @@ impl PotbBatch {
     pub const MAX_BYTES: usize = 14
         + VrfBatch::MAX_BYTES
         + MAX_ROTATION_VALIDATORS
-            * (8 + HistoricalEvidence::MAX_BYTES + AdmissionCertificate::MAX_BYTES);
+            * (8 + HistoricalEvidence::MAX_BYTES + AdmissionCertificate::MAX_BYTES)
+        + 4
+        + crate::governance::GovernanceCertificate::MAX_BYTES;
 
     /// Canonicalizes arrival order. Multiple offences for one identity or duplicate
     /// candidates are rejected instead of offering alternate stacking/order rules.
@@ -43,9 +46,26 @@ impl PotbBatch {
             contributions,
             evidence,
             admissions,
+            governance: None,
         };
         result.validate_order()?;
         Ok(result)
+    }
+
+    /// Adds a bounded update; current authority is authenticated by `PotbState::stage`.
+    pub fn with_governance(
+        mut self,
+        certificate: crate::governance::GovernanceCertificate,
+    ) -> Result<Self, DecodeError> {
+        certificate.to_bytes()?;
+        self.governance = Some(certificate);
+        Ok(self)
+    }
+
+    /// Optional incumbent-quorum parameter certificate.
+    #[must_use]
+    pub const fn governance(&self) -> Option<&crate::governance::GovernanceCertificate> {
+        self.governance.as_ref()
     }
 
     /// Complete contributions; authentication also requires the parent roster.
@@ -94,7 +114,12 @@ impl PotbBatch {
     /// Exact framing. Canonical bytes alone do not prove historical or current authority.
     pub fn to_bytes(&self) -> Result<Vec<u8>, DecodeError> {
         self.validate_order()?;
-        let mut bytes = b"ALPTBT01".to_vec();
+        let mut bytes = if self.governance.is_some() {
+            b"ALPTBT02"
+        } else {
+            b"ALPTBT01"
+        }
+        .to_vec();
         write_field(&mut bytes, &self.contributions.to_bytes()?)?;
         bytes.push(u8::try_from(self.evidence.len()).map_err(|_| DecodeError::LimitExceeded)?);
         for evidence in &self.evidence {
@@ -103,6 +128,9 @@ impl PotbBatch {
         bytes.push(u8::try_from(self.admissions.len()).map_err(|_| DecodeError::LimitExceeded)?);
         for admission in &self.admissions {
             write_field(&mut bytes, &admission.to_bytes()?)?;
+        }
+        if let Some(certificate) = &self.governance {
+            write_field(&mut bytes, &certificate.to_bytes()?)?;
         }
         Ok(bytes)
     }
@@ -113,14 +141,27 @@ impl PotbBatch {
             return Err(DecodeError::LimitExceeded);
         }
         let mut decoder = Decoder::new(bytes);
-        if decoder.read_exact(8)? != b"ALPTBT01" {
-            return Err(DecodeError::Unsupported);
-        }
+        let governed = match decoder.read_exact(8)? {
+            b"ALPTBT01" => false,
+            b"ALPTBT02" => true,
+            _ => return Err(DecodeError::Unsupported),
+        };
         let contributions = read_field(&mut decoder, VrfBatch::MAX_BYTES)?;
         let evidence = read_list(&mut decoder, HistoricalEvidence::MAX_BYTES)?;
         let admissions = read_list(&mut decoder, AdmissionCertificate::MAX_BYTES)?;
+        let governance = if governed {
+            Some(crate::governance::GovernanceCertificate::from_bytes(
+                read_field(
+                    &mut decoder,
+                    crate::governance::GovernanceCertificate::MAX_BYTES,
+                )?,
+            )?)
+        } else {
+            None
+        };
         decoder.finish()?;
         let result = Self {
+            governance,
             contributions: VrfBatch::from_bytes(contributions)?,
             evidence: evidence
                 .into_iter()

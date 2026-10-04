@@ -151,7 +151,7 @@ impl TcpRpcServer {
                 Ok(request) => request,
                 Err(error) => return rpc_error(rpc_req.id, -32602, error),
             },
-            "state_proof" => {
+            "state_proof" | "state_proof_at" => {
                 let Some(key) = rpc_req.params.get("key").and_then(JsonValue::as_str) else {
                     return rpc_error(rpc_req.id, -32602, "missing state key");
                 };
@@ -159,22 +159,27 @@ impl TcpRpcServer {
                     return rpc_error(rpc_req.id, -32602, "state key exceeds limit");
                 }
                 match parse_hex_bytes(key) {
-                    Ok(key) => RpcRequest::StateProof(types::StateKey(key)),
+                    Ok(key) => {
+                        if rpc_req.method == "state_proof_at" {
+                            let height = match request_height(&rpc_req.params) {
+                                Ok(height) => height,
+                                Err(error) => return rpc_error(rpc_req.id, -32602, error),
+                            };
+                            RpcRequest::StateProofAt {
+                                key: types::StateKey(key),
+                                height,
+                            }
+                        } else {
+                            RpcRequest::StateProof(types::StateKey(key))
+                        }
+                    }
                     Err(error) => return rpc_error(rpc_req.id, -32602, error),
                 }
             }
             "block" | "committee_handoff" | "potb_handoff" => {
-                let height = rpc_req.params.get("height").and_then(|value| match value {
-                    JsonValue::String(text)
-                        if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) =>
-                    {
-                        text.parse::<u64>().ok()
-                    }
-                    JsonValue::Number(number) => u64::try_from(*number).ok(),
-                    _ => None,
-                });
-                let Some(height) = height else {
-                    return rpc_error(rpc_req.id, -32602, "invalid or missing block height");
+                let height = match request_height(&rpc_req.params) {
+                    Ok(height) => height,
+                    Err(error) => return rpc_error(rpc_req.id, -32602, error),
                 };
                 if rpc_req.method == "potb_handoff" {
                     RpcRequest::PotbHandoff(height)
@@ -210,10 +215,12 @@ impl TcpRpcServer {
                     }
                 }
             }
-            "submit_potb_admission" | "submit_potb_evidence" => match potb_request(rpc_req) {
-                Ok(request) => request,
-                Err(error) => return rpc_error(rpc_req.id, -32602, error),
-            },
+            "submit_potb_admission" | "submit_potb_evidence" | "submit_governance" => {
+                match potb_request(rpc_req) {
+                    Ok(request) => request,
+                    Err(error) => return rpc_error(rpc_req.id, -32602, error),
+                }
+            }
             _ => {
                 return rpc_error(rpc_req.id, -32601, "method not found");
             }
@@ -242,10 +249,12 @@ impl TcpRpcServer {
     fn response_to_json(id: i64, response: RpcResponse) -> crate::json::JsonRpcResponse {
         match response {
             RpcResponse::Receipt(None)
+            | RpcResponse::StateProofAt(None)
             | RpcResponse::Block(None)
             | RpcResponse::CommitteeHandoff(None)
             | RpcResponse::PotbHandoff(None) => rpc_success(id, JsonValue::Null),
             RpcResponse::Receipt(Some(bytes))
+            | RpcResponse::StateProofAt(Some(bytes))
             | RpcResponse::StateProof(bytes)
             | RpcResponse::CommitteeHandoff(Some(bytes))
             | RpcResponse::PotbHandoff(Some(bytes)) => {
@@ -316,6 +325,21 @@ impl TcpRpcServer {
     }
 }
 
+fn request_height(params: &JsonValue) -> Result<u64, &'static str> {
+    params
+        .get("height")
+        .and_then(|value| match value {
+            JsonValue::String(text)
+                if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                text.parse().ok()
+            }
+            JsonValue::Number(number) => u64::try_from(*number).ok(),
+            _ => None,
+        })
+        .ok_or("invalid or missing block height")
+}
+
 fn potb_request(request: &crate::json::JsonRpcRequest) -> Result<RpcRequest, &'static str> {
     let hex = request
         .params
@@ -323,7 +347,10 @@ fn potb_request(request: &crate::json::JsonRpcRequest) -> Result<RpcRequest, &'s
         .and_then(JsonValue::as_str)
         .ok_or("missing 'data' parameter")?;
     let admission = request.method == "submit_potb_admission";
-    let limit = if admission {
+    let governed = request.method == "submit_governance";
+    let limit = if governed {
+        consensus::governance::GovernanceCertificate::MAX_BYTES
+    } else if admission {
         consensus::admission::AdmissionCertificate::MAX_BYTES
     } else {
         consensus::history::HistoricalEvidence::MAX_BYTES
@@ -332,7 +359,9 @@ fn potb_request(request: &crate::json::JsonRpcRequest) -> Result<RpcRequest, &'s
         return Err("PoTB submission exceeds limit");
     }
     let bytes = parse_hex_bytes(hex).map_err(|_| "invalid submission hex")?;
-    Ok(if admission {
+    Ok(if governed {
+        RpcRequest::SubmitGovernance(bytes)
+    } else if admission {
         RpcRequest::SubmitPotbAdmission(bytes)
     } else {
         RpcRequest::SubmitPotbEvidence(bytes)
@@ -400,7 +429,12 @@ mod tests {
     #[test]
     fn block_height_accepts_full_width_decimal_and_rejects_invalid_input() {
         let service: Arc<Mutex<dyn RpcService>> = Arc::new(Mutex::new(InMemoryRpcService::new(42)));
-        for method in ["block", "committee_handoff", "potb_handoff"] {
+        for method in [
+            "block",
+            "committee_handoff",
+            "potb_handoff",
+            "state_proof_at",
+        ] {
             for value in [
                 JsonValue::Number(0),
                 JsonValue::String(u64::MAX.to_string()),
@@ -408,7 +442,10 @@ mod tests {
                 let req = crate::json::JsonRpcRequest {
                     id: 1,
                     method: method.into(),
-                    params: JsonValue::Object(vec![("height".into(), value)]),
+                    params: JsonValue::Object(vec![
+                        ("height".into(), value),
+                        ("key".into(), JsonValue::String("00".into())),
+                    ]),
                 };
                 assert_eq!(
                     TcpRpcServer::dispatch(&service, &req).result,
@@ -425,7 +462,10 @@ mod tests {
                 let req = crate::json::JsonRpcRequest {
                     id: 1,
                     method: method.into(),
-                    params: JsonValue::Object(vec![("height".into(), value)]),
+                    params: JsonValue::Object(vec![
+                        ("height".into(), value),
+                        ("key".into(), JsonValue::String("00".into())),
+                    ]),
                 };
                 assert_eq!(
                     TcpRpcServer::dispatch(&service, &req).error.unwrap().code,

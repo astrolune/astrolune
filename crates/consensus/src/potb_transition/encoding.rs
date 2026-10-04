@@ -18,15 +18,24 @@ use types::Hash256;
 
 impl PotbState {
     /// Upper bound includes 64 history peaks and all 32 permanent identity records.
-    pub const MAX_BYTES: usize = 105
+    pub const LEGACY_MAX_BYTES: usize = 105
         + CommitteeState::MAX_BYTES
         + CommitteeHistory::MAX_BYTES
         + 81 * MAX_ROTATION_VALIDATORS;
 
+    /// Version-two bound including policy and a single pending parameter update.
+    pub const MAX_BYTES: usize =
+        Self::LEGACY_MAX_BYTES + 4 + crate::governance::GovernanceState::MAX_BYTES;
+
     /// Serializes validated fields with sorted records and exact optional-offence tags.
     pub fn to_bytes(&self) -> Result<Vec<u8>, DecodeError> {
         self.validate().map_err(|_| DecodeError::NonCanonical)?;
-        let mut bytes = b"ALPTST01".to_vec();
+        let mut bytes = if self.governance.is_some() {
+            b"ALPTST02"
+        } else {
+            b"ALPTST01"
+        }
+        .to_vec();
         write_policy(&mut bytes, self.policy);
         bytes.extend_from_slice(&self.last_batch.0);
         write_field(&mut bytes, &self.committee.to_bytes()?)?;
@@ -41,6 +50,9 @@ impl PotbState {
                 bytes.extend_from_slice(&offence.0);
             }
         }
+        if let Some(governance) = &self.governance {
+            write_field(&mut bytes, &governance.to_bytes())?;
+        }
         Ok(bytes)
     }
 
@@ -50,9 +62,11 @@ impl PotbState {
             return Err(DecodeError::LimitExceeded);
         }
         let mut decoder = Decoder::new(bytes);
-        if decoder.read_exact(8)? != b"ALPTST01" {
-            return Err(DecodeError::Unsupported);
-        }
+        let governed = match decoder.read_exact(8)? {
+            b"ALPTST01" => false,
+            b"ALPTST02" => true,
+            _ => return Err(DecodeError::Unsupported),
+        };
         let policy = read_policy(&mut decoder)?;
         let last_batch = Hash256(decoder.read_fixed()?);
         let committee = read_field(&mut decoder, CommitteeState::MAX_BYTES)?;
@@ -81,6 +95,14 @@ impl PotbState {
             previous = Some(id);
             records.insert(id, record);
         }
+        let governance = if governed {
+            Some(crate::governance::GovernanceState::from_bytes(read_field(
+                &mut decoder,
+                crate::governance::GovernanceState::MAX_BYTES,
+            )?)?)
+        } else {
+            None
+        };
         decoder.finish()?;
         let result = Self {
             committee: CommitteeState::from_bytes(committee)?,
@@ -88,6 +110,7 @@ impl PotbState {
             history: CommitteeHistory::from_bytes(history)?,
             records,
             last_batch,
+            governance,
         };
         result.validate().map_err(|_| DecodeError::NonCanonical)?;
         Ok(result)
