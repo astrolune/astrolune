@@ -57,49 +57,17 @@ pub(crate) fn devnet() -> Result<(), CliError> {
         count,
         with_observer,
         with_contracts,
-        with_vrf,
-        with_potb,
+        consensus,
     } = devnet_options()?;
+    let with_vrf = matches!(consensus, DevnetConsensus::Vrf);
+    let with_potb = matches!(consensus, DevnetConsensus::Potb);
     std::fs::create_dir(&directory).map_err(error)?;
     let authority = TransportAuthority::generate().map_err(error)?;
     let keys: Vec<_> = (1..=count)
         .map(|index| ed25519_public_key(&[index; 32]))
         .collect();
-    let mut validators: Vec<_> = keys
-        .iter()
-        .map(|key| GenesisValidator {
-            id: ValidatorId(blake2s(key).0),
-            weight: 1,
-        })
-        .collect();
-    validators.sort_by_key(|validator| validator.id);
-    let wallet = transaction::address_from_public_key(&ed25519_public_key(&[240; 32]));
-    let genesis = Genesis {
-        version: if with_vrf || with_potb {
-            genesis::ROTATING_GENESIS_VERSION
-        } else {
-            genesis::GENESIS_VERSION
-        },
-        chain_id: 42,
-        capacity: Resources {
-            compute: 1_000_000,
-            memory: 1_000_000,
-            io: 1_000_000,
-            bandwidth: 1_000_000,
-        },
-        committee_size: usize::from(if with_vrf || with_potb {
-            count.saturating_sub(1).max(1)
-        } else {
-            count
-        }),
-        rotation_count: 1,
-        runtime_version: if with_contracts { 2 } else { 1 },
-        validators,
-        allocations: vec![Allocation {
-            address: wallet,
-            amount: 1_000_000_000,
-        }],
-    };
+    let genesis = devnet_genesis(&keys, count, with_contracts, with_vrf || with_potb);
+    let wallet = genesis.allocations[0].address;
     let profile = if with_potb {
         Some(
             consensus::potb_transition::PotbConfiguration::new(
@@ -306,8 +274,7 @@ struct DevnetOptions {
     count: u8,
     with_observer: bool,
     with_contracts: bool,
-    with_vrf: bool,
-    with_potb: bool,
+    consensus: DevnetConsensus,
 }
 fn devnet_options() -> Result<DevnetOptions, CliError> {
     let mut args = std::env::args_os().skip(2).peekable();
@@ -358,7 +325,56 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
         count,
         with_observer,
         with_contracts,
-        with_vrf,
-        with_potb,
+        consensus: if with_potb {
+            DevnetConsensus::Potb
+        } else if with_vrf {
+            DevnetConsensus::Vrf
+        } else {
+            DevnetConsensus::Fixed
+        },
     })
+}
+
+fn devnet_genesis(keys: &[[u8; 32]], count: u8, with_contracts: bool, rotating: bool) -> Genesis {
+    let mut validators: Vec<_> = keys
+        .iter()
+        .map(|key| GenesisValidator {
+            id: ValidatorId(blake2s(key).0),
+            weight: 1,
+        })
+        .collect();
+    validators.sort_by_key(|validator| validator.id);
+    let wallet = transaction::address_from_public_key(&ed25519_public_key(&[240; 32]));
+    Genesis {
+        version: if rotating {
+            genesis::ROTATING_GENESIS_VERSION
+        } else {
+            genesis::GENESIS_VERSION
+        },
+        chain_id: 42,
+        capacity: Resources {
+            compute: 1_000_000,
+            memory: 1_000_000,
+            io: 1_000_000,
+            bandwidth: 1_000_000,
+        },
+        committee_size: usize::from(if rotating {
+            count.saturating_sub(1).max(1)
+        } else {
+            count
+        }),
+        rotation_count: 1,
+        runtime_version: if with_contracts { 2 } else { 1 },
+        validators,
+        allocations: vec![Allocation {
+            address: wallet,
+            amount: 1_000_000_000,
+        }],
+    }
+}
+
+enum DevnetConsensus {
+    Fixed,
+    Vrf,
+    Potb,
 }

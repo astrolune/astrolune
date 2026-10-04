@@ -67,7 +67,8 @@ is the selected governance policy; a single administrator cannot substitute its
 signature for the quorum. The [request, protected approval, certificate and operator CLI](43-quorum-admission.md)
 are implemented. The [explicit PoTB producer profile](44-potb-state-transitions.md)
 now commits this history and implements canonical inclusion, active age weights
-and admission execution. Daemon activation remains open. Local observations and
+and admission execution. [Live daemon activation](45-live-potb-network.md) also
+provides authenticated evidence submission and gossip. Local observations and
 portable bundles outside finalized inclusion must not change consensus power.
 
 ## Checks

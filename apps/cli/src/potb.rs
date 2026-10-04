@@ -36,26 +36,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
     let client = wallet::client(args.get(expected))?;
     let mut trusted = PotbVerifier::new(&profile, &keys).map_err(error)?;
     if command == "potb-submit-evidence" {
-        let evidence = HistoricalEvidence::from_bytes(&read_bounded(
-            Path::new(&args[2]),
-            HistoricalEvidence::MAX_BYTES,
-        )?)
-        .map_err(error)?;
-        let height = client
-            .chain_status()
-            .map_err(error)?
-            .finalized_height
-            .checked_add(1)
-            .ok_or_else(|| error("height exhausted"))?;
-        client
-            .advance_potb_handoffs(&mut trusted, height, 10_000, Duration::from_secs(60))
-            .map_err(error)?;
-        evidence
-            .verify(trusted.current().history())
-            .map_err(error)?;
-        let id = client.submit_potb_evidence(&evidence).map_err(error)?;
-        println!("pending_offence: {id}");
-        return Ok(());
+        return submit_evidence(Path::new(&args[2]), &client, &mut trusted);
     }
     let output = Path::new(&args[4]);
     if output.exists() {
@@ -160,5 +141,30 @@ fn configuration(args: &[OsString]) -> Result<(), CliError> {
     .map_err(error)?;
     wallet::write_new(Path::new(output), &profile.to_bytes())?;
     println!("potb_configuration: {}", profile.commitment());
+    Ok(())
+}
+
+fn submit_evidence(
+    path: &Path,
+    client: &rpc::TcpRpcClient,
+    trusted: &mut PotbVerifier,
+) -> Result<(), CliError> {
+    let evidence =
+        HistoricalEvidence::from_bytes(&read_bounded(path, HistoricalEvidence::MAX_BYTES)?)
+            .map_err(error)?;
+    let height = client
+        .chain_status()
+        .map_err(error)?
+        .finalized_height
+        .checked_add(1)
+        .ok_or_else(|| error("height exhausted"))?;
+    client
+        .advance_potb_handoffs(trusted, height, 10_000, Duration::from_secs(60))
+        .map_err(error)?;
+    evidence
+        .verify(trusted.current().history())
+        .map_err(error)?;
+    let id = client.submit_potb_evidence(&evidence).map_err(error)?;
+    println!("pending_offence: {id}");
     Ok(())
 }

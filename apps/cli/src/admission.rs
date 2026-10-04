@@ -146,7 +146,9 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
         }
         _ => return Err(error("invalid admission arguments; run cli help")),
     }
-    println!("membership changes only after inclusion in a finalized PoTB block");
+    println!(
+        "activation: not included; membership changes only after inclusion in a finalized PoTB block"
+    );
     Ok(())
 }
 

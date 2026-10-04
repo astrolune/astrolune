@@ -387,45 +387,9 @@ impl RpcService for NetworkStatus {
         let mut node = self.node.lock().map_err(|_| RpcError::Unavailable)?;
         match request {
             request @ (RpcRequest::SubmitPotbAdmission(_) | RpcRequest::SubmitPotbEvidence(_)) => {
-                let message = match request {
-                    RpcRequest::SubmitPotbAdmission(bytes) => {
-                        node::network_wire::NetworkMessage::PotbAdmission(
-                            consensus::admission::AdmissionCertificate::from_bytes(&bytes)
-                                .map_err(|_| RpcError::InvalidRequest)?,
-                        )
-                    }
-                    RpcRequest::SubmitPotbEvidence(bytes) => {
-                        node::network_wire::NetworkMessage::PotbEvidence(
-                            consensus::history::HistoricalEvidence::from_bytes(&bytes)
-                                .map_err(|_| RpcError::InvalidRequest)?,
-                        )
-                    }
-                    _ => unreachable!(),
-                };
-                node.submit_potb(message)
-                    .map(RpcResponse::PotbAccepted)
-                    .map_err(|error| match error {
-                        NetworkNodeError::Input(_) => RpcError::InvalidRequest,
-                        NetworkNodeError::Local(_) => {
-                            self.storage_failed.store(true, Ordering::Release);
-                            RpcError::Unavailable
-                        }
-                    })
+                self.submit_potb(&mut node, request)
             }
-            RpcRequest::PotbHandoff(height) => {
-                let handoff =
-                    node::handoff::read_potb_handoff(node.storage(), height).map_err(|_| {
-                        self.storage_failed.store(true, Ordering::Release);
-                        self.metrics.add(NodeMetric::LocalFailures, 1);
-                        RpcError::Unavailable
-                    })?;
-                Ok(RpcResponse::PotbHandoff(
-                    handoff
-                        .map(|value| value.to_bytes())
-                        .transpose()
-                        .map_err(|_| RpcError::Unavailable)?,
-                ))
-            }
+            RpcRequest::PotbHandoff(height) => self.potb_handoff(&node, height),
             RpcRequest::Receipt { id, height } => self.receipt(&node, id, height),
             RpcRequest::CommitteeHandoff(height) => {
                 let handoff =
@@ -517,5 +481,54 @@ impl RpcService for NetworkStatus {
                     })
             }
         }
+    }
+}
+
+impl NetworkStatus {
+    fn submit_potb(
+        &self,
+        node: &mut PeerNode,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, RpcError> {
+        let message = match request {
+            RpcRequest::SubmitPotbAdmission(bytes) => {
+                node::network_wire::NetworkMessage::PotbAdmission(
+                    consensus::admission::AdmissionCertificate::from_bytes(&bytes)
+                        .map_err(|_| RpcError::InvalidRequest)?,
+                )
+            }
+            RpcRequest::SubmitPotbEvidence(bytes) => {
+                node::network_wire::NetworkMessage::PotbEvidence(
+                    consensus::history::HistoricalEvidence::from_bytes(&bytes)
+                        .map_err(|_| RpcError::InvalidRequest)?,
+                )
+            }
+            _ => unreachable!(),
+        };
+        node.submit_potb(message)
+            .map(RpcResponse::PotbAccepted)
+            .map_err(|error| match error {
+                NetworkNodeError::Input(_) => RpcError::InvalidRequest,
+                NetworkNodeError::Local(_) => {
+                    self.storage_failed.store(true, Ordering::Release);
+                    RpcError::Unavailable
+                }
+            })
+    }
+}
+
+impl NetworkStatus {
+    fn potb_handoff(&self, node: &PeerNode, height: u64) -> Result<RpcResponse, RpcError> {
+        let handoff = node::handoff::read_potb_handoff(node.storage(), height).map_err(|_| {
+            self.storage_failed.store(true, Ordering::Release);
+            self.metrics.add(NodeMetric::LocalFailures, 1);
+            RpcError::Unavailable
+        })?;
+        Ok(RpcResponse::PotbHandoff(
+            handoff
+                .map(|value| value.to_bytes())
+                .transpose()
+                .map_err(|_| RpcError::Unavailable)?,
+        ))
     }
 }

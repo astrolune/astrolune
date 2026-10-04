@@ -11,8 +11,9 @@ candidate signature or one administrator's permission cannot replace this quorum
 The request, protected approval, certificate and operator CLI are implemented and
 tested. Genesis versions 1 and 2 do not execute admission certificates. The
 [separate PoTB producer profile](44-potb-state-transitions.md) implements canonical
-system-lane inclusion and active weight/roster transitions. Daemon candidate
-provisioning and live networking remain activation work. No existing profile is silently reinterpreted.
+system-lane inclusion and active weight/roster transitions. [Live activation](45-live-potb-network.md)
+adds candidate provisioning, bounded gossip and explicit RPC submission. Existing
+profiles are not silently reinterpreted.
 
 ## Signed context
 
@@ -103,5 +104,5 @@ protected journals and assembles/verifies the quorum entirely offline afterward.
 
 The shared mutation oracle includes the intent and all three envelopes. The
 71-seed, one-million-input deterministic campaign passed with 299,954 accepted
-decoder paths. This count is not coverage-guided fuzz coverage and does not claim
-completion of the remaining activation work.
+decoder paths. This historical count is not coverage-guided fuzz coverage.
+The later live PoTB qualification is recorded in [document 45](45-live-potb-network.md).

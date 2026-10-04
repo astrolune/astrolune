@@ -23,6 +23,9 @@ use transaction::{Payment, address_from_public_key, signing_hash};
 use types::{AccountState, Address, Resources, Transaction, ValidatorId};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+#[path = "../../../crates/consensus/tests/support/potb.rs"]
+mod potb_support;
 struct Fixture {
     path: PathBuf,
     genesis: Genesis,
@@ -33,6 +36,9 @@ impl Fixture {
         Self::with_profile(1, 4)
     }
     fn with_profile(version: u16, committee_size: usize) -> Self {
+        Self::with_activation(version, committee_size, false)
+    }
+    fn with_activation(version: u16, committee_size: usize, potb: bool) -> Self {
         let path = std::env::temp_dir().join(format!(
             "astrolune-network-process-{}-{}",
             std::process::id(),
@@ -68,7 +74,19 @@ impl Fixture {
                 amount: 1_000_000,
             }],
         };
-        std::fs::write(path.join("genesis.bin"), genesis.to_bytes()).unwrap();
+        let profile = potb.then(|| potb_profile(&genesis));
+        let namespace = profile.as_ref().map_or_else(
+            || genesis.commitment().unwrap(),
+            consensus::potb_transition::PotbConfiguration::commitment,
+        );
+        std::fs::write(
+            path.join("genesis.bin"),
+            profile.as_ref().map_or_else(
+                || genesis.to_bytes(),
+                consensus::potb_transition::PotbConfiguration::to_bytes,
+            ),
+        )
+        .unwrap();
         std::fs::write(path.join("validators.bin"), keys.concat()).unwrap();
         let authority = p2p::provisioning::TransportAuthority::generate().unwrap();
         for index in 1..=5 {
@@ -89,7 +107,7 @@ impl Fixture {
                     data.join("signing.journal"),
                     SigningContext {
                         chain_id: 42,
-                        genesis: genesis.commitment().unwrap(),
+                        genesis: namespace,
                     },
                     [index; 32],
                 )
@@ -844,4 +862,149 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
         consensus::rotation::HandoffVerifier::new(&fixture.genesis, &fixture.keys).unwrap();
     fresh.apply(&first).unwrap();
     assert_eq!(fresh.current().context().unwrap().members().count(), 3);
+}
+
+#[test]
+fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
+    let fixture = Fixture::with_activation(2, 3, true);
+    let profile = potb_profile(&fixture.genesis);
+    let mut reservations: Vec<_> = (0..5)
+        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
+        .collect();
+    let peers: Vec<_> = reservations
+        .iter()
+        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .collect();
+    let mut processes = Vec::new();
+    for index in 1..=4 {
+        drop(reservations[index - 1].take());
+        processes.push(fixture.start(index, &peers));
+    }
+    let tx = payment();
+    let submitted = call(
+        &processes[0].1,
+        "submit_transaction",
+        &format!(r#"{{"data":"{}"}}"#, hex(&tx.to_bytes())),
+    );
+    assert!(submitted.get("error").is_none(), "{submitted:?}");
+    await_payment(&processes.iter().collect::<Vec<_>>());
+    let client =
+        rpc::TcpRpcClient::new(processes[0].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while client.chain_status().unwrap().finalized_height < 4 {
+        assert!(Instant::now() < deadline, "rotating quorum did not advance");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let key = state::account_key(Address([77; 32]));
+    let proof = client.state_proof(&key).unwrap();
+    let mut trusted =
+        consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
+    client
+        .advance_potb_handoffs(
+            &mut trusted,
+            proof.header.unwrap().height,
+            100,
+            Duration::from_secs(20),
+        )
+        .unwrap();
+    let value = proof.verify_with_potb(&trusted, &key, 4).unwrap().unwrap();
+    assert_eq!(
+        value,
+        AccountState {
+            nonce: 0,
+            balance: 123
+        }
+        .to_bytes()
+    );
+    assert!(
+        proof
+            .verify(&fixture.genesis, &fixture.keys, &key, 0)
+            .is_err()
+    );
+    drop(reservations[4].take());
+    let observer = fixture.start(5, &peers);
+    await_payment(&[&observer]);
+    drop(observer);
+    drop(processes);
+    let mut restarted = Vec::new();
+    for index in 1..=5 {
+        restarted.push(fixture.start(index, &peers));
+    }
+    await_payment(&restarted.iter().collect::<Vec<_>>());
+    let client =
+        rpc::TcpRpcClient::new(restarted[4].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    let first = client.potb_handoff(1).unwrap().unwrap();
+    let mut fresh = consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
+    fresh.apply(&first).unwrap();
+    assert_eq!(
+        fresh
+            .current()
+            .committee()
+            .context()
+            .unwrap()
+            .members()
+            .count(),
+        3
+    );
+}
+
+fn potb_profile(genesis: &Genesis) -> consensus::potb_transition::PotbConfiguration {
+    consensus::potb_transition::PotbConfiguration::new(
+        genesis.clone(),
+        consensus::potb::PotbPolicy {
+            epoch_blocks: 2,
+            initial_weight: 1,
+            age_increment: 1,
+            maximum_weight: 10,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn potb_rpc_authenticates_and_persists_pending_admission_without_claiming_finality() {
+    let fixture = Fixture::with_activation(2, 3, true);
+    let profile = potb_profile(&fixture.genesis);
+    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+    let peers = vec![reserved.local_addr().unwrap().to_string()];
+    drop(reserved);
+    let process = fixture.start(1, &peers);
+    let client =
+        rpc::TcpRpcClient::new(process.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    let trusted = consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
+    let admission = potb_support::admission(trusted.current(), trusted.parent(), 99);
+    assert_eq!(
+        client.submit_potb_admission(&admission).unwrap(),
+        admission.request().id()
+    );
+    assert_eq!(
+        client.submit_potb_admission(&admission).unwrap(),
+        admission.request().id()
+    );
+    assert_eq!(client.chain_status().unwrap().finalized_height, 0);
+    let bytes = std::fs::read(fixture.path.join("1/consensus-cache.bin")).unwrap();
+    assert!(node::network_wire::decode_exchange(profile.commitment(), &bytes).unwrap().iter().any(|message| matches!(message, node::network_wire::NetworkMessage::PotbAdmission(value) if value == &admission)));
+    let mut corrupt = admission.to_bytes().unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    let params = format!(r#"{{"data":"{}"}}"#, hex(&corrupt));
+    assert!(
+        call(&process.1, "submit_potb_admission", &params)
+            .get("error")
+            .is_some()
+    );
+    assert!(
+        call(
+            &process.1,
+            "submit_potb_evidence",
+            &format!(r#"{{"data":"{}"}}"#, hex(&admission.to_bytes().unwrap()))
+        )
+        .get("error")
+        .is_some()
+    );
+    let key = genesis::genesis_key();
+    client
+        .state_proof(&key)
+        .unwrap()
+        .verify_potb_genesis(&profile, &fixture.keys, &key)
+        .unwrap();
 }

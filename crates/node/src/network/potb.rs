@@ -129,13 +129,24 @@ impl NetworkNode {
         Ok(())
     }
 
-    pub(super) fn restore_potb_inclusions(&mut self, messages: &[super::NetworkMessage]) {
+    pub(super) fn restore_potb_inclusions(
+        &mut self,
+        messages: &[super::NetworkMessage],
+    ) -> Result<(), NetworkNodeError> {
         for message in messages {
             match message {
-                super::NetworkMessage::PotbAdmission(value) => { let _ = self.queue_potb_admission(value.clone()); }
-                super::NetworkMessage::PotbEvidence(value) => { let _ = self.queue_potb_evidence(value.clone()); }
+                super::NetworkMessage::PotbAdmission(value) => {
+                    let _ = self.queue_potb_admission(value.clone());
+                }
+                super::NetworkMessage::PotbEvidence(value) => {
+                    let _ = self.queue_potb_evidence(value.clone());
+                }
                 _ => {}
             }
         }
+        if self.network.potb() {
+            self.refresh_potb_inclusions()?;
+        }
+        Ok(())
     }
 }

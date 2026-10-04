@@ -71,6 +71,11 @@ On 2026-10-03 the explicit PoTB configuration/state/batch/handoff formats added
 seven structured seeds, for 78 total. The repeated one-million-input campaign
 passed with 292,867 accepted decoder paths. Eight separately frozen PoTB objects
 also passed authenticated Rust replay and independent Python framing, namespace,
-history and weight checks; [profile and remaining activation work](44-potb-state-transitions.md).
+history and weight checks; [policy profile](44-potb-state-transitions.md).
 The old 50 protocol fixtures remained unchanged. These counts are deterministic
 mutation results, not coverage-guided fuzz coverage.
+
+On 2026-10-04 the live PoTB network added admission/evidence gossip and stored
+PoTB effects, for 81 structured seeds. The one-million-input campaign passed
+with 293,326 accepted decoder paths. The original 50 legacy and eight PoTB policy
+fixtures remain unchanged; [activation and verification scope](45-live-potb-network.md).

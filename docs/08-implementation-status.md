@@ -4,14 +4,14 @@
 
 ## 8.1 Current baseline
 
-As of 2026-10-03, this repository contains a Rust 2024 workspace with:
+As of 2026-10-04, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
 - normalized access leases and dependency-preserving greedy execution-wave planning;
 - compileable interfaces for cryptography, genesis, transactions, PoTB committees, BFT votes, state, runtime, execution, persistence, synchronization, P2P, RPC, configuration, keystore, telemetry, and node coordination;
 - a tested in-memory mempool reference policy, genesis validation, configuration secret redaction, quorum arithmetic, decoder boundary helpers, and workspace integration invariants;
-- authenticated double-vote evidence, bounded durable validator evidence outboxes, offline evidence CLI verification, experimental deterministic scoring and an explicit PoTB producer profile with canonical inclusion, active age weights, quorum admission and authenticated recovery; daemon activation remains open;
+- authenticated double-vote evidence, bounded durable validator evidence outboxes, offline evidence CLI verification, experimental deterministic scoring and an explicit PoTB producer profile with canonical inclusion, active age weights, quorum admission and authenticated recovery, with daemon activation and RPC/CLI/DNS verification;
 - bounded finalized-block history RPC for read-only explorers, alongside status and account reads;
 - an allocation-free Rust contract SDK with tested wasm32 host bindings and bounded offline source-package reconstruction;
 - an on-chain DNS registry with owner-authorized leases and a certified-proof resolver;
@@ -21,7 +21,7 @@ As of 2026-10-03, this repository contains a Rust 2024 workspace with:
 - a local demonstration service (`FullNodeService`) that simulates finality while coordinating execution and storage;
 - a daemon with both local demonstration and certified fixed-committee network modes, bounded peer exchange, payment gossip, protected signing recovery, and RPC status tied to durable commits.
 
-The repository now runs a **certified reference network** for native payments and fixed-committee BFT across independent daemon processes. A [reference CLI wallet](24-wallet-and-rpc-client.md) supports offline signing and real RPC submission. [Live genesis-v2 VRF rotation](40-live-vrf-network.md), standby participation and verified client catch-up are implemented. Daemon activation of the explicit PoTB producer profile, historical state indexing and physical log retention remain unfinished. Certified state and receipt queries, authenticated finality waiting, on-chain DNS and bounded source-package tooling are implemented. Verified VRF selection, the WASM runtime and signed contract activation are implemented; see [VRF](28-vrf-and-weighted-selection.md), [runtime](29-parallel-payments-and-wasm.md) and [contracts](30-signed-contracts.md). See [network setup and current limits](19-reference-network.md).
+The repository now runs a **certified reference network** for native payments and fixed-committee BFT across independent daemon processes. A [reference CLI wallet](24-wallet-and-rpc-client.md) supports offline signing and real RPC submission. [Live genesis-v2 VRF rotation](40-live-vrf-network.md), standby participation and verified client catch-up are implemented. [Live PoTB activation](45-live-potb-network.md) is implemented. Historical state indexing and physical log retention remain unfinished. Certified state and receipt queries, authenticated finality waiting, on-chain DNS and bounded source-package tooling are implemented. Verified VRF selection, the WASM runtime and signed contract activation are implemented; see [VRF](28-vrf-and-weighted-selection.md), [runtime](29-parallel-payments-and-wasm.md) and [contracts](30-signed-contracts.md). See [network setup and current limits](19-reference-network.md).
 
 ## 8.2 Component status
 
@@ -31,7 +31,7 @@ The repository now runs a **certified reference network** for native payments an
 | Shared protocol types | interface baseline |
 | Genesis | bounded version-1 decoding, validated BLAKE2s commitment, account/validator state materialization, CLI verification, atomic daemon activation and restart identity checks implemented; exact genesis-key registry and explicit protected signer provisioning implemented |
 | Cryptography and VRF | standard BLAKE2s-256 and strict Ed25519 implemented/tested; registered validator-key verification; strict registered-key RFC 9381 VRF verification/generation and RFC/malleability/context tests implemented |
-| PoTB and BFT | checked committee commitments, registered Ed25519 vote authentication, bounded round-specific quorum collection, and independently verified version-1 certificates implemented/tested; protected local prevote/precommit locks, verified valid-round proofs, and timeout transitions implemented/tested; signed proposals and explicit reference round-robin designation implemented/tested; reference monotonic timers and fixed-committee daemon networking implemented/tested; verified VRF selection, complete contribution collection, certified handoff and rotating execution/history replay APIs implemented; daemon activation and formal distributed liveness remain open |
+| PoTB and BFT | checked committee commitments, registered Ed25519 vote authentication, bounded round-specific quorum collection, and independently verified version-1 certificates implemented/tested; protected local prevote/precommit locks, verified valid-round proofs, and timeout transitions implemented/tested; signed proposals and explicit reference round-robin designation implemented/tested; reference monotonic timers and fixed-committee daemon networking implemented/tested; verified VRF selection, complete contribution collection, certified handoff and rotating execution/history replay APIs and explicit PoTB daemon/client activation implemented; formal distributed liveness remains open |
 | Keystore | single-key Ed25519 signer, bounded decision journal with protected watermark rollover, chain/genesis/key binding, monotonic watermark, atomic version-2 vote/lock records, process locking, restart and uncertain-write recovery implemented/tested; daemon open-only journal recovery and explicit CLI provisioning implemented/tested; encrypted wallet vaults and OS-generated keys implemented/tested; consensus key custody and anti-rollback anchors remain open |
 | Transactions | canonical signing/ID commitments and state-aware signed validator implemented/tested; native signed payment transitions and fixed reference fees implemented/tested; version-1 envelope, inclusive expiry, signed lane/prices, and expiry eviction implemented/tested |
 | Mempool | bounded in-memory reference admission and deterministic selection implemented/tested |
@@ -107,7 +107,7 @@ certified state/receipt queries, authenticated finality waiting and on-chain DNS
 
 Distributed calibration, interoperability suite, long fuzz campaigns, reproducible releases, dependency audit, independent cryptography/consensus/runtime/security reviews, key ceremonies, and incident/operator runbooks.
 
-Supported fixed/rotating wire histories retain 50 frozen compatibility fixtures. The explicit PoTB producer profile adds eight separate fixtures with authenticated replay and independent Python checks. The shared million-input deterministic mutation campaign now uses 78 seeds; [scope](41-protocol-compatibility.md) and [PoTB qualification](44-potb-state-transitions.md).
+Supported fixed/rotating wire histories retain 50 frozen compatibility fixtures. The explicit PoTB producer profile adds eight separate fixtures with authenticated replay and independent Python checks. The shared deterministic mutation corpus now uses 81 seeds and passes one million inputs; [scope](41-protocol-compatibility.md) and [live PoTB qualification](45-live-potb-network.md).
 
 The concise checklist is maintained in [`../ROADMAP.md`](../ROADMAP.md).
 
@@ -121,7 +121,7 @@ Unsafe Rust remains forbidden except in the dedicated wasm32 FFI module; [docume
 
 Before production implementation, resolve:
 
-1. Daemon activation of the [implemented PoTB producer profile](44-potb-state-transitions.md), live admission provisioning, evidence availability, governance and formal claims. Explicit incumbent-quorum admission authorization and its existing-network CLI are [implemented](43-quorum-admission.md).
+1. Adversarial contribution/evidence availability, capacity/fee governance and formal safety/liveness. The [live PoTB profile](45-live-potb-network.md), candidate provisioning and incumbent-quorum admission CLI are implemented. [Bounded delivery simulations](46-rotating-network-simulations.md) cover both rotating profiles; broader Byzantine/churn schedules remain open.
 2. Alternative availability policies beyond the implemented complete-roster private-network profile.
 3. Rotating weighted BFT lock, unlock, timeout, and handoff rules.
 4. Versioned activation of future protocol changes; current encoding/hash compatibility is fixed by the [literal corpus](41-protocol-compatibility.md).

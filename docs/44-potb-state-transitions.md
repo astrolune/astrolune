@@ -8,11 +8,10 @@ exclusion and incumbent-quorum admission. System and application execution share
 one atomic block/state commit. Both append-only logs and legacy archive backends
 support independently authenticated, complete-history recovery.
 
-This is an explicit library/producer profile. Daemon startup, operator provisioning,
-admission/evidence gossip, RPC handoff serving and client catch-up for this profile
-remain unimplemented. Existing genesis-v1/v2 networks retain their current rules.
-The CLI admission commands still target those existing networks; their output does
-not activate this profile. No migration of an existing data directory is supplied.
+This explicit profile also has [daemon and client activation](45-live-potb-network.md):
+protected provisioning, bounded admission/evidence gossip, durable handoff serving,
+RPC/CLI verification and DNS catch-up. Existing genesis-v1/v2 networks retain their
+current rules. No migration of an existing data directory is supplied.
 
 ## Configuration and authority
 
@@ -149,10 +148,10 @@ rollback protection still requires an independently supplied minimum checkpoint.
 `potb_handoff` constructs a portable next-state witness before publication; callers
 must serve it only after the corresponding commit succeeds. `PotbVerifier` checks
 that witness and updates authority atomically. It authenticates consensus-state
-transfer, while a full node additionally re-executes applications. Current receipt
-storage retains normal receipts and genesis binding; the existing legacy committee
-witness slot is not repurposed. Dedicated persisted proof serving is still needed
-for daemon/RPC activation.
+transfer, while a full node additionally re-executes applications. Versioned
+`ALEFF003` receipt storage now retains a separate PoTB witness alongside receipts
+and genesis binding; the legacy committee witness slot is not repurposed.
+The live network serves these atomically published witnesses through `potb_handoff`.
 
 ## Verification
 

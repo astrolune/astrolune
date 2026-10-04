@@ -132,39 +132,7 @@ pub(super) fn anchor(
         .map_err(error)?;
         Some(pending)
     } else {
-        let mut file = File::open(&destination).map_err(error)?;
-        let mut encoded_header = [0; 48];
-        file.read_exact(&mut encoded_header).map_err(error)?;
-        if encoded_header.as_slice() != header {
-            return Err(error("handoff sidecar anchor mismatch"));
-        }
-        for _ in 1..height {
-            let mut length = [0; 4];
-            file.read_exact(&mut length).map_err(error)?;
-            let length = u32::from_le_bytes(length) as usize;
-            if length
-                > match verifier {
-                    Authority::Rotation(_) => CommitteeHandoff::MAX_BYTES,
-                    Authority::Potb(_) => PotbHandoff::MAX_BYTES,
-                }
-            {
-                return Err(error("handoff frame exceeds limit"));
-            }
-            let mut bytes = vec![0; length];
-            file.read_exact(&mut bytes).map_err(error)?;
-            match &mut verifier {
-                Authority::Rotation(trusted) => {
-                    trusted.apply(&CommitteeHandoff::from_bytes(&bytes).map_err(error)?)
-                }
-                Authority::Potb(trusted) => {
-                    trusted.apply(&PotbHandoff::from_bytes(&bytes).map_err(error)?)
-                }
-            }
-            .map_err(error)?;
-        }
-        if file.read(&mut [0]).map_err(error)? != 0 {
-            return Err(error("trailing handoff data"));
-        }
+        read_history(&destination, &header, height, &mut verifier)?;
         None
     };
     Ok(Trust { verifier, pending })
@@ -209,4 +177,46 @@ impl Authority {
             Self::Potb(value) => proof.verify_with_potb(value, id, minimum),
         }
     }
+}
+
+fn read_history(
+    destination: &Path,
+    header: &[u8],
+    height: u64,
+    verifier: &mut Authority,
+) -> Result<(), CliError> {
+    let mut file = File::open(destination).map_err(error)?;
+    let mut encoded_header = [0; 48];
+    file.read_exact(&mut encoded_header).map_err(error)?;
+    if encoded_header.as_slice() != header {
+        return Err(error("handoff sidecar anchor mismatch"));
+    }
+    for _ in 1..height {
+        let mut length = [0; 4];
+        file.read_exact(&mut length).map_err(error)?;
+        let length = u32::from_le_bytes(length) as usize;
+        if length
+            > match verifier {
+                Authority::Rotation(_) => CommitteeHandoff::MAX_BYTES,
+                Authority::Potb(_) => PotbHandoff::MAX_BYTES,
+            }
+        {
+            return Err(error("handoff frame exceeds limit"));
+        }
+        let mut bytes = vec![0; length];
+        file.read_exact(&mut bytes).map_err(error)?;
+        match &mut *verifier {
+            Authority::Rotation(trusted) => {
+                trusted.apply(&CommitteeHandoff::from_bytes(&bytes).map_err(error)?)
+            }
+            Authority::Potb(trusted) => {
+                trusted.apply(&PotbHandoff::from_bytes(&bytes).map_err(error)?)
+            }
+        }
+        .map_err(error)?;
+    }
+    if file.read(&mut [0]).map_err(error)? != 0 {
+        return Err(error("trailing handoff data"));
+    }
+    Ok(())
 }

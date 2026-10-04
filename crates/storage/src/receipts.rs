@@ -256,6 +256,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn potb_effects_use_a_distinct_tag_key_and_exclusive_bounded_witness() {
+        use state::{InMemoryState, StateDatabase, StateDiff};
+        let mut db = InMemoryState::new();
+        let key = types::StateKey(types::domain::POTB_STATE_KEY.to_vec());
+        let mut diff = StateDiff::new();
+        diff.put(genesis::genesis_key(), vec![7; 32]);
+        diff.put(key.clone(), vec![9; 7509]);
+        db.commit(db.root(), &[diff]).unwrap();
+        let snapshot = db.snapshot().unwrap();
+        let mut effects = BlockEffects {
+            receipts: vec![],
+            genesis: StateValueProof::create(snapshot.as_ref(), &genesis::genesis_key()).unwrap(),
+            committee: None,
+            potb: Some(StateValueProof::create(snapshot.as_ref(), &key).unwrap()),
+        };
+        let header = BlockHeader {
+            height: 1,
+            parent: Hash256::ZERO,
+            state_root: db.root(),
+            receipts_root: crypto::compute_receipts_root(&[]),
+            transactions_root: Hash256::ZERO,
+            committee_root: Hash256::ZERO,
+            capacity: types::Resources::ZERO,
+        };
+        effects.validate_header(&header).unwrap();
+        let bytes = effects.to_bytes().unwrap();
+        assert_eq!(&bytes[..8], b"ALEFF003");
+        assert_eq!(BlockEffects::from_bytes(&bytes).unwrap(), effects);
+        assert!(BlockEffects::from_bytes(&bytes[..bytes.len() - 1]).is_err());
+        assert!(BlockEffects::from_bytes(&[bytes.as_slice(), &[0]].concat()).is_err());
+        let mut legacy = bytes.clone();
+        legacy[..8].copy_from_slice(b"ALEFF002");
+        assert!(BlockEffects::from_bytes(&legacy).is_err());
+        effects.committee = effects.potb.clone();
+        assert!(effects.to_bytes().is_err());
+        assert!(effects.validate_header(&header).is_err());
+        effects.committee = None;
+        effects.potb = Some(effects.genesis.clone());
+        assert!(effects.validate_header(&header).is_err());
+        let mut diff = StateDiff::new();
+        diff.put(key.clone(), vec![9; 7510]);
+        db.commit(db.root(), &[diff]).unwrap();
+        let snapshot = db.snapshot().unwrap();
+        effects.genesis =
+            StateValueProof::create(snapshot.as_ref(), &genesis::genesis_key()).unwrap();
+        effects.potb = Some(StateValueProof::create(snapshot.as_ref(), &key).unwrap());
+        assert!(
+            effects
+                .validate_header(&BlockHeader {
+                    state_root: db.root(),
+                    ..header
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
     fn effects_preserve_legacy_bytes_and_authenticate_the_optional_witness() {
         use state::{InMemoryState, StateDatabase, StateDiff};
         let mut db = InMemoryState::new();

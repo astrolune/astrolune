@@ -257,6 +257,12 @@ fn potb_seeds() -> Vec<Vec<u8>> {
     trusted.apply(&handoff).unwrap();
     let evidence = potb_support::evidence(trusted.current(), &first, &roots, 1);
     let admission = potb_support::admission(trusted.current(), trusted.parent(), 99);
+    for message in [
+        node::network_wire::NetworkMessage::PotbEvidence(evidence.clone()),
+        node::network_wire::NetworkMessage::PotbAdmission(admission.clone()),
+    ] {
+        seeds.push(node::network_wire::encode_exchange(Hash256([1; 32]), &[message]).unwrap());
+    }
     let batch = PotbBatch::new(
         potb_support::contributions(trusted.current()),
         vec![evidence],
@@ -265,6 +271,25 @@ fn potb_seeds() -> Vec<Vec<u8>> {
     .unwrap();
     let handoff = potb_support::handoff(&trusted, batch);
     trusted.apply(&handoff).unwrap();
+    seeds.push(
+        storage::BlockEffects {
+            receipts: vec![],
+            genesis: state::StateValueProof::create(
+                config
+                    .materialize(&keys)
+                    .unwrap()
+                    .snapshot()
+                    .unwrap()
+                    .as_ref(),
+                &genesis::genesis_key(),
+            )
+            .unwrap(),
+            committee: None,
+            potb: Some(handoff.next_state.clone()),
+        }
+        .to_bytes()
+        .unwrap(),
+    );
     seeds.extend([
         trusted.current().to_bytes().unwrap(),
         handoff.batch.to_bytes().unwrap(),

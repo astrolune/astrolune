@@ -8,6 +8,16 @@ All notable changes to AstroLune will be documented in this file. The format fol
 
 ### Fixed
 
+- Activate the explicit PoTB configuration in daemon/observer networking, candidate
+  provisioning, bounded admission/evidence gossip and atomic `ALEFF003` handoff storage.
+  Add authenticated RPC/CLI/DNS catch-up, offline sidecars and operator submission.
+  Restore pending inclusions even when a single-member VRF batch is already complete.
+  Preserve legacy encodings and add TLS, client, CLI, DNS and recovery coverage.
+
+- Add deterministic delivery simulations for genesis-v2 and PoTB networks, checking
+  shared finalized history under partitions, loss, delay, duplication, invalid
+  messages and restart, followed by authenticated observer catch-up.
+
 - Qualify the Rust 1.99.0 update against strict Clippy and the renamed atomic API.
   Resolve native/contract compilers explicitly through rustup, and bind archive
   compiler identity and binary hashes to the independent-build report.

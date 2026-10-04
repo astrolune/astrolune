@@ -210,12 +210,10 @@ impl TcpRpcServer {
                     }
                 }
             }
-            "submit_potb_admission" | "submit_potb_evidence" => {
-                match potb_request(rpc_req) {
-                    Ok(request) => request,
-                    Err(error) => return rpc_error(rpc_req.id, -32602, error),
-                }
-            }
+            "submit_potb_admission" | "submit_potb_evidence" => match potb_request(rpc_req) {
+                Ok(request) => request,
+                Err(error) => return rpc_error(rpc_req.id, -32602, error),
+            },
             _ => {
                 return rpc_error(rpc_req.id, -32601, "method not found");
             }
@@ -319,12 +317,26 @@ impl TcpRpcServer {
 }
 
 fn potb_request(request: &crate::json::JsonRpcRequest) -> Result<RpcRequest, &'static str> {
-    let hex = request.params.get("data").and_then(JsonValue::as_str).ok_or("missing 'data' parameter")?;
+    let hex = request
+        .params
+        .get("data")
+        .and_then(JsonValue::as_str)
+        .ok_or("missing 'data' parameter")?;
     let admission = request.method == "submit_potb_admission";
-    let limit = if admission { consensus::admission::AdmissionCertificate::MAX_BYTES } else { consensus::history::HistoricalEvidence::MAX_BYTES };
-    if hex.strip_prefix("0x").unwrap_or(hex).len() > limit * 2 { return Err("PoTB submission exceeds limit"); }
+    let limit = if admission {
+        consensus::admission::AdmissionCertificate::MAX_BYTES
+    } else {
+        consensus::history::HistoricalEvidence::MAX_BYTES
+    };
+    if hex.strip_prefix("0x").unwrap_or(hex).len() > limit * 2 {
+        return Err("PoTB submission exceeds limit");
+    }
     let bytes = parse_hex_bytes(hex).map_err(|_| "invalid submission hex")?;
-    Ok(if admission { RpcRequest::SubmitPotbAdmission(bytes) } else { RpcRequest::SubmitPotbEvidence(bytes) })
+    Ok(if admission {
+        RpcRequest::SubmitPotbAdmission(bytes)
+    } else {
+        RpcRequest::SubmitPotbEvidence(bytes)
+    })
 }
 
 /// Parses a hex-encoded address string into an `Address`.
@@ -388,7 +400,7 @@ mod tests {
     #[test]
     fn block_height_accepts_full_width_decimal_and_rejects_invalid_input() {
         let service: Arc<Mutex<dyn RpcService>> = Arc::new(Mutex::new(InMemoryRpcService::new(42)));
-        for method in ["block", "committee_handoff"] {
+        for method in ["block", "committee_handoff", "potb_handoff"] {
             for value in [
                 JsonValue::Number(0),
                 JsonValue::String(u64::MAX.to_string()),

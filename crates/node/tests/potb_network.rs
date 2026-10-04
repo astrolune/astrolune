@@ -145,7 +145,7 @@ fn gossip_includes_quorum_admission_and_evidence_then_recovers_every_role() {
     let first = node::handoff::read_potb_handoff(nodes[0].storage(), 1)
         .unwrap()
         .unwrap();
-    assert_eq!(first.batch.admissions(), &[admission.clone()]);
+    assert_eq!(first.batch.admissions(), std::slice::from_ref(&admission));
     assert!(
         node::handoff::read_handoff(nodes[0].storage(), 1)
             .unwrap()
@@ -182,7 +182,7 @@ fn gossip_includes_quorum_admission_and_evidence_then_recovers_every_role() {
     let second = node::handoff::read_potb_handoff(nodes[0].storage(), 2)
         .unwrap()
         .unwrap();
-    assert_eq!(second.batch.evidence(), &[evidence.clone()]);
+    assert_eq!(second.batch.evidence(), std::slice::from_ref(&evidence));
     trusted.apply(&second).unwrap();
     assert!(nodes[0].is_standby());
     assert!(nodes[0].submit_potb_evidence(evidence).is_err());
@@ -229,4 +229,45 @@ fn gossip_includes_quorum_admission_and_evidence_then_recovers_every_role() {
             .iter()
             .all(|node| node.storage().checkpoint().unwrap().height == 9)
     );
+}
+
+#[test]
+fn restored_pending_admission_refreshes_an_already_complete_single_member_batch() {
+    let (profile, mut keys) = support::fixture();
+    keys.truncate(1);
+    let mut genesis = profile.genesis().clone();
+    genesis
+        .validators
+        .retain(|member| member.id == support::identity(1));
+    genesis.committee_size = 1;
+    let profile =
+        consensus::potb_transition::PotbConfiguration::new(genesis, profile.policy()).unwrap();
+    let network = StaticNetwork::with_potb(profile.clone(), keys.clone()).unwrap();
+    let directory = Directory(
+        std::env::temp_dir().join(format!("astrolune-potb-single-{}", std::process::id())),
+    );
+    std::fs::create_dir(&directory.0).unwrap();
+    std::fs::create_dir(directory.0.join("1")).unwrap();
+    drop(
+        DurableSigner::create_protected(
+            directory.0.join("1/signing.journal"),
+            SigningContext {
+                chain_id: network.chain_id(),
+                genesis: network.genesis_hash(),
+            },
+            [1; 32],
+        )
+        .unwrap(),
+    );
+    let trusted = PotbVerifier::new(&profile, &keys).unwrap();
+    let admission = support::admission(trusted.current(), trusted.parent(), 99);
+    let mut node = open(&directory, &network, 1);
+    node.submit_potb_admission(admission.clone()).unwrap();
+    drop(node);
+    let mut nodes = vec![open(&directory, &network, 1)];
+    advance(&mut nodes, 2);
+    let first = node::handoff::read_potb_handoff(nodes[0].storage(), 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.batch.admissions(), &[admission]);
 }

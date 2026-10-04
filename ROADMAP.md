@@ -28,7 +28,7 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 - [x] Freeze supported genesis-v1/v2 histories in 50 binary compatibility fixtures, with authenticated replay and independent commitment/framing checks; [details](docs/41-protocol-compatibility.md).
 - [x] Freeze eight separate PoTB producer-profile fixtures, with authenticated replay and independent framing/commitment checks; [details](docs/44-potb-state-transitions.md).
 - [ ] Qualify governance protocol envelopes and future daemon activation compatibility.
-- [x] Shared extension fuzz oracle, 78 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
+- [x] Shared extension fuzz oracle, 81 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
 - [ ] Long fuzz campaigns, dependency/security review, and cross-platform suite qualification.
 - [x] Upgrade qualification: current stable dependencies, legacy vault compatibility,
   strict Rust 1.99.0 checks and bounded registry advisory lookup; [evidence](docs/39-toolchain-and-release-qualification.md).
@@ -76,8 +76,9 @@ PoTB state transitions and evidence, audited VRF provider, weighted sampler, par
 - [x] Bounded historical committee commitments and portable offence bundles; [format and selected quorum-admission policy](docs/42-historical-potb-evidence.md).
 - [x] Candidate consent, protected incumbent approvals, weighted quorum certificates and offline operator CLI; [details](docs/43-quorum-admission.md).
 - [x] Canonical evidence inclusion, active PoTB weights and quorum-authorized admission in an explicit producer profile, with atomic application execution and authenticated recovery; [details](docs/44-potb-state-transitions.md).
-- [ ] Activate the PoTB profile in daemon provisioning, gossip, persisted handoff serving and RPC/CLI/client catch-up.
-- [ ] Rotating-consensus adversarial simulations, formal safety/liveness and independent provider review.
+- [x] Activate the PoTB profile in daemon provisioning, gossip, persisted handoff serving and RPC/CLI/DNS catch-up; [workflow and limits](docs/45-live-potb-network.md).
+- [x] Deterministic rotating-network delivery simulations with partitions, loss, delay, duplicates, invalid messages, durable restart and authenticated catch-up; [scope](docs/46-rotating-network-simulations.md).
+- [ ] Broader Byzantine/churn simulations, formal safety/liveness and independent provider review.
 
 The [VRF and sampler specification](docs/28-vrf-and-weighted-selection.md) distinguishes implemented selection from daemon activation.
 
@@ -87,7 +88,8 @@ PoTB progress: [double-vote evidence and a policy workbench](docs/25-potb-eviden
 now verify offences, retain durable bounded proofs and evaluate capped integer
 scores over finalized history. VRF collection, activation and committee handoff are implemented.
 Canonical evidence inclusion, active weight transitions and admission are implemented
-in the [separate producer profile](docs/44-potb-state-transitions.md); daemon activation remains open.
+in the [separate producer profile](docs/44-potb-state-transitions.md), with
+[live daemon and client activation](docs/45-live-potb-network.md).
 
 ## M6 — node and networking
 
@@ -122,7 +124,7 @@ Private membership does not remove the following unimplemented software work.
 External audits, public-testnet calibration and key ceremonies are separate release activities.
 
 - [x] Activate VRF and committee transitions, including restart, complete-roster unavailable-proof policy and catch-up.
-- [ ] Activate the tested PoTB producer profile across daemon networking, operator provisioning and client verification.
+- [x] Activate the tested PoTB producer profile across daemon networking, operator provisioning and client verification.
 - [x] Connect signed deploy/call transactions to the WebAssembly runtime.
 - [x] Complete the Rust SDK host adapter.
 - [x] Complete bounded source-package tooling and exact artifact reconstruction.

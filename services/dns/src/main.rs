@@ -85,9 +85,22 @@ fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn resolver(args: &[String]) -> Result<CertifiedResolver, String> {
-    let configuration = read(Path::new(&args[0]), consensus::potb_transition::PotbConfiguration::MAX_BYTES)?;
-    let potb = if configuration.starts_with(b"ALPTCF01") { Some(consensus::potb_transition::PotbConfiguration::from_bytes(&configuration).map_err(|e| e.to_string())?) } else { None };
-    let genesis = match &potb { Some(profile) => profile.genesis().clone(), None => genesis::Genesis::decode(&configuration).map_err(|e| e.to_string())? };
+    let configuration = read(
+        Path::new(&args[0]),
+        consensus::potb_transition::PotbConfiguration::MAX_BYTES,
+    )?;
+    let potb = if configuration.starts_with(b"ALPTCF01") {
+        Some(
+            consensus::potb_transition::PotbConfiguration::from_bytes(&configuration)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let genesis = match &potb {
+        Some(profile) => profile.genesis().clone(),
+        None => genesis::Genesis::decode(&configuration).map_err(|e| e.to_string())?,
+    };
     let bytes = read(Path::new(&args[1]), genesis::MAX_GENESIS_VALIDATORS * 32)?;
     if bytes.is_empty() || !bytes.len().is_multiple_of(32) {
         return Err("invalid validator registry".into());
@@ -105,7 +118,10 @@ fn resolver(args: &[String]) -> Result<CertifiedResolver, String> {
     let address = args[6].parse().map_err(|_| "invalid numeric RPC address")?;
     let client =
         rpc::TcpRpcClient::new(address, Duration::from_secs(5)).map_err(|e| e.to_string())?;
-    match potb { Some(profile) => CertifiedResolver::with_potb(trust, client, minimum, &profile), None => Ok(CertifiedResolver::new(trust, client, minimum)) }
+    match potb {
+        Some(profile) => CertifiedResolver::with_potb(trust, client, minimum, &profile),
+        None => Ok(CertifiedResolver::new(trust, client, minimum)),
+    }
 }
 
 fn read(path: &Path, max: usize) -> Result<Vec<u8>, String> {

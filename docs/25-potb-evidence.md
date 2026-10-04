@@ -102,7 +102,8 @@ No stake is deducted by this change. Proposal-equivocation evidence remains work
 accumulator and portable offence bundle. Handoff verification authenticates this
 local history incrementally. The [separate PoTB producer profile](44-potb-state-transitions.md)
 commits this frontier and implements canonical inclusion, active age weights,
-permanent exclusion and admission execution. Daemon activation remains open.
+permanent exclusion and admission execution. [Live activation](45-live-potb-network.md)
+adds daemon execution, authenticated inclusion gossip and operator submission.
 Admission policy for the closed network requires authorization by strictly more
 than two thirds of incumbent voting power.
 

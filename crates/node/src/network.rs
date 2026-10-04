@@ -861,7 +861,7 @@ impl NetworkNode {
             .map_err(local)?;
         let messages = decode_exchange(self.network.hash, &bytes).map_err(local)?;
         // Pending submissions are scoped to one parent/frontier. Expired entries are discarded.
-        self.restore_potb_inclusions(&messages);
+        self.restore_potb_inclusions(&messages)?;
         if self.participant.is_none() {
             return Ok(());
         }
