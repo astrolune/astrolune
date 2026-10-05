@@ -90,7 +90,8 @@ pub fn execute_signed(
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
-    let mut session = SignedSession::new(snapshot.as_ref(), context, capacity, true);
+    let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
+    let mut session = SignedSession::new(&cached, context, capacity, true);
     let outputs = transactions
         .iter()
         .map(|tx| session.execute(tx))

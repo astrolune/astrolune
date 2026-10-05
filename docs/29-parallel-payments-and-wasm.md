@@ -24,6 +24,39 @@ independent transfers, dependent account creation, self-transfers, multiple
 nonces, forged signatures, missing access declarations, capacity exhaustion and
 stale parents. Local execution performance has not been benchmarked.
 
+## Execution-parent cache and planner allocation
+
+`execute_signed` and contract-enabled `execute_parallel` share a read-through
+cache of immutable parent values across calls and waves within one execution
+attempt. Values and absent keys are cached on first use, with at most 4096
+entries and 8 MiB of combined key/value bytes; map metadata is additionally
+bounded by the entry count. Full caches and oversized entries read directly
+from the parent. Reads occur outside the cache lock, so simultaneous misses
+may read the same key more than once. Storage errors are never cached.
+
+Private overlay writes and deletions take precedence over cached parent data.
+The cache is discarded after the attempt; serial replay creates a fresh cache,
+and a following block reads its own parent. Proof methods delegate to the parent.
+There is no cross-block state, eager prefetch, result caching or change to
+resource charges. Direct `SignedSession` callers retain their supplied snapshot;
+the payment-only path uses its existing account/write overlays without this
+additional cache.
+
+The wave planner borrows access keys from the transaction batch instead of
+allocating normalized leases during planning. It computes all predecessor waves
+before updating its per-key index, preserving plans for unordered or duplicate
+keys and repeated senders. The public lease operation is unchanged.
+
+Deterministic tests compare the planner against an independent pairwise
+predecessor implementation on 256 generated blocks, alongside the existing 512
+access patterns. Contract tests compare complete outputs, resource charges,
+roots, retained snapshots and first errors against uncached `SignedSession`
+execution at 1, 2, 3, 8 and 32 workers. Three successive calls to each of two
+previously deployed contracts reduce parent code reads from three to one per
+contract; the next block performs a fresh read. Cache tests cover absence,
+entry/byte limits, errors, shared worker hits and overlay write/delete visibility.
+These are read-count and equivalence checks, not wall-clock throughput claims.
+
 ## WebAssembly ABI v2
 
 `WasmRuntime` validates binary WebAssembly and executes it using pinned Wasmi

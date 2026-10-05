@@ -30,13 +30,39 @@ additional valid rotation envelopes exercise the new handoff boundaries. Mutatio
 include byte substitutions, truncations, insertion, deletion and maximum-length
 field patterns. The fixed PRNG seed makes failures reproducible across platforms.
 
-All standalone libFuzzer targets compile locally. Running coverage-guided,
-sanitizer-enabled campaigns additionally needs a suitable nightly/cargo-fuzz
-installation. From `crates/codec`, the new target is selected with
+All standalone libFuzzer targets compile locally. Sanitizer-enabled campaigns
+need a suitable nightly/cargo-fuzz installation. From `crates/codec`, the
+extension target is selected with
 `cargo +nightly fuzz run decode_extensions`. Set campaign time, maximum input
 length and RSS/timeout bounds for the selected environment; retain and minimize
 any crashing corpus. Existing transaction, genesis, consensus, network and state
 fuzz targets remain separate entry points.
+
+Windows has a separate coverage-only runner:
+
+```powershell
+./tools/fuzz-windows.ps1 -Seconds 300 -Seed 20261005
+```
+
+It builds offline with the pinned stable compiler, exports the same 99 structured
+seeds used by the mutation test plus three malformed WASM regressions (102 total),
+and writes a new directory under `target` with
+the corpus, failure artifacts, compiler/flag/binary/seed hashes and a final report.
+The runner checks matching counter/PC counts, new coverage and normal completion;
+a compilation, panic or coverage mismatch fails qualification. Input length,
+per-input time and process memory are bounded. Rust panics preserve their exact
+input before aborting, including without ASan's death callback.
+
+This profile uses LLVM edge counters and comparison feedback with optimization
+disabled: optimized Rust 1.99.0 MSVC instrumentation produced mismatched PC tables
+locally. It does not enable AddressSanitizer or instrument the Rust standard
+library. The tiny COFF section-boundary C file is isolated to the opt-in fuzz
+package; production crates remain safe Rust. LLVM describes the instrumentation
+in [SanitizerCoverage](https://clang.llvm.org/docs/SanitizerCoverage.html).
+
+On 2026-10-05 the maintainer reported that the uploaded revision passed all GitHub
+checks. No remote operation or independent inspection of those checks was
+performed in this work session; subsequent local edits need their own CI run.
 
 On 2026-09-28 the Windows Rust 1.93.1 build passed the 100,000-input deterministic
 extension campaign, workspace tests, Clippy with warnings denied, rustdoc, native

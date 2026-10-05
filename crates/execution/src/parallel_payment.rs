@@ -105,8 +105,11 @@ pub fn execute_parallel(
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
-    let outputs = speculate(snapshot.as_ref(), transactions, context, policy, workers);
+    let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
+    let view = execution_view(snapshot.as_ref(), &cached, policy.contracts);
+    let outputs = speculate(view, transactions, context, policy, workers);
     let Ok(outputs) = outputs else {
+        drop(cached);
         return serial(database, transactions, parent, context);
     };
     let mut used = Resources::ZERO;
@@ -134,13 +137,10 @@ fn execute_serial(
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
-    let mut session = SignedSession::new(
-        snapshot.as_ref(),
-        context,
-        policy.capacity,
-        policy.contracts,
-    )
-    .with_prices(policy.prices);
+    let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
+    let view = execution_view(snapshot.as_ref(), &cached, policy.contracts);
+    let mut session = SignedSession::new(view, context, policy.capacity, policy.contracts)
+        .with_prices(policy.prices);
     let outputs = transactions
         .iter()
         .map(|tx| session.execute(tx))
@@ -148,6 +148,16 @@ fn execute_serial(
     let diffs: Vec<_> = outputs.iter().map(|output| output.diff.clone()).collect();
     let root = database.commit(parent, &diffs)?;
     Ok((outputs, root))
+}
+
+fn execution_view<'a>(
+    parent: &'a dyn StateSnapshot,
+    cached: &'a crate::snapshot_cache::CachedSnapshot<'_>,
+    contracts: bool,
+) -> &'a dyn StateSnapshot {
+    // Payments write every account they read, so the existing overlay already
+    // serves their repeated accesses without an additional read cache.
+    if contracts { cached } else { parent }
 }
 
 pub(crate) struct Overlay<'a> {

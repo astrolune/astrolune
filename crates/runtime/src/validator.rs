@@ -23,13 +23,17 @@ pub trait ModuleValidator {
     ) -> Result<ContractModule, RuntimeError>;
 }
 
-/// Simple module validator that enforces size limits and version matching.
-pub struct BasicModuleValidator {
+/// ABI-v1 demonstration size/version checks, without WebAssembly validation.
+/// Live deployments must use [`crate::WasmRuntime`].
+pub struct DemoModuleValidator {
     /// Maximum allowed module code size in bytes.
     max_size: usize,
 }
 
-impl BasicModuleValidator {
+/// Compatibility name for the ABI-v1 demonstration validator.
+pub type BasicModuleValidator = DemoModuleValidator;
+
+impl DemoModuleValidator {
     /// Creates a new validator with the given maximum module size.
     #[must_use]
     pub fn new(max_size: usize) -> Self {
@@ -37,7 +41,7 @@ impl BasicModuleValidator {
     }
 }
 
-impl ModuleValidator for BasicModuleValidator {
+impl ModuleValidator for DemoModuleValidator {
     fn validate(
         &self,
         bytes: &[u8],

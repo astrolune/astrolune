@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Astrolune contributors
 // SPDX-License-Identifier: MIT
 
-//! Execution backends: traits and concrete implementations that run validated
-//! contract modules under deterministic host semantics.
+//! Legacy ABI-v1 demonstration backend. Live contracts use `WasmRuntime`.
 
 use crate::error::RuntimeError;
 use crate::version::{ContractModule, RuntimeOutput};
@@ -13,13 +12,14 @@ use types::Resources;
 pub enum BackendKind {
     /// Portable reference semantics.
     Interpreter,
-    /// Ahead-of-time native compilation.
+    /// Reserved ahead-of-time class; no qualified implementation is provided.
     Aot,
-    /// Optional just-in-time native compilation.
+    /// Reserved just-in-time class; no qualified implementation is provided.
     Jit,
 }
 
-/// Executes canonical modules under deterministic host semantics.
+/// Legacy ABI-v1 demonstration interface, without stateful WASM host semantics.
+/// Live ABI-v2 calls use [`crate::WasmRuntime::execute_call`].
 pub trait RuntimeBackend: Send + Sync {
     /// Identifies the local backend class.
     fn kind(&self) -> BackendKind;
@@ -33,16 +33,20 @@ pub trait RuntimeBackend: Send + Sync {
     -> Result<RuntimeOutput, RuntimeError>;
 }
 
-/// Interpreter backend that performs a simple deterministic byte transformation.
-pub struct InterpreterBackend {
+/// Demonstration byte transformation; does not interpret WebAssembly.
+pub struct DemoByteTransformBackend {
     /// Maximum allowed input size in bytes.
     max_input: usize,
     /// Maximum allowed output size in bytes.
     max_output: usize,
 }
 
-impl InterpreterBackend {
-    /// Creates a new interpreter backend with the given size limits.
+/// Compatibility name for the ABI-v1 demonstration byte transformation.
+/// Use [`crate::WasmRuntime`] for the active contract profile.
+pub type InterpreterBackend = DemoByteTransformBackend;
+
+impl DemoByteTransformBackend {
+    /// Creates a demonstration backend with the given size limits.
     #[must_use]
     pub fn new(max_input: usize, max_output: usize) -> Self {
         Self {
@@ -52,7 +56,7 @@ impl InterpreterBackend {
     }
 }
 
-impl RuntimeBackend for InterpreterBackend {
+impl RuntimeBackend for DemoByteTransformBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Interpreter
     }

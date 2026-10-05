@@ -18,6 +18,7 @@ mod parallel_payment;
 mod payment;
 mod scheduler;
 mod signed;
+mod snapshot_cache;
 mod wave;
 
 pub use error::ExecutionError;

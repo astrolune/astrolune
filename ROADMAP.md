@@ -10,7 +10,7 @@ Dates are intentionally absent until maintainers publish resourced release targe
 - [x] Core protocol, execution, storage, network, service, and tooling crate boundaries.
 - [x] Repository documentation, CI, dependency policy, and contribution templates.
 - [x] Initial pure invariant and integration tests.
-- [ ] Review and stabilize public interface naming before implementation begins.
+- [x] Review public interface naming, preserve compatibility aliases and distinguish demonstration/runtime trust boundaries; [baseline](docs/50-public-interfaces.md).
 
 ## M1 — canonical foundations
 
@@ -28,7 +28,7 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 - [x] Freeze supported genesis-v1/v2 histories in 50 binary compatibility fixtures, with authenticated replay and independent commitment/framing checks; [details](docs/41-protocol-compatibility.md).
 - [x] Freeze eight separate PoTB producer-profile fixtures, with authenticated replay and independent framing/commitment checks; [details](docs/44-potb-state-transitions.md).
 - [x] Qualify explicit governance envelopes, daemon activation and preserved legacy compatibility; [rules and tests](docs/48-parameter-governance.md).
-- [x] Shared extension fuzz oracle, 81 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
+- [x] Shared extension fuzz oracle, 99 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
 - [ ] Long fuzz campaigns, dependency/security review, and cross-platform suite qualification.
 - [x] Upgrade qualification: current stable dependencies, legacy vault compatibility,
   strict Rust 1.99.0 checks and bounded registry advisory lookup; [evidence](docs/39-toolchain-and-release-qualification.md).
@@ -63,6 +63,7 @@ Access leasing, execution waves, multiple lanes, optimistic validation, determin
 - [x] Explicit genesis-v2 daemon activation of the VRF system lane.
 - [x] Consensus capacity/fee governance: more than 2/3 incumbent weight, next-epoch activation; [details](docs/48-parameter-governance.md).
 - [x] Bounded verified VRF transition cache and single-pass evidence history verification, with equivalence tests and [local measurements](docs/40-live-vrf-network.md#repeated-verification-cost).
+- [x] Bounded execution-parent read cache and borrowed-key wave planning, with uncached/serial equivalence and deterministic read-count checks; [scope](docs/29-parallel-payments-and-wasm.md#execution-parent-cache-and-planner-allocation).
 - [ ] Remaining locality/fusion/prefetch/pool optimizations and signature batching with equivalence tests.
 
 ## M5 — PoTB and finality

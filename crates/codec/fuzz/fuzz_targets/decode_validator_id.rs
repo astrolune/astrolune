@@ -5,8 +5,8 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
 use codec::CanonicalDecode;
+use libfuzzer_sys::fuzz_target;
 use types::ValidatorId;
 
 fuzz_target!(|data: &[u8]| {

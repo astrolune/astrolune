@@ -59,11 +59,12 @@ impl ExecutionScheduler for GreedyScheduler {
         let mut waves: Vec<ExecutionWave> = Vec::new();
 
         for (index, transaction) in transactions.iter().enumerate() {
-            let lease = self.lease(transaction);
-            let predecessor = lease
-                .requests
+            // Planning only needs key equality; borrow the original keys instead
+            // of cloning and normalizing a lease for every transaction.
+            let predecessor = transaction
+                .access_list
                 .iter()
-                .filter_map(|request| last_key_wave.get(&request.key).copied())
+                .filter_map(|key| last_key_wave.get(key).copied())
                 .chain(last_sender_wave.get(&transaction.sender).copied())
                 .max();
             let wave = predecessor.map_or(0, |previous| previous + 1);
@@ -73,8 +74,10 @@ impl ExecutionScheduler for GreedyScheduler {
                 });
             }
             waves[wave].transaction_indexes.push(index);
-            for request in lease.requests {
-                last_key_wave.insert(request.key, wave);
+            // Update only after all predecessors are read so duplicate keys
+            // cannot make a transaction depend on itself.
+            for key in &transaction.access_list {
+                last_key_wave.insert(key, wave);
             }
             last_sender_wave.insert(transaction.sender, wave);
         }

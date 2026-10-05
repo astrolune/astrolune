@@ -4,7 +4,7 @@
 
 ## 8.1 Current baseline
 
-As of 2026-10-04, this repository contains a Rust 2024 workspace with:
+As of 2026-10-05, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
@@ -81,6 +81,11 @@ Pinned Rust contract toolchain, target selection, validator, interpreter, host A
 ### M4 — parallel execution
 
 Deterministic waves, Adaptive Execution Leasing, lanes, optimistic access validation, replay bounds, locality, fusion, prefetch, caches, pools, and signature batches.
+
+Bounded execution-parent caching and borrowed-key wave planning are implemented
+with uncached/serial differential tests and deterministic read-count checks;
+[scope and limits](29-parallel-payments-and-wasm.md#execution-parent-cache-and-planner-allocation).
+Fusion, prefetch, worker/object pools and signature batching remain open.
 
 ### M5 — consensus
 

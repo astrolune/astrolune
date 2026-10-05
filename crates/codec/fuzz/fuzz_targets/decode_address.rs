@@ -5,8 +5,8 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
 use codec::CanonicalDecode;
+use libfuzzer_sys::fuzz_target;
 use types::Address;
 
 fuzz_target!(|data: &[u8]| {

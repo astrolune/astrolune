@@ -27,6 +27,38 @@ fn module(body: &str) -> Vec<u8> {
 }
 
 #[test]
+fn instructions_after_function_end_are_rejected_before_translation() {
+    let runtime = WasmRuntime::new();
+    let valid = module(
+        r#"(module (memory (export "memory") 1 1)
+            (func (export "call") (result i32) i32.const 0))"#,
+    );
+    // Code section: one body containing zero locals, i32.const 0 and end.
+    let suffix = [10, 6, 1, 4, 0, 65, 0, 11];
+    assert!(valid.ends_with(&suffix));
+    for opcode in [0x01, 0x0b, 0x0f] {
+        let mut invalid = valid.clone();
+        let start = invalid.len() - suffix.len();
+        invalid[start + 1] += 1;
+        invalid[start + 3] += 1;
+        invalid.push(opcode);
+        assert_eq!(
+            runtime.validate(&invalid, WASM_VERSION),
+            Err(RuntimeError::InvalidModule)
+        );
+        let forged = runtime::ContractModule {
+            code_hash: runtime::wasm_code_hash(&invalid),
+            code: invalid,
+            version: WASM_VERSION,
+        };
+        assert_eq!(
+            runtime.execute_call(&forged, call(&BTreeMap::new(), &BTreeSet::new())),
+            Err(RuntimeError::InvalidModule)
+        );
+    }
+}
+
+#[test]
 fn input_output_is_repeatable_and_resources_are_deterministic() {
     let runtime = WasmRuntime::new();
     let wasm = module(

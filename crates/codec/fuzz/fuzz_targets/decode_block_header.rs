@@ -12,8 +12,8 @@
 
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
 use codec::CanonicalDecode;
+use libfuzzer_sys::fuzz_target;
 use types::BlockHeader;
 
 fuzz_target!(|data: &[u8]| {

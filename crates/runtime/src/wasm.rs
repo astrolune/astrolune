@@ -102,6 +102,11 @@ impl WasmRuntime {
         if !bytes.starts_with(b"\0asm\x01\0\0\0") {
             return Err(RuntimeError::InvalidModule);
         }
+        // Validate complete bodies before Wasmi's combined validation/translation.
+        // In 2.0.0 an instruction after a function's end can reach the translator
+        // with an empty control stack before its validator rejects the operator.
+        // Keep the same engine feature policy and never pass malformed code to it.
+        Module::validate(&self.engine, bytes).map_err(|_| RuntimeError::InvalidModule)?;
         let module = Module::new(&self.engine, bytes).map_err(|_| RuntimeError::InvalidModule)?;
         let Some(ExternType::Memory(memory)) = module.get_export("memory") else {
             return Err(RuntimeError::InvalidModule);

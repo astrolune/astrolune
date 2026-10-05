@@ -5,13 +5,23 @@
 
 use codec::CanonicalEncode;
 use crypto::blake2s::{ed25519_public_key, ed25519_sign};
-use execution::{SignedSession, execute_signed, execute_signed_parallel, payment_resources};
-use state::{InMemoryState, StateDatabase, StateDiff, account_key, read_account};
+use execution::{
+    ExecutionError, SignedSession, TransactionOutput, execute_signed, execute_signed_parallel,
+    payment_resources,
+};
+use state::{
+    InMemoryState, StateAbsenceProof, StateDatabase, StateDiff, StateError, StateProof,
+    StateSnapshot, account_key, read_account,
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use transaction::{
     ContractAction, ContractPayload, Payment, ValidationContext, address_from_public_key,
     contract_address, contract_code_key, contract_state_key, signing_hash,
 };
-use types::{AccountState, Address, Resources, Transaction, TransactionLane};
+use types::{AccountState, Address, Hash256, Resources, StateKey, Transaction, TransactionLane};
 
 fn context() -> ValidationContext {
     ValidationContext {
@@ -144,6 +154,223 @@ fn batch() -> Vec<Transaction> {
         payment(3, 0),
         call(3, 1, a, 44),
     ]
+}
+
+struct CountingState {
+    inner: InMemoryState,
+    code_key: StateKey,
+    reads: Arc<AtomicUsize>,
+}
+
+impl CountingState {
+    fn new(inner: InMemoryState) -> Self {
+        Self {
+            inner,
+            code_key: contract_code_key(contract_address(7, address(1), 0)),
+            reads: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn code_reads(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
+    }
+}
+
+struct CountingSnapshot {
+    inner: Box<dyn StateSnapshot>,
+    code_key: StateKey,
+    reads: Arc<AtomicUsize>,
+}
+
+impl StateSnapshot for CountingSnapshot {
+    fn root(&self) -> Hash256 {
+        self.inner.root()
+    }
+
+    fn get(&self, key: &StateKey) -> Result<Option<Vec<u8>>, StateError> {
+        if key == &self.code_key {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+        }
+        self.inner.get(key)
+    }
+
+    fn prove(&self, key: &StateKey) -> Result<Option<StateProof>, StateError> {
+        self.inner.prove(key)
+    }
+
+    fn prove_absence(&self, key: &StateKey) -> Result<Option<StateAbsenceProof>, StateError> {
+        self.inner.prove_absence(key)
+    }
+}
+
+impl StateDatabase for CountingState {
+    fn snapshot(&self) -> Result<Box<dyn StateSnapshot>, StateError> {
+        Ok(Box::new(CountingSnapshot {
+            inner: self.inner.snapshot()?,
+            code_key: self.code_key.clone(),
+            reads: Arc::clone(&self.reads),
+        }))
+    }
+
+    fn prefetch(&self, keys: &[StateKey]) -> Result<(), StateError> {
+        self.inner.prefetch(keys)
+    }
+
+    fn commit(&mut self, parent: Hash256, diffs: &[StateDiff]) -> Result<Hash256, StateError> {
+        self.inner.commit(parent, diffs)
+    }
+}
+
+// A direct session retains an uncached reference path even when block entry points cache.
+fn execute_uncached(
+    state: &mut impl StateDatabase,
+    txs: &[Transaction],
+) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
+    let snapshot = state.snapshot()?;
+    let mut session = SignedSession::new(snapshot.as_ref(), context(), capacity(), true);
+    let outputs = txs
+        .iter()
+        .map(|tx| session.execute(tx))
+        .collect::<Result<Vec<_>, _>>()?;
+    let diffs: Vec<_> = outputs.iter().map(|output| output.diff.clone()).collect();
+    let root = state.commit(snapshot.root(), &diffs)?;
+    Ok((outputs, root))
+}
+
+fn predeployed() -> InMemoryState {
+    let mut state = funded();
+    execute_uncached(
+        &mut state,
+        &[
+            contract(1, 0, ContractAction::Deploy(code())),
+            contract(2, 0, ContractAction::Deploy(code())),
+        ],
+    )
+    .unwrap();
+    state
+}
+
+fn repeated_calls() -> Vec<Transaction> {
+    let a = contract_address(7, address(1), 0);
+    let b = contract_address(7, address(2), 0);
+    vec![
+        call(1, 1, a, 11),
+        call(2, 1, b, 21),
+        payment(3, 0),
+        call(1, 2, a, 12),
+        call(2, 2, b, 22),
+        payment(3, 1),
+        call(1, 3, a, 13),
+        call(2, 3, b, 23),
+    ]
+}
+
+#[test]
+fn parent_cache_reduces_code_reads_and_matches_uncached_sessions_across_blocks() {
+    let initial = predeployed();
+    let parent = initial.root();
+    let txs = repeated_calls();
+    let a = contract_address(7, address(1), 0);
+    let b = contract_address(7, address(2), 0);
+    let next = vec![call(1, 4, a, 14), call(2, 4, b, 24), payment(3, 2)];
+    let mut reference = CountingState::new(initial.clone());
+    let expected = execute_uncached(&mut reference, &txs).unwrap();
+    assert_eq!(reference.code_reads(), 3);
+    let next_expected = execute_uncached(&mut reference, &next).unwrap();
+    assert_eq!(reference.code_reads(), 4);
+
+    // None exercises execute_signed; every worker count exercises execute_parallel.
+    for workers in [None, Some(1), Some(2), Some(3), Some(8), Some(32)] {
+        let mut state = CountingState::new(initial.clone());
+        let old = state.snapshot().unwrap();
+        let execute = |state: &mut CountingState, txs: &[Transaction], parent| match workers {
+            None => execute_signed(state, txs, parent, context(), capacity()),
+            Some(workers) => {
+                execute_signed_parallel(state, txs, parent, context(), capacity(), workers)
+            }
+        };
+        assert_eq!(execute(&mut state, &txs, parent).unwrap(), expected);
+        assert_eq!(state.inner.root(), expected.1);
+        assert_eq!(state.code_reads(), 1, "workers: {workers:?}");
+        assert_eq!(
+            state.inner.get(&contract_state_key(a, b"k")),
+            Some([13].as_slice())
+        );
+        assert_eq!(
+            state.inner.get(&contract_state_key(b, b"k")),
+            Some([23].as_slice())
+        );
+
+        assert_eq!(
+            execute(&mut state, &next, expected.1).unwrap(),
+            next_expected
+        );
+        assert_eq!(state.inner.root(), reference.inner.root());
+        assert_eq!(state.code_reads(), 2, "new parent must get a fresh cache");
+        assert_eq!(old.root(), parent);
+        for target in [a, b] {
+            assert_eq!(old.get(&contract_state_key(target, b"k")).unwrap(), None);
+        }
+        for seed in [1, 2] {
+            assert_eq!(
+                read_account(old.as_ref(), address(seed))
+                    .unwrap()
+                    .unwrap()
+                    .nonce,
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn cached_calls_preserve_rollback_and_first_error_after_cache_hits() {
+    let initial = predeployed();
+    let parent = initial.root();
+    let a = contract_address(7, address(1), 0);
+    let b = contract_address(7, address(2), 0);
+    for trap_first in [true, false] {
+        let mut txs = repeated_calls();
+        txs[6] = call(1, 3, a, if trap_first { 255 } else { 13 });
+        txs[7] = call(2, 3, b, if trap_first { 23 } else { 255 });
+        let limited = if trap_first { 7 } else { 6 };
+        txs[limited].resource_limit.compute = 101;
+        txs[limited] = sign(txs[limited].clone(), if trap_first { 2 } else { 1 });
+        let mut reference = CountingState::new(initial.clone());
+        let expected = execute_uncached(&mut reference, &txs).unwrap_err();
+        assert_eq!(
+            expected,
+            if trap_first {
+                ExecutionError::Trap
+            } else {
+                ExecutionError::ResourceLimit
+            }
+        );
+        assert_eq!(reference.inner.root(), parent);
+        assert_eq!(reference.code_reads(), 3);
+        for workers in [None, Some(1), Some(2), Some(3), Some(8), Some(32)] {
+            let mut state = CountingState::new(initial.clone());
+            let error = match workers {
+                None => execute_signed(&mut state, &txs, parent, context(), capacity()),
+                Some(workers) => execute_signed_parallel(
+                    &mut state,
+                    &txs,
+                    parent,
+                    context(),
+                    capacity(),
+                    workers,
+                ),
+            }
+            .unwrap_err();
+            assert_eq!(error, expected, "workers: {workers:?}");
+            assert_eq!(state.inner.root(), parent);
+            // Parallel failures may create a fresh cache for canonical serial replay.
+            assert!((1..=2).contains(&state.code_reads()));
+            for target in [a, b] {
+                assert_eq!(state.inner.get(&contract_state_key(target, b"k")), None);
+            }
+        }
+    }
 }
 
 #[test]

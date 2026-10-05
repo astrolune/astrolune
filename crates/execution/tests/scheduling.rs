@@ -85,6 +85,69 @@ fn access_order_and_duplicates_do_not_change_the_plan() {
     );
 }
 
+fn pairwise_predecessor_plan(transactions: &[Transaction]) -> execution::ExecutionPlan {
+    let mut positions = Vec::new();
+    let mut waves: Vec<execution::ExecutionWave> = Vec::new();
+    for (index, transaction) in transactions.iter().enumerate() {
+        let wave = transactions[..index]
+            .iter()
+            .enumerate()
+            .filter(|(_, earlier)| {
+                earlier.sender == transaction.sender
+                    || earlier
+                        .access_list
+                        .iter()
+                        .any(|key| transaction.access_list.contains(key))
+            })
+            .map(|(earlier, _)| positions[earlier] + 1)
+            .max()
+            .unwrap_or(0);
+        positions.push(wave);
+        if wave == waves.len() {
+            waves.push(execution::ExecutionWave {
+                transaction_indexes: Vec::new(),
+            });
+        }
+        waves[wave].transaction_indexes.push(index);
+    }
+    execution::ExecutionPlan { waves }
+}
+
+#[test]
+fn generated_plans_match_pairwise_predecessors_with_repeated_keys_and_senders() {
+    let key_patterns: &[&[u8]] = &[
+        &[],
+        &[0],
+        &[1],
+        &[2],
+        &[2, 0, 2],
+        &[1, 0, 1, 0],
+        &[2, 1],
+        &[2, 0, 1, 2, 0],
+    ];
+    for seed in 0u64..256 {
+        let mut state = seed;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 32) as usize
+        };
+        let transactions: Vec<_> = (0..seed % 33)
+            .map(|_| {
+                let sender = u8::try_from(next() % 8).unwrap();
+                let keys = key_patterns[next() % key_patterns.len()];
+                transaction(sender, keys)
+            })
+            .collect();
+        assert_eq!(
+            GreedyScheduler.plan(&transactions),
+            pairwise_predecessor_plan(&transactions),
+            "seed {seed}"
+        );
+    }
+}
+
 fn apply_writes(
     transactions: &[Transaction],
     order: impl IntoIterator<Item = usize>,

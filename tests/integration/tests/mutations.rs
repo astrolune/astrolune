@@ -13,7 +13,7 @@ use governance_support::fixture as potb_support;
 use state::StateDatabase;
 use types::{Hash256, Resources, ValidatorId};
 
-fn seeds() -> Vec<Vec<u8>> {
+pub(crate) fn seeds() -> Vec<Vec<u8>> {
     let key = crypto::blake2s::ed25519_public_key(&[1; 32]);
     let genesis = genesis::Genesis {
         version: 1,

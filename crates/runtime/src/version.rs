@@ -23,11 +23,14 @@ pub struct RuntimeVersion {
     pub metering: u32,
 }
 
-/// Default runtime version used when no explicit version is provided.
-pub const DEFAULT_VERSION: RuntimeVersion = RuntimeVersion {
+/// Legacy byte-transformation demonstration identity. Live WASM uses `WASM_VERSION`.
+pub const DEMO_VERSION: RuntimeVersion = RuntimeVersion {
     abi: 1,
     metering: 1,
 };
+
+/// Compatibility name for [`DEMO_VERSION`]; never selects the live WASM profile.
+pub const DEFAULT_VERSION: RuntimeVersion = DEMO_VERSION;
 
 /// Canonical deployable module.
 #[derive(Clone, Debug, Eq, PartialEq)]
