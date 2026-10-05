@@ -21,10 +21,12 @@ fn signed_fixture() -> (
 ) {
     let mut accounts = BTreeMap::new();
     let mut transactions = Vec::new();
+
     for seed_byte in 1..=2 {
         let seed = [seed_byte; 32];
         let public_key = ed25519_public_key(&seed);
         let sender = address_from_public_key(&public_key);
+
         accounts.insert(
             sender,
             RegisteredAccount {
@@ -35,6 +37,7 @@ fn signed_fixture() -> (
                 public_key,
             },
         );
+
         let mut tx = Transaction {
             version: types::TRANSACTION_VERSION,
             expires_at: u64::MAX,
@@ -60,14 +63,17 @@ fn signed_fixture() -> (
             signature: [0; 64],
         };
         tx.signature = ed25519_sign(&seed, signing_hash(&tx).as_bytes());
+
         transactions.push(Transaction::decode(&tx.to_bytes()).unwrap());
     }
+
     (accounts, transactions)
 }
 
 #[test]
 fn signed_wire_transactions_keep_identity_through_selection_and_scheduling() {
     let (accounts, transactions) = signed_fixture();
+
     let limits = Resources {
         compute: 100,
         ..Resources::ZERO
@@ -85,15 +91,18 @@ fn signed_wire_transactions_keep_identity_through_selection_and_scheduling() {
         next_height: 1,
         max_transaction_bytes: 1024,
     };
+
     let mut mempool = Mempool::new(PoolLimits {
         max_transactions: 2,
         max_bytes: 2048,
     })
     .unwrap();
+
     for (sequence, tx) in (0u64..).zip(transactions.iter().cloned()) {
         let encoded_len = tx.to_bytes().len();
         let validated = validator.validate(tx, context).unwrap();
         assert_eq!(validated.id, node::hash_transaction(&validated.transaction));
+
         mempool
             .insert(
                 PoolEntry {
@@ -106,16 +115,19 @@ fn signed_wire_transactions_keep_identity_through_selection_and_scheduling() {
             )
             .unwrap();
     }
+
     let selected: Vec<_> = mempool
         .select(2, limits)
         .iter()
         .map(|entry| entry.transaction.clone())
         .collect();
     assert_eq!(selected, transactions);
+
     assert_eq!(
         GreedyScheduler.plan(&selected).waves[0].transaction_indexes,
         vec![0, 1]
     );
+
     assert_eq!(
         node::compute_transactions_root(&selected),
         crypto::compute_transactions_root(
@@ -125,6 +137,7 @@ fn signed_wire_transactions_keep_identity_through_selection_and_scheduling() {
                 .collect::<Vec<_>>()
         )
     );
+
     let mut tampered = selected[0].clone();
     tampered.payload.push(9);
     assert_eq!(

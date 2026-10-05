@@ -16,12 +16,15 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 fn increment() -> Result<(), AbiError> {
     let mut bytes = [0; 8];
+
     match Guest::state_get(b"counter", &mut bytes)? {
         None | Some(8) => {}
         _ => return Err(AbiError::Host),
     }
+
     let value = u64::from_le_bytes(bytes).checked_add(1).ok_or(AbiError::Host)?;
     let bytes = value.to_le_bytes();
+
     Guest::state_put(b"counter", &bytes)?;
     Guest::emit(&Guest::caller()?, &bytes)?;
     Guest::output(&bytes)

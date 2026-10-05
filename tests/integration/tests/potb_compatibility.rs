@@ -5,6 +5,7 @@
 
 #[path = "support/potb_compatibility.rs"]
 mod compatibility;
+
 use consensus::potb_transition::{PotbConfiguration, PotbHandoff, PotbState, PotbVerifier};
 use std::{collections::BTreeSet, path::PathBuf};
 
@@ -16,13 +17,16 @@ fn directory() -> PathBuf {
 fn frozen_potb_bytes_and_complete_manifest_are_preserved() {
     let expected = compatibility::build();
     let manifest = std::fs::read_to_string(directory().join("MANIFEST.blake2s")).unwrap();
+
     let mut seen = BTreeSet::new();
+
     for line in manifest.lines() {
         let fields: Vec<_> = line.split_whitespace().collect();
         let [hash, size, name] = fields.as_slice() else {
             panic!("invalid manifest");
         };
         assert!(seen.insert(*name));
+
         let bytes = std::fs::read(directory().join(name)).unwrap();
         assert_eq!(bytes.len(), size.parse::<usize>().unwrap());
         assert_eq!(crypto::blake2s_hash(&bytes).to_string(), *hash);
@@ -32,8 +36,10 @@ fn frozen_potb_bytes_and_complete_manifest_are_preserved() {
             "profile compatibility changed: {name}"
         );
     }
+
     assert_eq!(seen.len(), expected.len());
     assert_eq!(seen.len(), 8);
+
     let actual: BTreeSet<_> = std::fs::read_dir(directory())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -49,6 +55,7 @@ fn frozen_potb_bytes_and_complete_manifest_are_preserved() {
 #[test]
 fn frozen_handoffs_authenticate_policy_and_reject_old_profile_authority() {
     let read = |name: &str| std::fs::read(directory().join(name)).unwrap();
+
     let config = PotbConfiguration::from_bytes(&read("configuration.bin")).unwrap();
     let keys: Vec<_> = (1..=4)
         .map(|seed| crypto::blake2s::ed25519_public_key(&[seed; 32]))
@@ -58,6 +65,7 @@ fn frozen_handoffs_authenticate_policy_and_reject_old_profile_authority() {
         trusted.current().to_bytes().unwrap(),
         read("initial-state.bin")
     );
+
     for height in 1..=2 {
         let handoff =
             PotbHandoff::from_bytes(&read(&format!("height-{height}-handoff.bin"))).unwrap();
@@ -65,7 +73,9 @@ fn frozen_handoffs_authenticate_policy_and_reject_old_profile_authority() {
             handoff.batch.to_bytes().unwrap(),
             read(&format!("height-{height}-batch.bin"))
         );
+
         trusted.apply(&handoff).unwrap();
+
         let state_bytes = read(&format!("height-{height}-state.bin"));
         assert_eq!(trusted.current().to_bytes().unwrap(), state_bytes);
         assert_eq!(
@@ -73,13 +83,16 @@ fn frozen_handoffs_authenticate_policy_and_reject_old_profile_authority() {
             *trusted.current()
         );
     }
+
     let first = PotbHandoff::from_bytes(&read("height-1-handoff.bin")).unwrap();
+
     let legacy = consensus::rotation::HandoffVerifier::new(config.genesis(), &keys).unwrap();
     assert!(
         legacy
             .verify_header(&first.header, &first.certificate)
             .is_err()
     );
+
     let mut policy = config.policy();
     policy.epoch_blocks += 1;
     let other = PotbConfiguration::new(config.genesis().clone(), policy).unwrap();

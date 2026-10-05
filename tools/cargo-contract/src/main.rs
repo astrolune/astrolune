@@ -33,9 +33,11 @@ fn read(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
     File::open(path)
         .and_then(|file| file.take(maximum as u64 + 1).read_to_end(&mut bytes))
         .map_err(|e| e.to_string())?;
+
     if bytes.len() > maximum {
         return Err("input exceeds its byte limit".into());
     }
+
     Ok(bytes)
 }
 
@@ -43,11 +45,13 @@ fn run(mut args: Vec<OsString>) -> Result<(), String> {
     if args.first().is_some_and(|value| value == "contract") {
         args.remove(0);
     }
+
     let command = args
         .first()
         .and_then(|value| value.to_str())
         .unwrap_or("--help");
     let runtime = WasmRuntime::new();
+
     match (command, &args[args.len().min(1)..]) {
         ("--help" | "-h", []) => {
             print!("{HELP}");
@@ -68,17 +72,21 @@ fn run(mut args: Vec<OsString>) -> Result<(), String> {
             {
                 return Err("invalid command arguments; use --help".into());
             }
+
             let bytes = read(Path::new(path), runtime::MAX_MODULE_SIZE)?;
             let module = runtime
                 .validate(&bytes, WASM_VERSION)
                 .map_err(|e| e.to_string())?;
+
             if command == "verify"
                 && rest[0].to_str() != Some(module.code_hash.to_string().as_str())
             {
                 return Err("contract code commitment mismatch".into());
             }
+
             println!("code_hash: {}", module.code_hash);
             println!("runtime: wasm-abi2-meter1");
+
             if command == "test" {
                 let input = rest
                     .first()
@@ -103,14 +111,17 @@ fn run(mut args: Vec<OsString>) -> Result<(), String> {
                         },
                     )
                     .map_err(|e| e.to_string())?;
+
                 let mut hex = String::new();
                 for byte in output.return_data {
                     use std::fmt::Write;
                     let _ = write!(hex, "{byte:02x}");
                 }
+
                 println!("return_data: {hex}");
                 println!("resources: {:?}", output.resources);
             }
+
             Ok(())
         }
         _ => Err("unsupported command or invalid arguments; use --help".into()),
@@ -118,6 +129,7 @@ fn run(mut args: Vec<OsString>) -> Result<(), String> {
 }
 
 struct BuildDirectory(PathBuf);
+
 impl Drop for BuildDirectory {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -128,16 +140,21 @@ fn build(source: &Path, output: &Path, runtime: &WasmRuntime) -> Result<(), Stri
     if output.exists() {
         return Err("output already exists".into());
     }
+
     read(source, runtime::MAX_MODULE_SIZE)?;
+
     let rustc = sdk::resolve_compiler()?;
     let directory = build_directory()?;
     let sdk_library = sdk::compile(&directory.0, &rustc)?;
     let source = source.canonicalize().map_err(|e| e.to_string())?;
+
     let mut builds = Vec::new();
+
     for index in 0..2 {
         let artifact = directory.0.join(format!("build-{index}.wasm"));
         let mut compiler = sdk::compiler(&rustc);
         compiler.arg(sdk::remap(source.parent().ok_or("source parent missing")?));
+
         let status = compiler
             .arg(&source)
             .arg("--extern")
@@ -157,17 +174,22 @@ fn build(source: &Path, output: &Path, runtime: &WasmRuntime) -> Result<(), Stri
             .arg(&artifact)
             .status()
             .map_err(|e| e.to_string())?;
+
         if !status.success() {
             return Err("Rust contract compilation failed; check compiler target installation and source ABI".into());
         }
+
         builds.push(read(&artifact, runtime::MAX_MODULE_SIZE)?);
     }
+
     if builds[0] != builds[1] {
         return Err("repeated builds produced different bytes".into());
     }
+
     let module = runtime
         .validate(&builds[0], WASM_VERSION)
         .map_err(|e| e.to_string())?;
+
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -176,8 +198,10 @@ fn build(source: &Path, output: &Path, runtime: &WasmRuntime) -> Result<(), Stri
     file.write_all(&module.code)
         .and_then(|()| file.sync_all())
         .map_err(|e| e.to_string())?;
+
     println!("code_hash: {}", module.code_hash);
     println!("repeated_build: identical");
+
     Ok(())
 }
 
@@ -189,5 +213,6 @@ fn build_directory() -> Result<BuildDirectory, String> {
     let path =
         std::env::temp_dir().join(format!("astrolune-contract-{}-{nonce}", std::process::id()));
     std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+
     Ok(BuildDirectory(path))
 }

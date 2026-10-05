@@ -215,6 +215,7 @@ impl InMemoryResolver {
                 expires_at,
             },
         );
+
         Ok(())
     }
 
@@ -256,6 +257,7 @@ impl InMemoryResolver {
         match self.records.get(&normalized) {
             Some(lease) if lease.owner == caller => {
                 self.records.remove(&normalized);
+
                 Ok(true)
             }
             Some(_) => Err(DnsError::NotOwner),
@@ -266,6 +268,7 @@ impl InMemoryResolver {
     /// Returns `true` if a non-expired record exists for the given name.
     pub fn has_name(&self, name: &str, current_time: u64) -> Result<bool, DnsError> {
         let normalized = normalize_name(name)?;
+
         match self.records.get(&normalized) {
             Some(lease) => Ok(current_time < lease.expires_at),
             None => Ok(false),
@@ -277,6 +280,7 @@ impl InMemoryResolver {
         let before = self.records.len();
         self.records
             .retain(|_, lease| current_time < lease.expires_at);
+
         before - self.records.len()
     }
 
@@ -296,6 +300,7 @@ impl InMemoryResolver {
 impl Resolver for InMemoryResolver {
     fn resolve(&self, name: &str) -> Result<Option<Record>, DnsError> {
         let normalized = normalize_name(name)?;
+
         Ok(self
             .records
             .get(&normalized)
@@ -306,6 +311,7 @@ impl Resolver for InMemoryResolver {
 impl ExtendedResolver for InMemoryResolver {
     fn lease(&self, name: &str) -> Result<Option<NameLease>, DnsError> {
         let normalized = normalize_name(name)?;
+
         Ok(self.records.get(&normalized).cloned())
     }
 
@@ -359,6 +365,7 @@ mod tests {
     fn display_and_error_trait() {
         let err = DnsError::InvalidName;
         assert_eq!(format!("{err}"), "invalid name");
+
         let err: Box<dyn std::error::Error> = Box::new(DnsError::InvalidRegistryProof);
         assert_eq!(err.to_string(), "invalid registry proof");
     }
@@ -655,6 +662,7 @@ mod tests {
             .unwrap();
 
         resolver.renew("alice", addr, 150, 60).unwrap();
+
         let lease = resolver.lease("alice").unwrap().unwrap();
         assert_eq!(lease.expires_at, 220);
     }
@@ -683,6 +691,7 @@ mod tests {
             .unwrap();
 
         resolver.renew("alice", addr, 200, 60).unwrap();
+
         let lease = resolver.lease("alice").unwrap().unwrap();
         assert_eq!(lease.expires_at, 260);
     }

@@ -75,15 +75,18 @@ impl RegistryTrust {
         if self.genesis.runtime_version != 2 {
             return Err("registry requires activated ABI v2".into());
         }
+
         let name = canonical_name(name)?;
         let code_key = transaction::contract_code_key(self.address);
         let code_bytes = verify(code, &code_key, minimum)?.ok_or("registry is not deployed")?;
         if runtime::wasm_code_hash(code_bytes) != self.code_hash {
             return Err("registry code commitment mismatch".into());
         }
+
         let minimum = minimum.max(code.header.map_or(0, |header| header.height));
         let key = self.state_key(&name)?;
         let bytes = verify(value, &key, minimum)?;
+
         let height = value.header.map_or(0, |header| header.height);
         let lease = bytes
             .map(Lease::decode)
@@ -92,6 +95,7 @@ impl RegistryTrust {
         if lease.is_some_and(|lease| lease.issued > height) {
             return Err("lease was issued after its state height".into());
         }
+
         let lease = lease
             .filter(|lease| lease.name == name.as_bytes() && height < lease.expires)
             .map(|lease| ResolvedLease {
@@ -100,6 +104,7 @@ impl RegistryTrust {
                 kind: lease.record.kind,
                 value: lease.record.value.to_vec(),
             });
+
         Ok(Resolution {
             name,
             height,
@@ -113,6 +118,7 @@ impl RegistryTrust {
         let mut key = [0; registry::MAX_NAME + 7];
         let length =
             registry::registry_key(name.as_bytes(), &mut key).map_err(|_| "invalid name")?;
+
         Ok(transaction::contract_state_key(
             self.address,
             &key[..length],
@@ -128,6 +134,7 @@ pub struct CertifiedResolver {
     handoffs: Option<consensus::rotation::HandoffVerifier>,
     potb: Option<consensus::potb_transition::PotbVerifier>,
 }
+
 impl CertifiedResolver {
     /// Creates a resolver with operator-supplied freshness floor and trust anchors.
     #[must_use]
@@ -152,8 +159,10 @@ impl CertifiedResolver {
         if &trust.genesis != profile.genesis() {
             return Err("registry and PoTB configuration disagree".into());
         }
+
         let potb = consensus::potb_transition::PotbVerifier::new(profile, &trust.validators)
             .map_err(|error| error.to_string())?;
+
         Ok(Self {
             trust,
             client,
@@ -174,6 +183,7 @@ impl CertifiedResolver {
             .client
             .state_proof(&key)
             .map_err(|error| error.to_string())?;
+
         let result = if self.potb.is_some() {
             self.resolve_potb(name, &code, &value)?
         } else if self.trust.genesis.version == genesis::ROTATING_GENESIS_VERSION {
@@ -185,6 +195,7 @@ impl CertifiedResolver {
                 )
                 .map_err(|error| error.to_string())?,
             };
+
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
             let result = self.trust.verify_using(
                 name,
@@ -199,12 +210,14 @@ impl CertifiedResolver {
                     if height < minimum {
                         return Err("registry proof precedes freshness floor".into());
                     }
+
                     let remaining = deadline
                         .checked_duration_since(std::time::Instant::now())
                         .ok_or("handoff deadline exceeded")?;
                     self.client
                         .advance_handoffs(&mut trusted, height, 10_000, remaining)
                         .map_err(|error| error.to_string())?;
+
                     proof
                         .verify_with_handoffs(&trusted, key, minimum)
                         .map_err(|_| "registry proof failed authentication".into())
@@ -215,7 +228,9 @@ impl CertifiedResolver {
         } else {
             self.trust.verify(name, self.minimum, &code, &value)?
         };
+
         self.minimum = self.minimum.max(result.height);
+
         Ok(result)
     }
 
@@ -227,6 +242,7 @@ impl CertifiedResolver {
     ) -> Result<Resolution, String> {
         let mut trusted = self.potb.clone().ok_or("PoTB is not configured")?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+
         let result =
             self.trust
                 .verify_using(name, self.minimum, code, value, |proof, key, minimum| {
@@ -237,17 +253,21 @@ impl CertifiedResolver {
                     if height < minimum {
                         return Err("registry proof precedes freshness floor".into());
                     }
+
                     let remaining = deadline
                         .checked_duration_since(std::time::Instant::now())
                         .ok_or("handoff deadline exceeded")?;
                     self.client
                         .advance_potb_handoffs(&mut trusted, height, 10_000, remaining)
                         .map_err(|error| error.to_string())?;
+
                     proof
                         .verify_with_potb(&trusted, key, minimum)
                         .map_err(|_| "registry proof failed authentication".into())
                 })?;
+
         self.potb = Some(trusted);
+
         Ok(result)
     }
 }
@@ -257,7 +277,9 @@ pub fn canonical_name(name: &str) -> Result<String, String> {
     if name.len() > 128 {
         return Err("name input too long".into());
     }
+
     let name = name.trim().to_ascii_lowercase();
     registry::validate_name(name.as_bytes()).map_err(|_| "invalid or reserved registry name")?;
+
     Ok(name)
 }

@@ -49,6 +49,7 @@ pub(crate) fn resolve_compiler() -> Result<PathBuf, String> {
             "install Rust {RUST_VERSION} and its wasm32 target with rustup"
         ));
     }
+
     let path = PathBuf::from(
         String::from_utf8(output.stdout)
             .map_err(|error| error.to_string())?
@@ -57,6 +58,7 @@ pub(crate) fn resolve_compiler() -> Result<PathBuf, String> {
     if !path.is_absolute() || !path.is_file() {
         return Err("rustup returned an invalid compiler path".into());
     }
+
     let version = Command::new(&path)
         .arg("--version")
         .env_remove("RUSTC_BOOTSTRAP")
@@ -69,6 +71,7 @@ pub(crate) fn resolve_compiler() -> Result<PathBuf, String> {
     {
         return Err(format!("contract compiler must be rustc {RUST_VERSION}"));
     }
+
     Ok(path)
 }
 
@@ -77,6 +80,7 @@ pub(crate) fn compiler(path: &Path) -> Command {
     if let Some(sysroot) = std::env::var_os("ASTROLUNE_CONTRACT_SYSROOT") {
         compiler.arg("--sysroot").arg(sysroot);
     }
+
     compiler.env_remove("RUSTC_BOOTSTRAP");
     compiler.args([
         "--edition=2024",
@@ -88,6 +92,7 @@ pub(crate) fn compiler(path: &Path) -> Command {
         "-Cdebuginfo=0",
         "-Cstrip=symbols",
     ]);
+
     compiler
 }
 
@@ -97,14 +102,17 @@ pub(crate) fn compile(directory: &Path, rustc: &Path) -> Result<PathBuf, String>
     std::fs::create_dir(&abi)
         .and_then(|()| std::fs::create_dir(&sdk))
         .map_err(|e| e.to_string())?;
+
     std::fs::write(abi.join("lib.rs"), ABI_LIB)
         .and_then(|()| std::fs::write(abi.join("guest.rs"), ABI_GUEST))
         .map_err(|e| e.to_string())?;
     for (name, source) in SDK_FILES {
         std::fs::write(sdk.join(name), source).map_err(|e| e.to_string())?;
     }
+
     let abi_library = directory.join("libcontract_abi.rlib");
     let sdk_library = directory.join("libcontract_sdk.rlib");
+
     let status = compiler(rustc)
         .arg(remap(directory))
         .arg(abi.join("lib.rs"))
@@ -120,6 +128,7 @@ pub(crate) fn compile(directory: &Path, rustc: &Path) -> Result<PathBuf, String>
     if !status.success() {
         return Err("ABI binding compilation failed".into());
     }
+
     let status = compiler(rustc)
         .arg(remap(directory))
         .arg(sdk.join("lib.rs"))
@@ -137,23 +146,27 @@ pub(crate) fn compile(directory: &Path, rustc: &Path) -> Result<PathBuf, String>
     if !status.success() {
         return Err("SDK compilation failed".into());
     }
+
     Ok(sdk_library)
 }
 
 pub(crate) fn external(name: &str, path: &Path) -> std::ffi::OsString {
     let mut argument = std::ffi::OsString::from(format!("{name}="));
     argument.push(path);
+
     argument
 }
 
 pub(crate) fn dependency(path: &Path) -> std::ffi::OsString {
     let mut argument = std::ffi::OsString::from("dependency=");
     argument.push(path);
+
     argument
 }
 
 pub(crate) fn source_hash() -> types::Hash256 {
     let mut bytes = Vec::new();
+
     for (name, source) in [("abi/lib.rs", ABI_LIB), ("abi/guest.rs", ABI_GUEST)]
         .into_iter()
         .chain(SDK_FILES.iter().copied())
@@ -163,6 +176,7 @@ pub(crate) fn source_hash() -> types::Hash256 {
             bytes.extend_from_slice(field.as_bytes());
         }
     }
+
     types::hash::domain_hash(b"astrolune.contract.sdk.source.v1", &bytes)
 }
 
@@ -170,5 +184,6 @@ pub(crate) fn remap(directory: &Path) -> std::ffi::OsString {
     let mut argument = std::ffi::OsString::from("--remap-path-prefix=");
     argument.push(directory);
     argument.push("=/contract");
+
     argument
 }

@@ -54,6 +54,7 @@ fn configuration_validates_and_redacts_key_reference() {
     };
 
     config.validate().expect("valid node configuration");
+
     let debug = format!("{config:?}");
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("hardware-slot-7"));
@@ -87,6 +88,7 @@ fn genesis_and_mempool_form_a_deterministic_baseline() {
         max_bytes: 128,
     })
     .expect("valid limits");
+
     pool.insert(
         PoolEntry {
             id: hash(1),
@@ -138,6 +140,7 @@ fn keystore_signs_consensus_votes() {
         round: 0,
         phase: 0,
     };
+
     let sig = ks.sign_consensus(&handle, pos, msg).expect("signs");
     assert_ne!(sig, [0u8; 64]);
 
@@ -157,6 +160,7 @@ fn committee_rotation_feeds_finality() {
     let identity = |seed: u8| {
         ValidatorId(crypto::blake2s_hash(&crypto::blake2s::ed25519_public_key(&[seed; 32])).0)
     };
+
     let committee = Committee {
         height: 0,
         members: vec![
@@ -202,10 +206,12 @@ fn committee_rotation_feeds_finality() {
 
     assert_eq!(next.members[1].id, identity(2));
     assert_eq!(next.members[2].id, identity(4));
+
     let seeds = [1u8, 2, 4];
     let keys = seeds.map(|seed| crypto::blake2s::ed25519_public_key(&[seed; 32]));
     let context = consensus::AuthenticatedCommittee::new(7, &next, &keys).unwrap();
     let root = context.root();
+
     let mut engine = consensus::BftFinalityEngine::new(context);
     let block = hash(100);
 
@@ -220,11 +226,13 @@ fn committee_rotation_feeds_finality() {
             voter: member.id,
             signature: [0xFF; 64],
         };
+
         let seed = seeds
             .iter()
             .find(|seed| identity(**seed) == member.id)
             .unwrap();
         vote.signature = crypto::blake2s::ed25519_sign(&[*seed; 32], &vote.signing_hash().0);
+
         engine.receive_vote(vote).expect("valid vote");
     }
 
@@ -241,6 +249,7 @@ fn state_execution_storage_roundtrip() {
     let mut diff = StateDiff::new();
     let key = StateKey::new(b"account:alice".to_vec()).expect("valid key");
     diff.put(key.clone(), vec![100, 200, 50]);
+
     let root1 = state.commit(root0, &[diff]).expect("commit succeeds");
     assert_ne!(root0, root1);
 
@@ -390,6 +399,7 @@ fn rpc_service_full_workflow() {
 fn dns_service_resolution() {
     let mut resolver = InMemoryResolver::new();
     let record = Record::Service(b"application".to_vec());
+
     resolver
         .register(
             "appastro",
@@ -399,6 +409,7 @@ fn dns_service_resolution() {
             dns::DEFAULT_LEASE_SECS,
         )
         .unwrap();
+
     assert_eq!(resolver.resolve("appastro").unwrap(), Some(record));
 }
 
@@ -549,6 +560,7 @@ fn end_to_end_block_production() {
             balance: 100_000,
         },
     );
+
     let validator_inst = BasicValidator::new(accounts);
     let mut state = InMemoryState::new();
     let root0 = state.root();
@@ -559,6 +571,7 @@ fn end_to_end_block_production() {
         max_transaction_bytes: 1024,
     };
     let mut executor = SimpleExecutor::new(&mut state, validator_inst, exec_config);
+
     let selected_txs: Vec<_> = selected
         .into_iter()
         .map(|e| e.transaction.clone())
@@ -589,6 +602,7 @@ fn end_to_end_block_production() {
         effects: None,
         state_diffs: outputs.into_iter().map(|o| o.diff).collect(),
     };
+
     let cp = storage.commit(&commit_batch).expect("storage commit");
     assert_eq!(cp.height, 0);
     assert_eq!(cp.state_root, new_root);
@@ -693,6 +707,7 @@ fn block_producer_multiple_blocks() {
     }
 
     assert_eq!(producer.height(), 5);
+
     let cp = storage
         .recover()
         .expect("recovers")

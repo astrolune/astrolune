@@ -5,14 +5,17 @@
 
 #[path = "../../../../crates/consensus/tests/support/potb.rs"]
 mod fixture;
+
 use consensus::potb_transition::{PotbBatch, PotbVerifier};
 use std::collections::BTreeMap;
 
 pub fn build() -> BTreeMap<String, Vec<u8>> {
     let (config, keys) = fixture::fixture();
     let mut trusted = PotbVerifier::new(&config, &keys).unwrap();
+
     let first = trusted.current().committee().clone();
     let roots = vec![first.context().unwrap().root()];
+
     let mut result = BTreeMap::from([
         ("configuration.bin".into(), config.to_bytes()),
         (
@@ -20,6 +23,7 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
             trusted.current().to_bytes().unwrap(),
         ),
     ]);
+
     for height in 1..=2 {
         let batch = if height == 1 {
             fixture::batch(trusted.current())
@@ -31,8 +35,10 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
             )
             .unwrap()
         };
+
         let handoff = fixture::handoff(&trusted, batch);
         trusted.apply(&handoff).unwrap();
+
         result.insert(
             format!("height-{height}-batch.bin"),
             handoff.batch.to_bytes().unwrap(),
@@ -46,5 +52,6 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
             trusted.current().to_bytes().unwrap(),
         );
     }
+
     result
 }

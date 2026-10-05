@@ -5,12 +5,14 @@
 
 #[path = "../../../../crates/consensus/tests/support/potb.rs"]
 pub mod fixture;
+
 use consensus::potb_transition::PotbVerifier;
 use std::collections::BTreeMap;
 
 pub fn build() -> BTreeMap<String, Vec<u8>> {
     let (base, keys) = fixture::fixture();
     let config = fixture::governed(base);
+
     let mut trusted = PotbVerifier::new(&config, &keys).unwrap();
     let certificate = fixture::parameters(trusted.current(), trusted.parent());
     let approval = fixture::parameter_approvals(
@@ -18,6 +20,7 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
         trusted.current().committee().context().unwrap().members(),
     )
     .remove(0);
+
     let mut result = BTreeMap::from([
         ("configuration.bin".into(), config.to_bytes()),
         (
@@ -38,13 +41,17 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
             .unwrap(),
         ),
     ]);
+
     for height in 1..=3 {
         let mut batch = fixture::batch(trusted.current());
+
         if height == 1 {
             batch = batch.with_governance(certificate.clone()).unwrap();
         }
+
         let handoff = fixture::handoff(&trusted, batch);
         trusted.apply(&handoff).unwrap();
+
         result.insert(
             format!("height-{height}-batch.bin"),
             handoff.batch.to_bytes().unwrap(),
@@ -62,5 +69,6 @@ pub fn build() -> BTreeMap<String, Vec<u8>> {
             trusted.current().governance().unwrap().to_bytes(),
         );
     }
+
     result
 }

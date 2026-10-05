@@ -10,7 +10,9 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err("invalid prepare arguments".into());
     }
+
     let name = dns::certified::canonical_name(&args[1])?;
+
     let data;
     let action = match (args[0].as_str(), &args[2..]) {
         ("register", [duration, kind, value, _]) => {
@@ -36,11 +38,13 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
             if owner == [0; 32] {
                 return Err("owner cannot be zero".into());
             }
+
             RegistryAction::Transfer(owner)
         }
         ("release", [_]) => RegistryAction::Release,
         _ => return Err("invalid prepare arguments; see dns --help".into()),
     };
+
     let mut input = [0; registry::MAX_CALL];
     let size = RegistryCall {
         name: name.as_bytes(),
@@ -48,19 +52,24 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     }
     .encode(&mut input)
     .map_err(|error| format!("invalid call: {error:?}"))?;
+
     let mut key = [0; registry::MAX_NAME + 7];
     let length = registry::registry_key(name.as_bytes(), &mut key)
         .map_err(|error| format!("invalid key: {error:?}"))?;
+
     let path = Path::new(args.last().ok_or("missing output directory")?);
     std::fs::create_dir(path).map_err(|error| error.to_string())?;
+
     write(&path.join("input.bin"), &input[..size])?;
     write(
         &path.join("keys.txt"),
         format!("{}\n", super::hex(&key[..length])).as_bytes(),
     )?;
+
     println!("prepared_name: {name}");
     println!("input: {}", path.join("input.bin").display());
     println!("keys: {}", path.join("keys.txt").display());
+
     Ok(())
 }
 
@@ -81,6 +90,7 @@ fn number(text: &str) -> Result<u64, String> {
     if value == 0 || value > registry::MAX_DURATION {
         return Err("duration must be 1..1000000 blocks".into());
     }
+
     Ok(value)
 }
 

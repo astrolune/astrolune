@@ -18,6 +18,7 @@ use types::{Address, BlockHeader, Hash256, Resources, ValidatorId};
 fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
     let key = ed25519_public_key(&[1; 32]);
     let id = ValidatorId(crypto::blake2s_hash(&key).0);
+
     let genesis = genesis::Genesis {
         version: 1,
         chain_id: 42,
@@ -33,6 +34,7 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         validators: vec![genesis::GenesisValidator { id, weight: 1 }],
         allocations: vec![],
     };
+
     let code = wat::parse_str("(module (memory (export \"memory\") 1 2) (func (export \"call\") (result i32) i32.const 0))").unwrap();
     let trust = RegistryTrust {
         genesis,
@@ -40,11 +42,14 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         address: Address([42; 32]),
         code_hash: runtime::wasm_code_hash(&code),
     };
+
     let mut db = trust.genesis.materialize().unwrap();
     let code_key = transaction::contract_code_key(trust.address);
     let name_key = trust.state_key("alice").unwrap();
+
     let mut diff = StateDiff::new();
     diff.put(code_key.clone(), code);
+
     let mut record = [0; registry::MAX_LEASE];
     let call = RegistryCall {
         name: b"alice",
@@ -60,8 +65,10 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         .unwrap()
         .unwrap();
     diff.put(name_key.clone(), record[..size].to_vec());
+
     db.commit(db.root(), &[diff]).unwrap();
     let snapshot = db.snapshot().unwrap();
+
     let context = AuthenticatedCommittee::new(
         42,
         &Committee {
@@ -74,6 +81,7 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         &[key],
     )
     .unwrap();
+
     let header = BlockHeader {
         height: 2,
         parent: Hash256::ZERO,
@@ -83,6 +91,7 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         committee_root: context.root(),
         capacity: trust.genesis.capacity,
     };
+
     let vote = Vote {
         chain_id: 42,
         committee_root: context.root(),
@@ -93,6 +102,7 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
         voter: id,
         signature: [0; 64],
     };
+
     let certificate = FinalityCertificate {
         chain_id: 42,
         height: 2,
@@ -106,6 +116,7 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
     }
     .encode()
     .unwrap();
+
     let code = CertifiedStateProof::create(
         snapshot.as_ref(),
         &code_key,
@@ -115,22 +126,27 @@ fn fixture() -> (RegistryTrust, CertifiedStateProof, CertifiedStateProof) {
     let value =
         CertifiedStateProof::create(snapshot.as_ref(), &name_key, Some((header, certificate)))
             .unwrap();
+
     (trust, code, value)
 }
 
 #[test]
 fn resolver_authenticates_code_ownership_exact_name_and_freshness() {
     let (mut trust, code, value) = fixture();
+
     let resolved = trust.verify(" Alice ", 2, &code, &value).unwrap();
     assert_eq!(resolved.name, "alice");
     assert_eq!(resolved.lease.unwrap().owner, Address([2; 32]));
+
     assert_eq!(trust.verify("a1ice", 2, &code, &value).unwrap().lease, None);
     assert!(trust.verify("alice", 3, &code, &value).is_err());
     assert!(trust.verify("bob", 2, &code, &value).is_err());
     assert!(trust.verify("alice", 2, &value, &code).is_err());
+
     let mut altered = value.clone();
     altered.root = Hash256::ZERO;
     assert!(trust.verify("alice", 2, &code, &altered).is_err());
+
     trust.code_hash.0[0] ^= 1;
     assert!(trust.verify("alice", 2, &code, &value).is_err());
 }
@@ -138,6 +154,7 @@ fn resolver_authenticates_code_ownership_exact_name_and_freshness() {
 #[test]
 fn command_prepares_canonical_calls_and_refuses_overwrite() {
     let path = std::env::temp_dir().join(format!("astrolune-dns-prepare-{}", std::process::id()));
+
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_dns"))
         .args([
             "prepare",
@@ -155,6 +172,7 @@ fn command_prepares_canonical_calls_and_refuses_overwrite() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     let input = std::fs::read(path.join("input.bin")).unwrap();
     let call = RegistryCall::decode(&input).unwrap();
     assert_eq!(call.name, b"alice");
@@ -162,6 +180,7 @@ fn command_prepares_canonical_calls_and_refuses_overwrite() {
         std::fs::read_to_string(path.join("keys.txt")).unwrap(),
         "646e732f76312f616c696365\n"
     );
+
     let failure = std::process::Command::new(env!("CARGO_BIN_EXE_dns"))
         .args(["prepare", "release", "alice"])
         .arg(&path)
@@ -169,10 +188,12 @@ fn command_prepares_canonical_calls_and_refuses_overwrite() {
         .unwrap();
     assert!(!failure.status.success());
     assert_eq!(std::fs::read(path.join("input.bin")).unwrap(), input);
+
     std::fs::remove_dir_all(path).unwrap();
 }
 
 struct ChildGuard(std::process::Child);
+
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -188,24 +209,30 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
+
     let (trust, code, value) = fixture();
     let path = std::env::temp_dir().join(format!("astrolune-dns-server-{}", std::process::id()));
     std::fs::create_dir(&path).unwrap();
     std::fs::write(path.join("genesis"), trust.genesis.to_bytes()).unwrap();
     std::fs::write(path.join("validators"), trust.validators.concat()).unwrap();
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let rpc_address = listener.local_addr().unwrap().to_string();
     listener.set_nonblocking(true).unwrap();
+
     let mock = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(15);
+
         for proof in [code.clone(), value.clone(), code, value] {
             let mut stream = loop {
                 if let Ok((stream, _)) = listener.accept() {
                     break stream;
                 }
+
                 assert!(Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(10));
             };
+
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
@@ -214,6 +241,7 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
             let length = u32::from_le_bytes(length) as usize;
             assert!(length < 4096);
             stream.read_exact(&mut vec![0; length]).unwrap();
+
             let mut hex = String::new();
             for byte in proof.to_bytes().unwrap() {
                 use std::fmt::Write as _;
@@ -226,6 +254,7 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
             stream.write_all(response.as_bytes()).unwrap();
         }
     });
+
     let mut server = ChildGuard(
         Command::new(env!("CARGO_BIN_EXE_dns"))
             .arg("serve")
@@ -243,6 +272,7 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
             .spawn()
             .unwrap(),
     );
+
     let stdout = server.0.stdout.take().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -250,18 +280,22 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
         BufReader::new(stdout).read_line(&mut line).unwrap();
         let _ = send.send(line);
     });
+
     let line = receive.recv_timeout(Duration::from_secs(5)).unwrap();
     let address = line.trim().strip_prefix("listening: ").unwrap();
+
     for (name, expected) in [("ALICE\n", "\"owner\""), ("bob\n", "\"error\"")] {
         let mut client = TcpStream::connect(address).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         client.write_all(name.as_bytes()).unwrap();
+
         let mut answer = String::new();
         BufReader::new(client).read_line(&mut answer).unwrap();
         assert!(answer.contains(expected), "{answer}");
     }
+
     drop(server);
     mock.join().unwrap();
     std::fs::remove_dir_all(path).unwrap();
@@ -273,6 +307,7 @@ fn sign_rotating_header(
 ) -> FinalityCertificate {
     let context = current.context().unwrap();
     let voter = ValidatorId(crypto::blake2s_hash(&current.roster()[0].public_key).0);
+
     let vote = Vote {
         chain_id: current.chain_id(),
         committee_root: context.root(),
@@ -283,6 +318,7 @@ fn sign_rotating_header(
         voter,
         signature: [0; 64],
     };
+
     FinalityCertificate {
         chain_id: current.chain_id(),
         height: header.height,
@@ -305,9 +341,11 @@ fn rotating_fixture() -> (
     use consensus::rotation::{
         CommitteeHandoff, HandoffVerifier, VrfBatch, VrfContribution, committee_state_key,
     };
+
     let (mut trust, code, value) = fixture();
     let code_key = transaction::contract_code_key(trust.address);
     let name_key = trust.state_key("alice").unwrap();
+
     let mut diff = StateDiff::new();
     diff.put(
         code_key.clone(),
@@ -324,8 +362,10 @@ fn rotating_fixture() -> (
             .unwrap()
             .to_vec(),
     );
+
     trust.genesis.version = 2;
     let mut trusted = HandoffVerifier::new(&trust.genesis, &trust.validators).unwrap();
+
     let contribution = VrfContribution {
         validator: trust.genesis.validators[0].id,
         committee: crypto::prove_vrf(
@@ -342,9 +382,11 @@ fn rotating_fixture() -> (
     let contributions = VrfBatch::new(vec![contribution]).unwrap();
     let next = trusted.current().transition(&contributions).unwrap();
     diff.put(committee_state_key(), next.to_bytes().unwrap());
+
     let mut db = trust.genesis.materialize().unwrap();
     db.commit(db.root(), &[diff]).unwrap();
     let snapshot = db.snapshot().unwrap();
+
     let mut header = BlockHeader {
         height: 1,
         parent: trusted.parent(),
@@ -354,6 +396,7 @@ fn rotating_fixture() -> (
         committee_root: trusted.current().context().unwrap().root(),
         capacity: trust.genesis.capacity,
     };
+
     let handoff = CommitteeHandoff {
         header,
         certificate: sign_rotating_header(trusted.current(), &header),
@@ -361,13 +404,16 @@ fn rotating_fixture() -> (
         next_state: state::StateValueProof::create(snapshot.as_ref(), &committee_state_key())
             .unwrap(),
     };
+
     trusted.apply(&handoff).unwrap();
+
     header.height = 2;
     header.parent = trusted.parent();
     header.committee_root = trusted.current().context().unwrap().root();
     let certificate = sign_rotating_header(trusted.current(), &header)
         .encode()
         .unwrap();
+
     let code = CertifiedStateProof::create(
         snapshot.as_ref(),
         &code_key,
@@ -377,6 +423,7 @@ fn rotating_fixture() -> (
     let value =
         CertifiedStateProof::create(snapshot.as_ref(), &name_key, Some((header, certificate)))
             .unwrap();
+
     (trust, code, value, handoff)
 }
 
@@ -388,10 +435,13 @@ fn network_resolver_streams_rotation_then_reuses_authority_and_rejects_rollback(
         net::TcpListener,
         time::Duration,
     };
+
     let (trust, code, value, handoff) = rotating_fixture();
     assert!(trust.verify("alice", 0, &code, &value).is_err());
+
     let mut stale = code.clone();
     stale.header.as_mut().unwrap().height = 1;
+
     let replies = vec![
         code.to_bytes().unwrap(),
         value.to_bytes().unwrap(),
@@ -401,9 +451,11 @@ fn network_resolver_streams_rotation_then_reuses_authority_and_rejects_rollback(
         stale.to_bytes().unwrap(),
         value.to_bytes().unwrap(),
     ];
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let client =
         rpc::TcpRpcClient::new(listener.local_addr().unwrap(), Duration::from_secs(3)).unwrap();
+
     let task = std::thread::spawn(move || {
         for reply in replies {
             let (mut stream, _) = listener.accept().unwrap();
@@ -415,6 +467,7 @@ fn network_resolver_streams_rotation_then_reuses_authority_and_rejects_rollback(
             let size = u32::from_le_bytes(prefix) as usize;
             assert!(size < 1024);
             stream.read_exact(&mut vec![0; size]).unwrap();
+
             let mut hex = String::new();
             for byte in reply {
                 write!(hex, "{byte:02x}").unwrap();
@@ -426,11 +479,14 @@ fn network_resolver_streams_rotation_then_reuses_authority_and_rejects_rollback(
             stream.write_all(response.as_bytes()).unwrap();
         }
     });
+
     let mut resolver = dns::certified::CertifiedResolver::new(trust, client, 2);
+
     let first = resolver.resolve("alice").unwrap();
     assert_eq!(first.lease.as_ref().unwrap().owner, Address([2; 32]));
     assert_eq!(resolver.resolve("alice").unwrap(), first);
     assert!(resolver.resolve("alice").is_err());
+
     task.join().unwrap();
 }
 
@@ -447,9 +503,11 @@ fn potb_fixture() -> (
         },
         rotation::{VrfBatch, VrfContribution},
     };
+
     let (mut trust, code, value) = fixture();
     let code_key = transaction::contract_code_key(trust.address);
     let name_key = trust.state_key("alice").unwrap();
+
     let mut diff = StateDiff::new();
     diff.put(
         code_key.clone(),
@@ -466,6 +524,7 @@ fn potb_fixture() -> (
             .unwrap()
             .to_vec(),
     );
+
     trust.genesis.version = 2;
     let profile = PotbConfiguration::new(
         trust.genesis.clone(),
@@ -477,7 +536,9 @@ fn potb_fixture() -> (
         },
     )
     .unwrap();
+
     let mut trusted = PotbVerifier::new(&profile, &trust.validators).unwrap();
+
     let contribution = VrfContribution {
         validator: trust.genesis.validators[0].id,
         committee: crypto::prove_vrf(
@@ -503,9 +564,11 @@ fn potb_fixture() -> (
     let batch = PotbBatch::new(contributions, vec![], vec![]).unwrap();
     let next = trusted.current().stage(trusted.parent(), &batch).unwrap();
     diff.put(potb_state_key(), next.to_bytes().unwrap());
+
     let mut db = profile.materialize(&trust.validators).unwrap();
     db.commit(db.root(), &[diff]).unwrap();
     let snapshot = db.snapshot().unwrap();
+
     let mut header = BlockHeader {
         height: 1,
         parent: trusted.parent(),
@@ -515,19 +578,23 @@ fn potb_fixture() -> (
         committee_root: trusted.current().committee().context().unwrap().root(),
         capacity: trust.genesis.capacity,
     };
+
     let handoff = PotbHandoff {
         header,
         certificate: sign_rotating_header(trusted.current().committee(), &header),
         batch,
         next_state: state::StateValueProof::create(snapshot.as_ref(), &potb_state_key()).unwrap(),
     };
+
     trusted.apply(&handoff).unwrap();
+
     header.height = 2;
     header.parent = trusted.parent();
     header.committee_root = trusted.current().committee().context().unwrap().root();
     let certificate = sign_rotating_header(trusted.current().committee(), &header)
         .encode()
         .unwrap();
+
     let code = CertifiedStateProof::create(
         snapshot.as_ref(),
         &code_key,
@@ -537,6 +604,7 @@ fn potb_fixture() -> (
     let value =
         CertifiedStateProof::create(snapshot.as_ref(), &name_key, Some((header, certificate)))
             .unwrap();
+
     (trust, code, value, handoff, profile)
 }
 
@@ -548,10 +616,13 @@ fn network_resolver_streams_potb_then_reuses_authority_and_rejects_rollback() {
         net::TcpListener,
         time::Duration,
     };
+
     let (trust, code, value, handoff, profile) = potb_fixture();
     assert!(trust.verify("alice", 0, &code, &value).is_err());
+
     let mut stale = code.clone();
     stale.header.as_mut().unwrap().height = 1;
+
     let replies = vec![
         code.to_bytes().unwrap(),
         value.to_bytes().unwrap(),
@@ -561,9 +632,11 @@ fn network_resolver_streams_potb_then_reuses_authority_and_rejects_rollback() {
         stale.to_bytes().unwrap(),
         value.to_bytes().unwrap(),
     ];
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let client =
         rpc::TcpRpcClient::new(listener.local_addr().unwrap(), Duration::from_secs(3)).unwrap();
+
     let task = std::thread::spawn(move || {
         for reply in replies {
             let (mut stream, _) = listener.accept().unwrap();
@@ -575,6 +648,7 @@ fn network_resolver_streams_potb_then_reuses_authority_and_rejects_rollback() {
             let size = u32::from_le_bytes(prefix) as usize;
             assert!(size < 1024);
             stream.read_exact(&mut vec![0; size]).unwrap();
+
             let mut hex = String::new();
             for byte in reply {
                 write!(hex, "{byte:02x}").unwrap();
@@ -586,11 +660,14 @@ fn network_resolver_streams_potb_then_reuses_authority_and_rejects_rollback() {
             stream.write_all(response.as_bytes()).unwrap();
         }
     });
+
     let mut resolver =
         dns::certified::CertifiedResolver::with_potb(trust, client, 2, &profile).unwrap();
+
     let first = resolver.resolve("alice").unwrap();
     assert_eq!(first.lease.as_ref().unwrap().owner, Address([2; 32]));
     assert_eq!(resolver.resolve("alice").unwrap(), first);
     assert!(resolver.resolve("alice").is_err());
+
     task.join().unwrap();
 }

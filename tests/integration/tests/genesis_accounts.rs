@@ -34,6 +34,7 @@ fn allocated_genesis(address: Address, capacity: Resources) -> Genesis {
 fn signed_payment(seed: &[u8; 32], chain_id: u32, resources: Resources) -> Transaction {
     let public_key = ed25519_public_key(seed);
     let address = transaction::address_from_public_key(&public_key);
+
     let mut transaction = Transaction {
         version: types::TRANSACTION_VERSION,
         expires_at: u64::MAX,
@@ -58,6 +59,7 @@ fn signed_payment(seed: &[u8; 32], chain_id: u32, resources: Resources) -> Trans
         signature: [0; 64],
     };
     transaction.signature = ed25519_sign(seed, transaction::signing_hash(&transaction).as_bytes());
+
     transaction
 }
 
@@ -72,8 +74,10 @@ fn recovered_genesis_account_authenticates_signed_admission() {
         io: 100,
         bandwidth: 100,
     };
+
     let genesis = allocated_genesis(address, resources);
     let initial = genesis.materialize().unwrap();
+
     let directory = std::env::temp_dir().join(format!(
         "astrolune-genesis-admission-{}",
         std::process::id()
@@ -81,9 +85,11 @@ fn recovered_genesis_account_authenticates_signed_admission() {
     std::fs::create_dir(&directory).unwrap();
     let path = directory.join("state.bin");
     std::fs::write(&path, initial.export_snapshot()).unwrap();
+
     {
         let mut recovered = FileBackedState::open(&path).unwrap();
         assert_eq!(recovered.root(), initial.root());
+
         let snapshot = recovered.snapshot().unwrap();
         let account = read_account(snapshot.as_ref(), address).unwrap().unwrap();
         assert_eq!(
@@ -93,8 +99,10 @@ fn recovered_genesis_account_authenticates_signed_admission() {
                 balance: 1000
             }
         );
+
         let proof = snapshot.prove(&account_key(address)).unwrap().unwrap();
         assert!(proof.verify(initial.root(), &account_key(address), &account.to_bytes()));
+
         let validator = SignedValidator::new(
             BTreeMap::from([(
                 address,
@@ -111,6 +119,7 @@ fn recovered_genesis_account_authenticates_signed_admission() {
                 bandwidth: 1,
             },
         );
+
         let mut transaction = signed_payment(&seed, genesis.chain_id, resources);
         let context = ValidationContext {
             chain_id: 7,
@@ -118,6 +127,7 @@ fn recovered_genesis_account_authenticates_signed_admission() {
             max_transaction_bytes: 1024,
         };
         assert!(validator.validate(transaction.clone(), context).is_ok());
+
         transaction.nonce = 1;
         assert!(validator.validate(transaction, context).is_err());
 
@@ -140,6 +150,7 @@ fn recovered_genesis_account_authenticates_signed_admission() {
             0
         );
     }
+
     {
         let recovered = FileBackedState::open(&path).unwrap();
         assert_eq!(
@@ -150,6 +161,7 @@ fn recovered_genesis_account_authenticates_signed_admission() {
             })
         );
     }
+
     // Only the unique directory created by this test is removed.
     std::fs::remove_dir_all(directory).unwrap();
 }
