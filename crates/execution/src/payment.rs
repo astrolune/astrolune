@@ -197,6 +197,7 @@ pub fn execute_payments(
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
+    crate::prefetch::declared_keys(database, transactions);
     let mut session = PaymentSession::new(snapshot.as_ref(), context, capacity);
     let outputs: Vec<_> = transactions
         .iter()

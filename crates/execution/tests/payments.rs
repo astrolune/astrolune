@@ -83,6 +83,401 @@ fn execute(state: &mut InMemoryState, txs: &[Transaction]) -> Result<(), Executi
     execute_payments(state, txs, state.root(), context(), capacity()).map(|_| ())
 }
 
+fn changing_width_payments() -> Vec<Transaction> {
+    let mut nonces = [0; 9];
+    let mut txs = Vec::new();
+    for _ in 0..4 {
+        // Four independent transfers create recipients, then those recipients
+        // spend their new balances in the next wave. Two bridges join the lanes.
+        let transfers = (1..=4)
+            .map(|seed| (seed, seed + 4, 20))
+            .chain((5..=8).map(|seed| (seed, seed - 4, 5)))
+            .chain([(1, 2, 2), (3, 4, 2), (2, 3, 1)]);
+        for (seed, recipient, amount) in transfers {
+            let nonce = &mut nonces[usize::from(seed)];
+            txs.push(transfer(seed, address(recipient), *nonce, amount));
+            *nonce += 1;
+        }
+        // A conservative declaration forms a singleton wave between rounds,
+        // so idle workers must resume against the next committed overlay.
+        let barrier = txs.last_mut().unwrap();
+        barrier.access_list = (1..=8).map(|seed| account_key(address(seed))).collect();
+        barrier.access_list.sort();
+        barrier.resource_limit = payment_resources(barrier).unwrap();
+        *barrier = signed(barrier.clone(), 2);
+    }
+    txs
+}
+
+fn multi_wave_capacity() -> Resources {
+    Resources {
+        compute: 100,
+        memory: 10_000,
+        io: 1_000,
+        bandwidth: 100_000,
+    }
+}
+
+fn consecutive_singleton_payments() -> Vec<Transaction> {
+    let mut nonces = [0; 11];
+    let mut txs = Vec::new();
+    for _ in 0..3 {
+        // The first wide wave creates four recipients. Three consecutive
+        // singleton waves then create and spend from two further accounts,
+        // before independent recipients resume spending in a wide wave.
+        let transfers = (1..=4)
+            .map(|seed| (seed, seed + 4, 20, false))
+            .chain([(5, 9, 12, true), (9, 10, 8, true), (10, 5, 4, true)])
+            .chain((5..=8).map(|seed| (seed, seed - 4, 5, false)))
+            .chain([(1, 2, 2, false), (3, 4, 2, false), (2, 3, 1, true)]);
+        for (seed, recipient, amount, barrier) in transfers {
+            let nonce = &mut nonces[usize::from(seed)];
+            let mut tx = transfer(seed, address(recipient), *nonce, amount);
+            *nonce += 1;
+            if barrier {
+                tx.access_list = (1..=10).map(|seed| account_key(address(seed))).collect();
+                tx.access_list.sort();
+                tx.resource_limit = payment_resources(&tx).unwrap();
+                tx = signed(tx, seed);
+            }
+            txs.push(tx);
+        }
+    }
+    txs
+}
+
+#[test]
+fn consecutive_singleton_waves_preserve_creation_nonces_and_wide_wave_visibility() {
+    use execution::{ExecutionScheduler, GreedyScheduler};
+
+    let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);
+    let txs = consecutive_singleton_payments();
+    let widths: Vec<_> = GreedyScheduler
+        .plan(&txs)
+        .waves
+        .iter()
+        .map(|wave| wave.transaction_indexes.len())
+        .collect();
+    assert_eq!(widths, [4, 1, 1, 1, 4, 2, 1].repeat(3));
+    assert!(widths.windows(3).any(|widths| widths == [1, 1, 1]));
+    let mut serial = initial.clone();
+    let expected = execute_payments(
+        &mut serial,
+        &txs,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    )
+    .unwrap();
+    assert_eq!(
+        account(&serial, 9),
+        AccountState {
+            nonce: 3,
+            balance: 9
+        }
+    );
+    assert_eq!(
+        account(&serial, 10),
+        AccountState {
+            nonce: 3,
+            balance: 9
+        }
+    );
+    for workers in [1, 2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        let old = parallel.snapshot().unwrap();
+        let actual = execution::execute_payments_parallel(
+            &mut parallel,
+            &txs,
+            initial.root(),
+            context(),
+            multi_wave_capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "workers={workers}");
+        assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+        assert_eq!(old.root(), initial.root());
+        for seed in 5..=10 {
+            assert_eq!(read_account(old.as_ref(), address(seed)).unwrap(), None);
+        }
+    }
+}
+
+#[test]
+fn consecutive_singleton_failures_after_a_valid_prefix_allow_clean_retry() {
+    let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);
+    let valid = consecutive_singleton_payments();
+    let mut invalid = valid.clone();
+    // The third round's middle singleton follows two full rounds and another
+    // successful singleton. Its error must discard every preceding overlay.
+    let failed_index = 2 * 14 + 5;
+    assert_eq!(invalid[failed_index].sender, address(9));
+    invalid[failed_index].resource_limit.io = 0;
+    invalid[failed_index] = signed(invalid[failed_index].clone(), 9);
+    // Exhaust the block capacity at the last singleton of the third round.
+    let bounded = Resources {
+        compute: valid[..=failed_index]
+            .iter()
+            .map(|tx| payment_resources(tx).unwrap().compute)
+            .sum(),
+        ..multi_wave_capacity()
+    };
+    let mut prefix = initial.clone();
+    execute_payments(
+        &mut prefix,
+        &valid[..=failed_index],
+        initial.root(),
+        context(),
+        bounded,
+    )
+    .unwrap();
+    let mut serial = initial.clone();
+    let expected = execute_payments(
+        &mut serial,
+        &valid,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    )
+    .unwrap();
+    for (txs, available) in [(&invalid, multi_wave_capacity()), (&valid, bounded)] {
+        let mut rejected = initial.clone();
+        let expected_error =
+            execute_payments(&mut rejected, txs, initial.root(), context(), available);
+        assert_eq!(expected_error, Err(ExecutionError::ResourceLimit));
+        assert_eq!(rejected.export_snapshot(), initial.export_snapshot());
+        for workers in [1, 2, 3, 8, 32] {
+            let mut parallel = initial.clone();
+            assert_eq!(
+                execution::execute_payments_parallel(
+                    &mut parallel,
+                    txs,
+                    initial.root(),
+                    context(),
+                    available,
+                    workers,
+                ),
+                expected_error,
+                "workers={workers}"
+            );
+            assert_eq!(parallel.export_snapshot(), initial.export_snapshot());
+            let actual = execution::execute_payments_parallel(
+                &mut parallel,
+                &valid,
+                initial.root(),
+                context(),
+                multi_wave_capacity(),
+                workers,
+            )
+            .unwrap();
+            assert_eq!(actual, expected, "retry workers={workers}");
+            assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+        }
+    }
+}
+
+#[test]
+fn repeated_changing_width_waves_preserve_outputs_and_snapshot_visibility() {
+    use execution::{ExecutionScheduler, GreedyScheduler};
+
+    let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);
+    let txs = changing_width_payments();
+    let widths: Vec<_> = GreedyScheduler
+        .plan(&txs)
+        .waves
+        .iter()
+        .map(|wave| wave.transaction_indexes.len())
+        .collect();
+    assert_eq!(widths, [4, 4, 2, 1].repeat(4));
+    let mut serial = initial.clone();
+    let expected = execute_payments(
+        &mut serial,
+        &txs,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    )
+    .unwrap();
+    for workers in [1, 2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        let old = parallel.snapshot().unwrap();
+        let actual = execution::execute_payments_parallel(
+            &mut parallel,
+            &txs,
+            initial.root(),
+            context(),
+            multi_wave_capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "workers={workers}");
+        assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+        assert_eq!(old.root(), initial.root());
+        for seed in 1..=8 {
+            let original =
+                read_account(initial.snapshot().unwrap().as_ref(), address(seed)).unwrap();
+            assert_eq!(read_account(old.as_ref(), address(seed)).unwrap(), original);
+        }
+    }
+}
+
+#[test]
+fn late_wave_resource_failure_allows_clean_retry_on_same_database() {
+    let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);
+    let valid = changing_width_payments();
+    let mut invalid = valid.clone();
+    // The fourth round reaches a parallel wave after twelve successful waves.
+    invalid[34].resource_limit.io = 0;
+    invalid[34] = signed(invalid[34].clone(), 2);
+    let mut serial = initial.clone();
+    let expected_error = execute_payments(
+        &mut serial,
+        &invalid,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    );
+    assert_eq!(expected_error, Err(ExecutionError::ResourceLimit));
+    assert_eq!(serial.export_snapshot(), initial.export_snapshot());
+    let expected = execute_payments(
+        &mut serial,
+        &valid,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    )
+    .unwrap();
+    for workers in [1, 2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        let old = parallel.snapshot().unwrap();
+        assert_eq!(
+            execution::execute_payments_parallel(
+                &mut parallel,
+                &invalid,
+                initial.root(),
+                context(),
+                multi_wave_capacity(),
+                workers,
+            ),
+            expected_error,
+            "workers={workers}"
+        );
+        assert_eq!(parallel.export_snapshot(), initial.export_snapshot());
+        let actual = execution::execute_payments_parallel(
+            &mut parallel,
+            &valid,
+            initial.root(),
+            context(),
+            multi_wave_capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "workers={workers}");
+        assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+        assert_eq!(old.root(), initial.root());
+        assert_eq!(read_account(old.as_ref(), address(5)).unwrap(), None);
+    }
+}
+
+#[test]
+fn parallel_executor_reuses_the_same_workers_across_payment_waves() {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+    use std::thread::{ThreadId, current};
+
+    use state::{StateAbsenceProof, StateProof, StateSnapshot};
+    use types::StateKey;
+
+    struct RecordingState {
+        inner: InMemoryState,
+        readers: Arc<Mutex<HashSet<ThreadId>>>,
+    }
+    struct RecordingSnapshot {
+        inner: Box<dyn StateSnapshot>,
+        readers: Arc<Mutex<HashSet<ThreadId>>>,
+    }
+    impl StateSnapshot for RecordingSnapshot {
+        fn root(&self) -> Hash256 {
+            self.inner.root()
+        }
+        fn get(&self, key: &StateKey) -> Result<Option<Vec<u8>>, StateError> {
+            self.readers.lock().unwrap().insert(current().id());
+            self.inner.get(key)
+        }
+        fn prove(&self, key: &StateKey) -> Result<Option<StateProof>, StateError> {
+            self.inner.prove(key)
+        }
+        fn prove_absence(&self, key: &StateKey) -> Result<Option<StateAbsenceProof>, StateError> {
+            self.inner.prove_absence(key)
+        }
+    }
+    impl StateDatabase for RecordingState {
+        fn snapshot(&self) -> Result<Box<dyn StateSnapshot>, StateError> {
+            Ok(Box::new(RecordingSnapshot {
+                inner: self.inner.snapshot()?,
+                readers: Arc::clone(&self.readers),
+            }))
+        }
+        fn prefetch(&self, keys: &[StateKey]) -> Result<(), StateError> {
+            self.inner.prefetch(keys)
+        }
+        fn commit(&mut self, parent: Hash256, diffs: &[StateDiff]) -> Result<Hash256, StateError> {
+            self.inner.commit(parent, diffs)
+        }
+    }
+
+    let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);
+    // New recipients force parent reads in every wave, even when the sender's
+    // latest balance is already present in the speculative overlay.
+    let txs: Vec<_> = (0..6_u8)
+        .flat_map(|round| {
+            (1..=4)
+                .map(move |seed| transfer(seed, address(9 + round * 4 + seed), u64::from(round), 1))
+        })
+        .collect();
+    let mut serial = initial.clone();
+    let expected = execute_payments(
+        &mut serial,
+        &txs,
+        initial.root(),
+        context(),
+        multi_wave_capacity(),
+    )
+    .unwrap();
+    for workers in [1, 2, 3, 4, 8, 32] {
+        let readers = Arc::new(Mutex::new(HashSet::new()));
+        let mut parallel = RecordingState {
+            inner: initial.clone(),
+            readers: Arc::clone(&readers),
+        };
+        let actual = execution::execute_payments_parallel(
+            &mut parallel,
+            &txs,
+            initial.root(),
+            context(),
+            multi_wave_capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(parallel.inner.export_snapshot(), serial.export_snapshot());
+        let readers = readers.lock().unwrap();
+        if workers == 1 {
+            assert_eq!(*readers, HashSet::from([current().id()]));
+        } else {
+            assert!(readers.len() > 1, "parallel execution fell back to serial");
+            assert!(!readers.contains(&current().id()));
+            let expected_readers = 4_usize.div_ceil(4_usize.div_ceil(workers));
+            assert_eq!(
+                readers.len(),
+                expected_readers,
+                "reader threads for {workers} workers across six waves"
+            );
+        }
+    }
+}
+
 #[test]
 fn parallel_waves_match_sequential_outputs_roots_and_old_snapshots() {
     let initial = funded(&[(1, 0, 1000), (2, 0, 1000), (3, 0, 1000), (4, 0, 1000)]);

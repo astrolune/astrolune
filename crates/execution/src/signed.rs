@@ -90,6 +90,7 @@ pub fn execute_signed(
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
+    crate::prefetch::declared_keys(database, transactions);
     let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
     let mut session = SignedSession::new(&cached, context, capacity, true);
     let outputs = transactions

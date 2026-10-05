@@ -16,10 +16,12 @@ mod error;
 mod executor;
 mod parallel_payment;
 mod payment;
+mod prefetch;
 mod scheduler;
 mod signed;
 mod snapshot_cache;
 mod wave;
+mod worker_pool;
 
 pub use error::ExecutionError;
 pub use executor::{ExecutorConfig, SimpleExecutor, TransactionOutput};

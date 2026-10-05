@@ -88,19 +88,17 @@ impl NodeMetrics {
     }
     /// Saturating addition used for local counters and session gauges.
     pub fn add(&self, metric: NodeMetric, value: u64) {
-        let _ = self.values[metric as usize].fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |old| Some(old.saturating_add(value)),
-        );
+        let _ =
+            self.values[metric as usize].try_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                Some(old.saturating_add(value))
+            });
     }
     /// Saturating subtraction for session completion, including error paths.
     pub fn subtract(&self, metric: NodeMetric, value: u64) {
-        let _ = self.values[metric as usize].fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |old| Some(old.saturating_sub(value)),
-        );
+        let _ =
+            self.values[metric as usize].try_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                Some(old.saturating_sub(value))
+            });
     }
     /// Reads a best-effort atomic observation.
     #[must_use]

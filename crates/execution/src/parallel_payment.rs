@@ -3,7 +3,7 @@
 
 //! Bounded parallel payment waves with a private overlay and serial error replay.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::RwLock};
 
 use state::{
     StateAbsenceProof, StateChange, StateDatabase, StateDiff, StateError, StateProof, StateSnapshot,
@@ -92,25 +92,26 @@ pub fn execute_parallel(
     workers: usize,
 ) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
     let capacity = policy.capacity;
-    let serial = |database: &mut _, transactions: &[_], parent, context| {
-        execute_serial(database, transactions, parent, context, policy)
+    let serial = |database: &mut _, transactions: &[_], parent, context, prefetch| {
+        execute_serial(database, transactions, parent, context, policy, prefetch)
     };
     if workers == 0 || workers > MAX_PAYMENT_WORKERS {
         return Err(ExecutionError::ResourceLimit);
     }
     if workers == 1 || transactions.len() < 2 {
-        return serial(database, transactions, parent, context);
+        return serial(database, transactions, parent, context, true);
     }
     let snapshot = database.snapshot()?;
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
     }
+    crate::prefetch::declared_keys(database, transactions);
     let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
     let view = execution_view(snapshot.as_ref(), &cached, policy.contracts);
     let outputs = speculate(view, transactions, context, policy, workers);
     let Ok(outputs) = outputs else {
         drop(cached);
-        return serial(database, transactions, parent, context);
+        return serial(database, transactions, parent, context, false);
     };
     let mut used = Resources::ZERO;
     for output in &outputs {
@@ -132,10 +133,14 @@ fn execute_serial(
     parent: Hash256,
     context: ValidationContext,
     policy: ExecutionPolicy,
+    prefetch: bool,
 ) -> Result<(Vec<TransactionOutput>, Hash256), ExecutionError> {
     let snapshot = database.snapshot()?;
     if snapshot.root() != parent {
         return Err(StateError::StaleSnapshot.into());
+    }
+    if prefetch {
+        crate::prefetch::declared_keys(database, transactions);
     }
     let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
     let view = execution_view(snapshot.as_ref(), &cached, policy.contracts);
@@ -214,67 +219,82 @@ fn speculate(
         }
     }
     let plan = GreedyScheduler.plan(transactions);
-    let mut overlay = Overlay {
+    let overlay = RwLock::new(Overlay {
         parent,
         values: BTreeMap::new(),
-    };
+    });
     let mut outputs = vec![None; transactions.len()];
-    for wave in plan.waves {
-        if let [index] = wave.transaction_indexes.as_slice() {
-            let output = SignedSession::new(&overlay, context, policy.capacity, policy.contracts)
-                .with_prices(policy.prices)
-                .execute(&transactions[*index])?;
-            overlay.apply(&output.diff);
-            outputs[*index] = Some(output);
-            continue;
+    let pool_size = plan
+        .waves
+        .iter()
+        .map(|wave| wave.transaction_indexes.len())
+        .max()
+        .unwrap_or(0)
+        .min(workers);
+    let execute_chunk = |(chunk, mut results): (&[usize], Vec<(usize, TransactionOutput)>)| {
+        results.clear();
+        let view = overlay.read().map_err(|_| ExecutionError::Trap)?;
+        let mut session = SignedSession::new(&*view, context, policy.capacity, policy.contracts)
+            .with_prices(policy.prices);
+        for &index in chunk {
+            results.push((index, session.execute(&transactions[index])?));
         }
-        let overlay_view = &overlay;
-        let results = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            let mut failure = None;
-            for chunk in wave
-                .transaction_indexes
-                .chunks(wave.transaction_indexes.len().div_ceil(workers))
-            {
-                if let Ok(handle) = std::thread::Builder::new().spawn_scoped(scope, move || {
-                    let mut session = SignedSession::new(
-                        overlay_view,
-                        context,
-                        policy.capacity,
-                        policy.contracts,
-                    )
-                    .with_prices(policy.prices);
-                    chunk
-                        .iter()
-                        .map(|&index| {
-                            session
-                                .execute(&transactions[index])
-                                .map(|output| (index, output))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                }) {
-                    handles.push(handle);
-                } else {
-                    failure = Some(ExecutionError::Trap);
-                    break;
+        Ok(results)
+    };
+    std::thread::scope(|scope| {
+        let mut pool = if pool_size > 1 {
+            Some(crate::worker_pool::ScopedWorkerPool::new(
+                scope,
+                pool_size,
+                &execute_chunk,
+            )?)
+        } else {
+            None
+        };
+        let mut buffers: Vec<Vec<_>> = (0..pool_size).map(|_| Vec::new()).collect();
+        let mut returned = Vec::with_capacity(pool_size);
+        let mut serial_buffer = Vec::new();
+        let mut fused_indexes = Vec::new();
+        let mut waves = plan.waves.iter().peekable();
+        while let Some(wave) = waves.next() {
+            let indexes = wave.transaction_indexes.as_slice();
+            if let [index] = indexes {
+                // Consecutive singleton waves form one sequential session. Its
+                // private writes feed dependent transactions without publishing
+                // intermediate state to the coordinator between each call.
+                fused_indexes.clear();
+                fused_indexes.push(*index);
+                while let Some(next) = waves.next_if(|next| next.transaction_indexes.len() == 1) {
+                    fused_indexes.push(next.transaction_indexes[0]);
+                }
+                serial_buffer = execute_chunk((&fused_indexes, serial_buffer))?;
+                let mut view = overlay.write().map_err(|_| ExecutionError::Trap)?;
+                for (index, output) in serial_buffer.drain(..) {
+                    view.apply(&output.diff);
+                    outputs[index] = Some(output);
+                }
+            } else {
+                let tasks = indexes
+                    .chunks(indexes.len().div_ceil(workers))
+                    .zip(buffers.iter_mut())
+                    .map(|(chunk, buffer)| (chunk, std::mem::take(buffer)));
+                pool.as_mut()
+                    .ok_or(ExecutionError::Conflict)?
+                    .map_into(tasks, &mut returned)?;
+                // All readers have finished. Move outputs into their final
+                // positions, then return empty allocations to the buffer pool.
+                let mut view = overlay.write().map_err(|_| ExecutionError::Trap)?;
+                for (buffer, mut results) in buffers.iter_mut().zip(returned.drain(..)) {
+                    for (index, output) in results.drain(..) {
+                        view.apply(&output.diff);
+                        outputs[index] = Some(output);
+                    }
+                    *buffer = results;
                 }
             }
-            let mut results = Vec::new();
-            // Join every worker even on failure, keeping panic/error handling local.
-            for handle in handles {
-                match handle.join() {
-                    Ok(Ok(outputs)) => results.extend(outputs),
-                    Ok(Err(error)) => failure = Some(error),
-                    Err(_) => failure = Some(ExecutionError::Trap),
-                }
-            }
-            failure.map_or(Ok(results), Err)
-        })?;
-        for (index, output) in results {
-            overlay.apply(&output.diff);
-            outputs[index] = Some(output);
         }
-    }
+        Ok::<_, ExecutionError>(())
+    })?;
     outputs
         .into_iter()
         .map(|value| value.ok_or(ExecutionError::Conflict))

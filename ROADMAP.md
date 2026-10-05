@@ -64,7 +64,9 @@ Access leasing, execution waves, multiple lanes, optimistic validation, determin
 - [x] Consensus capacity/fee governance: more than 2/3 incumbent weight, next-epoch activation; [details](docs/48-parameter-governance.md).
 - [x] Bounded verified VRF transition cache and single-pass evidence history verification, with equivalence tests and [local measurements](docs/40-live-vrf-network.md#repeated-verification-cost).
 - [x] Bounded execution-parent read cache and borrowed-key wave planning, with uncached/serial equivalence and deterministic read-count checks; [scope](docs/29-parallel-payments-and-wasm.md#execution-parent-cache-and-planner-allocation).
-- [ ] Remaining locality/fusion/prefetch/pool optimizations and signature batching with equivalence tests.
+- [x] Reuse a bounded worker pool across each block's parallel waves, with thread-count and serial-equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#per-block-worker-reuse).
+- [x] Reference execution locality through borrowed-key planning and parent caching, consecutive singleton-wave fusion, bounded declared-key prefetch and reusable worker result buffers, with serial-equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
+- [ ] Signature batching with equivalence tests; deferred with cryptographic verification work.
 
 ## M5 — PoTB and finality
 
@@ -129,7 +131,8 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Connect signed deploy/call transactions to the WebAssembly runtime.
 - [x] Complete the Rust SDK host adapter.
 - [x] Complete bounded source-package tooling and exact artifact reconstruction.
-- [ ] Complete mixed-lane execution, capacity/fee governance and deterministic optimization qualification.
+- [x] Complete mixed-lane execution, capacity/fee governance and reference execution optimizations with deterministic equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
+- [ ] Qualify signature batching; deferred with cryptographic verification work.
 - [x] Add bounded state/transaction indexes and exact-height certified state proofs; [details](docs/47-historical-state-index.md).
 - [x] Add explicit bounded history export and independently pinned recovery; [operator workflow and limits](docs/49-pinned-history-retention.md).
 - [x] Add encrypted wallet custody, OS-generated wallet keys and direct vault signing.
@@ -139,3 +142,12 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Complete scoped private-network peer discovery, bounded sessions, operational telemetry and authenticated observer recovery tooling.
 - [x] Complete fixed/rotating protocol compatibility fixtures and deterministic mutation qualification.
 - [ ] Complete coverage-guided fuzzing, remaining platform and reproducible-release qualification.
+
+## Remaining work by scope
+
+The reference execution optimizations above do not complete the whole roadmap.
+
+- Security-related work is deferred: signature batching, long coverage-guided and contract fuzz campaigns, Byzantine/churn simulations, formal safety/liveness, provider/dependency review, key custody, release signing and external audits. Alternate runtime backends and automated history retention also remain unimplemented; they require runtime/metering qualification and checkpoint/signing-state recovery design respectively.
+- Platform and release evidence remains external to the local Windows checks: Linux suite execution, cross-platform contract artifacts and reproducibility on independent machines. Configured CI gates do not establish observed results.
+- M6 still requires separate protocol integration for compact-block propagation, stage pipelining and speculative work beyond the implemented execution waves. Existing reference-network transport, sequential catch-up and manual pinned history export do not implement those features.
+- Distributed calibration and production operating procedures remain release activities. Functional equivalence and deterministic read/thread/allocation checks do not establish end-to-end throughput.

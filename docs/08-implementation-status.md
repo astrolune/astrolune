@@ -72,7 +72,7 @@ Standard hashing and signing backends, signed transaction IDs, address derivatio
 
 Signed envelopes, validation order, account/state commitments, immutable snapshots, proofs, diffs, sequential atomic commit, crash recovery, pruning, receipts, and snapshot exchange.
 
-Implemented reference state commitments, membership and absence proofs, bounded versioned snapshots, atomic file-backed state publication, writer locks, recovery, verified snapshot exchange, and proposal rollback are described in [state and recovery](10-state-and-recovery.md). [Whole-chain archives](11-chain-archives.md) now persist blocks, certificates, checkpoints, and historical state atomically. Local daemon block/state restart integration is implemented with process and differential recovery tests. [Genesis activation](12-genesis-and-accounts.md) creates committed account balances/nonces and validator weights, installs a durable height-zero anchor, and validates genesis identity on restart. Recovered accounts are tested against signed admission. [Native payments](13-native-payments.md) implement sequential account transitions, fixed reference fees, atomic revalidation/publication, and daemon account/submission RPC with process restart tests. Versioned transaction policy is enforced at admission, proposal execution, and commit; expiry eviction follows successful durable publication. Durable consensus signing decisions now recover independently through the signing journal. Daemon signer integration and full-history certificate verification are implemented in the reference-network profile. [Append-only chain storage](22-append-only-chain-storage.md) removes whole-history rewrites and the archive checkpoint cap for new network directories, with legacy compatibility and fault/replay coverage. General execution/fee policy, production state indexing and retention remain open.
+Implemented reference state commitments, membership and absence proofs, bounded versioned snapshots, atomic file-backed state publication, writer locks, recovery, verified snapshot exchange, and proposal rollback are described in [state and recovery](10-state-and-recovery.md). [Whole-chain archives](11-chain-archives.md) now persist blocks, certificates, checkpoints, and historical state atomically. Local daemon block/state restart integration is implemented with process and differential recovery tests. [Genesis activation](12-genesis-and-accounts.md) creates committed account balances/nonces and validator weights, installs a durable height-zero anchor, and validates genesis identity on restart. Recovered accounts are tested against signed admission. [Native payments](13-native-payments.md) implement sequential account transitions, fixed reference fees, atomic revalidation/publication, and daemon account/submission RPC with process restart tests. Versioned transaction policy is enforced at admission, proposal execution, and commit; expiry eviction follows successful durable publication. Durable consensus signing decisions now recover independently through the signing journal. Daemon signer integration and full-history certificate verification are implemented in the reference-network profile. [Append-only chain storage](22-append-only-chain-storage.md) removes whole-history rewrites and the archive checkpoint cap for new network directories, with legacy compatibility and fault/replay coverage. Quorum capacity/fee governance, bounded historical state indexing and explicit pinned history export are implemented. Automatic retention and a production durable database engine remain open.
 
 ### M3 — deterministic runtime
 
@@ -85,7 +85,14 @@ Deterministic waves, Adaptive Execution Leasing, lanes, optimistic access valida
 Bounded execution-parent caching and borrowed-key wave planning are implemented
 with uncached/serial differential tests and deterministic read-count checks;
 [scope and limits](29-parallel-payments-and-wasm.md#execution-parent-cache-and-planner-allocation).
-Fusion, prefetch, worker/object pools and signature batching remain open.
+Per-block worker reuse is implemented with thread-count and serial-equivalence
+checks; [scope](29-parallel-payments-and-wasm.md#per-block-worker-reuse).
+Consecutive singleton-wave fusion, bounded declared-key prefetch and reusable
+worker result buffers are implemented with serial-equivalence checks;
+[behavior and limits](29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
+These complete the reference execution optimization scope. Signature batching
+remains open and is deferred with cryptographic verification work. End-to-end
+throughput is not established by these functional checks.
 
 ### M5 — consensus
 
@@ -98,6 +105,11 @@ The [authenticated finality layer](15-authenticated-finality.md) verifies regist
 Authenticated encrypted transport, peer discovery, rate limits, compact blocks, finalized sync, bounded queues, pipelining, speculation, external RPC, telemetry, and finalized adaptive-capacity observations.
 
 [Non-voting full nodes](21-observer-nodes.md) now verify and serve certified history, re-execute imported blocks, relay payments, and recover without consensus keys. Observer provisioning and actual TLS/RPC process tests are implemented.
+
+Compact-block propagation, stage pipelining and speculative work beyond execution
+waves still require separate reference-network protocol integration. Automatic
+history retention is also unimplemented; the existing pinned export is an explicit
+offline operation with an independently retained checkpoint pin.
 
 ### M7 — ecosystem
 
@@ -112,9 +124,13 @@ certified state/receipt queries, authenticated finality waiting and on-chain DNS
 
 Distributed calibration, interoperability suite, long fuzz campaigns, reproducible releases, dependency audit, independent cryptography/consensus/runtime/security reviews, key ceremonies, and incident/operator runbooks.
 
-Supported fixed/rotating wire histories retain 50 frozen compatibility fixtures. The explicit PoTB producer profile adds eight separate fixtures with authenticated replay and independent Python checks. The shared deterministic mutation corpus now uses 81 seeds and passes one million inputs; [scope](41-protocol-compatibility.md) and [live PoTB qualification](45-live-potb-network.md).
+Supported fixed/rotating wire histories retain 50 frozen compatibility fixtures. The explicit PoTB producer profile adds eight separate fixtures with authenticated replay and independent Python checks. The shared deterministic mutation corpus now uses 99 seeds and passes one million inputs; [scope](41-protocol-compatibility.md) and [live PoTB qualification](45-live-potb-network.md).
 
-The concise checklist is maintained in [`../ROADMAP.md`](../ROADMAP.md).
+The concise checklist and remaining-work split are maintained in
+[`../ROADMAP.md`](../ROADMAP.md#remaining-work-by-scope). Security-related work,
+including alternate-runtime qualification and automated retention recovery design,
+is deferred. Linux and independent-machine release evidence remains outstanding;
+local Windows checks and configured CI jobs do not satisfy those external gates.
 
 ## 8.5 Required continuous gates
 

@@ -57,6 +57,70 @@ contract; the next block performs a fresh read. Cache tests cover absence,
 entry/byte limits, errors, shared worker hits and overlay write/delete visibility.
 These are read-count and equivalence checks, not wall-clock throughput claims.
 
+## Per-block worker reuse
+
+Parallel execution creates one scoped worker pool per block attempt and reuses
+its threads across all parallel waves. Its size is the smaller of the requested
+worker count and the widest wave, with the existing maximum of 32. Singleton
+waves execute on the coordinator; a plan containing only singleton waves creates
+no workers. Threads are joined before the attempt returns, including on failure.
+
+Each worker has a one-slot request channel and a one-slot result channel. The
+coordinator dispatches at most one chunk to each worker per wave and receives
+every dispatched result before advancing the shared private overlay. Workers
+hold read access only while executing their chunk; the coordinator applies
+results between waves. A fresh execution session per chunk retains the existing
+resource accounting. Result order, chunk boundaries, resource charges and the
+final atomic commit are unchanged.
+
+Task failures and closed worker channels drain outstanding results and close the
+pool. Worker panics are consumed by explicit joins; execution falls back to the
+existing serial path, as it does for worker creation failures. No worker, task
+queue or speculative overlay survives into another execution attempt.
+
+Tests compare 16 waves with changing widths, new account visibility, a late
+resource failure and a clean retry against serial execution for 1, 2, 3, 8 and
+32 requested workers. Snapshot read instrumentation records actual thread IDs:
+six four-wide waves use four worker threads at a requested count of four or
+more, instead of creating 24 threads. Separate pool tests cover ordered results,
+reuse, smaller/empty batches, task errors, worker panics and joining idle workers.
+This qualifies thread reuse and functional equivalence; end-to-end throughput
+has not been benchmarked.
+
+## Fusion, prefetch and result-buffer reuse
+
+Consecutive waves containing one transaction each execute in one sequential
+session. Later transactions see that session's private writes, including account
+creation and contract changes, before the combined results reach the block
+overlay. Each transaction retains its own output, receipt, resource accounting
+and committed position. Wider waves retain parallel execution. Any speculative
+failure still triggers serial replay to preserve the canonical error; a failed
+attempt publishes no state.
+
+Each public payment or signed-execution invocation offers at most one advisory
+prefetch hint, after checking the parent snapshot root. The hint inspects at most
+256 transactions and 1024 declared accesses, and copies at most 256 unique keys
+with at most 64 KiB of total key bytes. Keys are deduplicated in canonical order;
+oversized keys are skipped. Empty selections make no prefetch call. Hint errors
+are ignored, and serial replay does not issue the hint again. Prefetch never
+substitutes for state reads or transaction validation. Existing database backends
+implement it as a no-op, so this hook alone establishes no speedup.
+
+The executor drains each worker's output vector into committed-order result
+positions and recycles the empty allocation for later waves. The coordinator's
+result envelope, singleton result buffer and fused-index buffer are reused within
+the execution attempt. Buffers and worker threads are dropped at its end; no
+transaction output or speculative state is shared with another block or retry.
+This is a pool of result buffers, not a pool of contract instances or state values.
+
+Differential checks cover dependent singleton runs, changing wave widths, resource
+failures and serial replay. Prefetch checks cover limits, deduplication, hint
+failure and stale parents; worker-pool checks cover result-buffer reuse and error
+cleanup. Alongside parent caching and borrowed-key planning, these implement the
+reference execution locality, fusion, prefetch and buffer-pool scope. Signature
+batching remains unimplemented and deferred with cryptographic verification work.
+End-to-end throughput has not been benchmarked.
+
 ## WebAssembly ABI v2
 
 `WasmRuntime` validates binary WebAssembly and executes it using pinned Wasmi
@@ -135,4 +199,4 @@ build test. The latter needs the target libraries and is ignored in the default
 workspace run; run `cargo test -p cargo-contract --test commands -- --ignored`.
 The pinned build test has been run locally with the official target component.
 
-Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Source manifests, AOT/JIT equivalence and contract fuzz campaigns remain open.
+Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Restricted source manifests and exact offline package reconstruction are implemented in [document 34](34-contract-source-packages.md). Alternate AOT/JIT backends, their runtime/metering qualification and contract fuzz campaigns remain open and deferred.
