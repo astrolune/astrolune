@@ -103,7 +103,7 @@ mod tests {
             self.reads.fetch_add(1, Ordering::Relaxed);
             if self
                 .failures
-                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err(StateError::Io);

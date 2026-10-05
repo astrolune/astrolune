@@ -88,9 +88,10 @@ Rust 1.99.0, `wat` 1.260.0, npm 12.2.0, Turbo 2.11.6, Next.js 16.3.8 and Node ty
 locks and the web lockfile were refreshed. The 132-package OSV query and npm audit
 returned no known vulnerabilities on this date.
 
-Rust 1.99 renamed the atomic `fetch_update` API to `try_update` and added strict
-Clippy diagnostics for empty-value assertions. Telemetry and test assertions now
-pass those gates. Contract builds resolve the pinned compiler once by its absolute
+Rust 1.99 added strict Clippy diagnostics for empty-value assertions. Telemetry
+and test assertions now pass those gates. The atomic `try_update` rename remains
+unstable under `atomic_try_update`, so saturating counters keep using the stable
+`fetch_update` API. Contract builds resolve the pinned compiler once by its absolute
 rustup path and reuse it for ABI, SDK and both artifact builds. A regression test
 puts a fake rustc first in PATH and supplies an invalid ambient toolchain while
 requiring identical executable WASM output.
