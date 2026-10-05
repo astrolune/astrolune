@@ -264,6 +264,123 @@ fn transfer() -> Transaction {
 }
 
 #[test]
+fn prepared_live_responses_own_their_snapshot_across_node_changes() {
+    let fixture = Fixture::new(1);
+    let mut validator = fixture.open(1);
+    let mut observer =
+        ObserverNode::open(fixture.network.clone(), &fixture.path.join("observer")).unwrap();
+    let request = validator.request();
+    let validator_before = validator.respond(request).unwrap();
+    let observer_before = observer.respond(request).unwrap();
+    let validator_snapshot = validator.prepare_response(request).unwrap();
+    let observer_snapshot = observer.prepare_response(request).unwrap();
+
+    let tx = transfer();
+    validator.submit_transaction(tx.clone()).unwrap();
+    observer.submit_transaction(tx.clone()).unwrap();
+    let validator_after = validator.respond(request).unwrap();
+    let observer_after = observer.respond(request).unwrap();
+    assert_ne!(validator_after, validator_before);
+    assert_ne!(observer_after, observer_before);
+    assert_eq!(
+        observer_after,
+        encode_exchange(request.genesis, &[NetworkMessage::Transaction(tx)]).unwrap()
+    );
+    assert_eq!(
+        validator
+            .prepare_response(request)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        validator_after
+    );
+    assert_eq!(
+        observer
+            .prepare_response(request)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        observer_after
+    );
+
+    // An encoder worker needs neither a node borrow nor a live node instance.
+    drop(validator);
+    drop(observer);
+    let encoded = std::thread::spawn(move || {
+        (
+            validator_snapshot.encode().unwrap(),
+            observer_snapshot.encode().unwrap(),
+        )
+    })
+    .join()
+    .unwrap();
+    assert_eq!(encoded, (validator_before, observer_before));
+}
+
+#[test]
+fn prepared_finalized_and_future_responses_match_for_both_roles() {
+    let fixture = Fixture::new(1);
+    let mut validator = fixture.open(1);
+    let mut observer =
+        ObserverNode::open(fixture.network.clone(), &fixture.path.join("observer")).unwrap();
+    validator.submit_transaction(transfer()).unwrap();
+    let request = validator.request();
+    let now = Instant::now();
+    for step in 0..20 {
+        validator.tick(now + Duration::from_millis(step)).unwrap();
+        if validator.request().height > request.height {
+            break;
+        }
+    }
+    assert!(validator.request().height > request.height);
+    let finalized = validator.respond(request).unwrap();
+    assert!(matches!(
+        decode_exchange(request.genesis, &finalized)
+            .unwrap()
+            .as_slice(),
+        [NetworkMessage::Finalized { .. }]
+    ));
+    observer.receive(&finalized).unwrap();
+    assert_eq!(observer.respond(request).unwrap(), finalized);
+    assert_eq!(
+        validator
+            .prepare_response(request)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        finalized
+    );
+    assert_eq!(
+        observer
+            .prepare_response(request)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        finalized
+    );
+
+    let future = SyncRequest {
+        height: validator.request().height + 1,
+        ..request
+    };
+    let empty = encode_exchange(request.genesis, &[]).unwrap();
+    assert_eq!(validator.respond(future).unwrap(), empty);
+    assert_eq!(observer.respond(future).unwrap(), empty);
+    assert_eq!(
+        validator
+            .prepare_response(future)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        empty
+    );
+    assert_eq!(
+        observer.prepare_response(future).unwrap().encode().unwrap(),
+        empty
+    );
+}
+
+#[test]
 fn payment_gossip_three_of_four_commit_and_late_node_catches_up_after_restart() {
     let fixture = Fixture::new(4);
     let mut nodes: Vec<_> = (1..=3).map(|index| fixture.open(index)).collect();

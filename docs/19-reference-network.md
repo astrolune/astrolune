@@ -111,6 +111,28 @@ The lower production transaction count ensures a block fits the wire bound even 
 
 ## Qualification and remaining work
 
+### Response preparation and encoding
+
+Both validator and observer nodes expose `prepare_response`, returning an owned
+`PreparedResponse`. Its messages are selected from one node state; later node
+changes do not alter that selection. Consuming `PreparedResponse::encode` uses
+the existing exchange codec and its size/message limits without accessing the
+node. The existing `respond` API remains a prepare-and-encode wrapper.
+
+The daemon prepares the response under its node mutex and releases that mutex
+before encoding. Node ticks, message processing and RPC operations can therefore
+proceed while another request is being serialized. Storage selection still occurs
+under the lock, and existing error classification, wire bytes, discovery framing,
+session limits and write deadlines remain unchanged.
+
+Tests compare live, finalized and empty responses for both node roles, preserve
+snapshots across transaction admission, and encode them on another thread after
+the nodes have been dropped. This is response-stage overlap only: compact-block
+propagation, a full block-stage pipeline and speculative consensus work remain
+unimplemented. No end-to-end throughput improvement is claimed.
+
+### Existing network qualification
+
 Automated coverage includes three-of-four progress with an offline validator, two-of-four failure to finalize, payment gossip and replay rejection, late catch-up, all-validator restart after precommit, locked-value reproposal after lost precommits, rejection of demonstration history, malformed envelope bounds, and independent TCP daemon processes with restart and late join. The network decoder has an accepted-input canonical re-encoding fuzz target. Long fuzz campaigns and cross-platform qualification remain separate gates.
 
-Mutually authenticated TLS 1.3 is implemented; see [transport guarantees and limits](20-authenticated-transport.md). Peer discovery, persistent sessions, robust public-network denial-of-service controls, evidence/slashing, committee handoff, formal safety/liveness models, and production telemetry remain open. Mempool admission is volatile across process loss. New network directories use an [append-only block/delta log](22-append-only-chain-storage.md) without the old whole-chain rewrite or checkpoint cap. Existing archives keep their original 4096-checkpoint / 256 MiB limits; the state engine retains its separate bounds. [Protected signing-journal rollover](23-signing-journal-rollover.md) permits signing beyond 100,000 decisions at a fixed file size, with conservative failure recovery. Production-scale persistence, contracts, PoTB/VRF, key custody, and independent audits are required before a public production network.
+Mutually authenticated TLS 1.3 is implemented; see [transport guarantees and limits](20-authenticated-transport.md). Scoped peer discovery, persistent sessions and bounded operational telemetry are implemented in [private-network operations](36-private-network-operations.md). Committee handoff, evidence inclusion and PoTB transitions are implemented in the explicit [live PoTB profile](45-live-potb-network.md). Public-network hardening and formal safety/liveness qualification remain open. Mempool admission is volatile across process loss. New network directories use an [append-only block/delta log](22-append-only-chain-storage.md) without the old whole-chain rewrite or checkpoint cap. Existing archives keep their original 4096-checkpoint / 256 MiB limits; the state engine retains its separate bounds. [Protected signing-journal rollover](23-signing-journal-rollover.md) permits signing beyond 100,000 decisions at a fixed file size, with conservative failure recovery. Production-scale persistence, key custody, distributed calibration and independent audits remain prerequisites for a public production network.

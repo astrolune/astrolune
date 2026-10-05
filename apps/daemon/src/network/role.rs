@@ -5,7 +5,7 @@
 
 use crate::{DaemonError, io_error, options::Options};
 use node::{
-    network::{NetworkNode, NetworkNodeError, StaticNetwork},
+    network::{NetworkNode, NetworkNodeError, PreparedResponse, StaticNetwork},
     network_wire::SyncRequest,
     observer::ObserverNode,
 };
@@ -92,10 +92,13 @@ impl PeerNode {
         }
     }
 
-    pub(super) fn respond(&self, request: SyncRequest) -> Result<Vec<u8>, NetworkNodeError> {
+    pub(super) fn prepare_response(
+        &self,
+        request: SyncRequest,
+    ) -> Result<PreparedResponse, NetworkNodeError> {
         match self {
-            Self::Validator(node) => node.respond(request),
-            Self::Observer(node) => node.respond(request),
+            Self::Validator(node) => node.prepare_response(request),
+            Self::Observer(node) => node.prepare_response(request),
         }
     }
 

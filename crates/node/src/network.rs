@@ -49,6 +49,27 @@ pub enum NetworkNodeError {
     /// Local storage/signing failure; the daemon must stop and recover.
     Local(String),
 }
+
+/// An owned response snapshot that can be encoded after releasing the node lock.
+///
+/// Preparation retains the selected messages independently of later node changes.
+/// Encoding uses the same bounded reference-network codec as [`NetworkNode::respond`].
+pub struct PreparedResponse {
+    genesis: Hash256,
+    messages: Vec<NetworkMessage>,
+}
+
+impl PreparedResponse {
+    pub(crate) fn new(genesis: Hash256, messages: Vec<NetworkMessage>) -> Self {
+        Self { genesis, messages }
+    }
+
+    /// Consumes the snapshot and encodes its messages without accessing the node.
+    pub fn encode(self) -> Result<Vec<u8>, NetworkNodeError> {
+        encode_exchange(self.genesis, &self.messages).map_err(input)
+    }
+}
+
 impl std::fmt::Display for NetworkNodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -452,6 +473,15 @@ impl NetworkNode {
 
     /// Bounded response. Untrusted requests select a height, never committee or state authority.
     pub fn respond(&self, request: SyncRequest) -> Result<Vec<u8>, NetworkNodeError> {
+        self.prepare_response(request)?.encode()
+    }
+
+    /// Selects an owned response snapshot for encoding outside the node lock.
+    /// The exchange codec's size and message limits are checked during encoding.
+    pub fn prepare_response(
+        &self,
+        request: SyncRequest,
+    ) -> Result<PreparedResponse, NetworkNodeError> {
         if request.genesis != self.network.hash {
             return Err(input("peer genesis mismatch"));
         }
@@ -476,7 +506,7 @@ impl NetworkNode {
         } else {
             Vec::new()
         };
-        encode_exchange(self.network.hash, &messages).map_err(input)
+        Ok(PreparedResponse::new(self.network.hash, messages))
     }
 
     fn consensus_messages(&self) -> Vec<NetworkMessage> {

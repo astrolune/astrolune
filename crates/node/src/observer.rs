@@ -5,8 +5,8 @@
 //! This module never loads a consensus key, reserves a signature, or creates a vote.
 
 use crate::{
-    network::{NetworkNodeError, RecoveredNetwork, StaticNetwork, input, local},
-    network_wire::{NetworkMessage, SyncRequest, decode_exchange, encode_exchange},
+    network::{NetworkNodeError, PreparedResponse, RecoveredNetwork, StaticNetwork, input, local},
+    network_wire::{NetworkMessage, SyncRequest, decode_exchange},
 };
 use std::{
     io::{Read, Write},
@@ -113,6 +113,15 @@ impl ObserverNode {
     /// Serves already authenticated finalized blocks or bounded pending transactions.
     /// Proposals, prevotes, precommits and available-value proofs are never originated or relayed.
     pub fn respond(&self, request: SyncRequest) -> Result<Vec<u8>, NetworkNodeError> {
+        self.prepare_response(request)?.encode()
+    }
+
+    /// Selects an owned response snapshot for encoding outside the node lock.
+    /// The exchange codec's size and message limits are checked during encoding.
+    pub fn prepare_response(
+        &self,
+        request: SyncRequest,
+    ) -> Result<PreparedResponse, NetworkNodeError> {
         if request.genesis != self.network.genesis_hash() {
             return Err(input("peer genesis mismatch"));
         }
@@ -136,7 +145,7 @@ impl ObserverNode {
         } else {
             Vec::new()
         };
-        encode_exchange(self.network.genesis_hash(), &messages).map_err(input)
+        Ok(PreparedResponse::new(self.network.genesis_hash(), messages))
     }
 
     /// Decodes an entire bounded exchange before processing.

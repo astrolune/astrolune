@@ -285,20 +285,19 @@ impl PeerRuntime {
                 (hints, payload, true)
             };
             let request = SyncRequest::decode(payload).map_err(io_error)?;
-            let response = {
+            let prepared = {
                 let node = self
                     .node
                     .lock()
                     .map_err(|_| io_error("node lock poisoned"))?;
-                node.respond(request).map_err(|error| {
-                    if matches!(error, NetworkNodeError::Local(_)) {
-                        storage_failed.store(true, Ordering::Release);
-                        self.metrics.add(NodeMetric::LocalFailures, 1);
-                        eprintln!("Finalized history read failed: {error}");
-                    }
-                    io_error(error)
-                })?
+                node.prepare_response(request)
+                    .map_err(|error| self.response_error(storage_failed, error))?
             };
+            // The response owns its messages. Encoding no longer holds up node
+            // ticks, received messages or RPC operations behind the node mutex.
+            let response = prepared
+                .encode()
+                .map_err(|error| self.response_error(storage_failed, error))?;
             self.learn(&hints).map_err(io_error)?;
             let response = if wrapped {
                 self.frame(&response, MAX_EXCHANGE_BYTES)
@@ -319,6 +318,15 @@ impl PeerRuntime {
             .map_err(io_error)?;
         }
         Ok(())
+    }
+
+    fn response_error(&self, storage_failed: &AtomicBool, error: NetworkNodeError) -> DaemonError {
+        if matches!(error, NetworkNodeError::Local(_)) {
+            storage_failed.store(true, Ordering::Release);
+            self.metrics.add(NodeMetric::LocalFailures, 1);
+            eprintln!("Finalized history read failed: {error}");
+        }
+        io_error(error)
     }
 }
 fn invalid(error: impl std::fmt::Display) -> io::Error {

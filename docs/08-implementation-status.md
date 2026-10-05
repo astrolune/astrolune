@@ -4,7 +4,7 @@
 
 ## 8.1 Current baseline
 
-As of 2026-10-05, this repository contains a Rust 2024 workspace with:
+As of 2026-10-06, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
@@ -106,7 +106,10 @@ Authenticated encrypted transport, peer discovery, rate limits, compact blocks, 
 
 [Non-voting full nodes](21-observer-nodes.md) now verify and serve certified history, re-execute imported blocks, relay payments, and recover without consensus keys. Observer provisioning and actual TLS/RPC process tests are implemented.
 
-Compact-block propagation, stage pipelining and speculative work beyond execution
+Owned response preparation and encoding are separated in both node roles. The
+daemon releases its node lock before encoding; [scope and byte-equivalence tests](19-reference-network.md#response-preparation-and-encoding).
+
+Compact-block propagation, a full block-stage pipeline and speculative work beyond execution
 waves still require separate reference-network protocol integration. Automatic
 history retention is also unimplemented; the existing pinned export is an explicit
 offline operation with an independently retained checkpoint pin.
