@@ -36,13 +36,16 @@ fn quorum_parent_epoch_and_signature_domains_are_authenticated() {
         GovernanceCertificate::assemble(request, approvals, current, trusted.parent(), policy)
     };
     let approvals = support::parameter_approvals(&request, current.context().unwrap().members());
-    // Initial committee is three equal-weight members: two signatures are exactly 2/3.
+    // Bootstrap includes all four registered members; three signatures reach quorum.
+    assert_eq!(approvals.len(), 4);
     assert!(assemble(approvals[..2].to_vec()).is_err());
+    assert!(assemble(approvals[..3].to_vec()).is_ok());
     assert!(assemble(vec![approvals[0].clone(); 3]).is_err());
     let mut bad = approvals.clone();
-    let mut bytes = bad[2].to_bytes();
+    // A bad fourth signature must not be ignored after the first three reach quorum.
+    let mut bytes = bad[3].to_bytes();
     *bytes.last_mut().unwrap() ^= 1;
-    bad[2] = GovernanceApproval::from_bytes(&bytes).unwrap();
+    bad[3] = GovernanceApproval::from_bytes(&bytes).unwrap();
     assert!(assemble(bad).is_err());
     assert!(cert.verify(current, Hash256([9; 32]), policy).is_err());
     let foreign = PotbVerifier::new(&base, &keys).unwrap();
@@ -74,6 +77,36 @@ fn quorum_parent_epoch_and_signature_domains_are_authenticated() {
                     .unwrap()
             )
             .is_err()
+    );
+}
+
+#[test]
+fn exactly_two_thirds_of_the_rotated_committee_cannot_change_parameters() {
+    let (base, keys) = support::fixture();
+    let profile = support::governed(base);
+    let mut trusted = PotbVerifier::new(&profile, &keys).unwrap();
+    let first = support::handoff(&trusted, support::batch(trusted.current()));
+    trusted.apply(&first).unwrap();
+    let state = trusted.current();
+    let current = state.committee();
+    let cert = support::parameters(state, trusted.parent());
+    let request = *cert.request();
+    let approvals = support::parameter_approvals(&request, current.context().unwrap().members());
+    // The first rotation selects three members, before the first weight update.
+    assert_eq!(approvals.len(), 3);
+    assert!(
+        GovernanceCertificate::assemble(
+            request,
+            approvals[..2].to_vec(),
+            current,
+            trusted.parent(),
+            state.governance().unwrap(),
+        )
+        .is_err()
+    );
+    assert!(
+        cert.verify(current, trusted.parent(), state.governance().unwrap())
+            .is_ok()
     );
 }
 

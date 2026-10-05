@@ -172,7 +172,16 @@ fn load_identity(options: &Options) -> Result<NetworkIdentity, DaemonError> {
             .ok_or_else(|| io_error("missing genesis"))?,
         consensus::potb_transition::PotbConfiguration::MAX_BYTES,
     )?;
-    let network = StaticNetwork::decode(&configuration, keys).map_err(io_error)?;
+    let mut network = StaticNetwork::decode(&configuration, keys).map_err(io_error)?;
+    if let Some(path) = &options.checkpoint {
+        let bytes = read_bounded(path, node::network::RecoveryCheckpoint::MAX_BYTES)?;
+        let pin = options
+            .checkpoint_id
+            .ok_or_else(|| io_error("missing checkpoint pin"))?;
+        let checkpoint =
+            node::network::RecoveryCheckpoint::from_bytes(&bytes, pin).map_err(io_error)?;
+        network = network.with_checkpoint(checkpoint).map_err(io_error)?;
+    }
     if options.observer {
         return Ok(NetworkIdentity {
             network,
@@ -370,16 +379,20 @@ impl NetworkStatus {
         let finality = if height == 0 {
             None
         } else {
-            let (block, certificate) = node
-                .storage()
-                .read_finalized(height)
-                .map_err(|error| {
+            let Some((block, certificate)) =
+                node.storage().read_finalized(height).map_err(|error| {
                     self.storage_failed.store(true, Ordering::Release);
                     self.metrics.add(NodeMetric::LocalFailures, 1);
                     eprintln!("Finalized proof read failed: {error}");
                     RpcError::Unavailable
                 })?
-                .ok_or(RpcError::Unavailable)?;
+            else {
+                return if requested.is_some() {
+                    Ok(RpcResponse::StateProofAt(None))
+                } else {
+                    Err(RpcError::Unavailable)
+                };
+            };
             Some((block.header, certificate))
         };
         let bytes = rpc::CertifiedStateProof::create(&state, key, finality)?.to_bytes()?;

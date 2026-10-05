@@ -20,6 +20,8 @@ Options:
   --blocks N         Advance N block heights, then exit (0: recovery only)
   --data-dir PATH    Durable chain directory (default: node-data)
   --genesis PATH     Trusted binary genesis or explicit PoTB configuration
+  --checkpoint PATH  Explicit retained-history checkpoint descriptor
+  --checkpoint-id HASH  Independently trusted descriptor hash (required with --checkpoint)
   --validators PATH  Public keys file; enables certified fixed-committee networking
   --validator-key PATH  Raw 32-byte seed; requires an existing signing.journal
   --observer        Verify and relay finalized blocks without a consensus key
@@ -49,6 +51,8 @@ pub(crate) struct Options {
     pub max_blocks: Option<u64>,
     pub genesis: Option<PathBuf>,
     pub validators: Option<PathBuf>,
+    pub checkpoint: Option<PathBuf>,
+    pub checkpoint_id: Option<types::Hash256>,
     pub validator_key: Option<PathBuf>,
     pub observer: bool,
     pub tls_dir: Option<PathBuf>,
@@ -79,6 +83,8 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
         max_blocks: None,
         genesis: None,
         validators: None,
+        checkpoint: None,
+        checkpoint_id: None,
         validator_key: None,
         observer: false,
         tls_dir: None,
@@ -111,37 +117,29 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             "--run" => {}
             "--blocks" | "--data-dir" | "--genesis" | "--p2p-listen" | "--rpc-listen"
             | "--validators" | "--validator-key" | "--tls-dir" | "--peers"
-            | "--round-timeout-ms" | "--discover-in" | "--metrics-listen" => {
+            | "--round-timeout-ms" | "--discover-in" | "--metrics-listen" | "--checkpoint"
+            | "--checkpoint-id" => {
                 let value = args
                     .next()
                     .ok_or_else(|| invalid(&format!("missing value for {flag}")))?;
                 if value.is_empty() || value.to_str().is_some_and(|text| text.starts_with("--")) {
                     return Err(invalid(&format!("missing value for {flag}")));
                 }
-                if flag == "--data-dir" {
-                    options.config.data_dir = PathBuf::from(value);
-                    continue;
+                match flag {
+                    "--data-dir" => options.config.data_dir = PathBuf::from(value),
+                    "--checkpoint" => options.checkpoint = Some(PathBuf::from(value)),
+                    "--genesis" => options.genesis = Some(PathBuf::from(value)),
+                    "--validators" => options.validators = Some(PathBuf::from(value)),
+                    "--validator-key" => options.validator_key = Some(PathBuf::from(value)),
+                    "--tls-dir" => options.tls_dir = Some(PathBuf::from(value)),
+                    _ => parse_value(
+                        &mut options,
+                        flag,
+                        value
+                            .to_str()
+                            .ok_or_else(|| invalid("non-UTF-8 option value"))?,
+                    )?,
                 }
-                if flag == "--genesis" {
-                    options.genesis = Some(PathBuf::from(value));
-                    continue;
-                }
-                if flag == "--validators" {
-                    options.validators = Some(PathBuf::from(value));
-                    continue;
-                }
-                if flag == "--validator-key" {
-                    options.validator_key = Some(PathBuf::from(value));
-                    continue;
-                }
-                if flag == "--tls-dir" {
-                    options.tls_dir = Some(PathBuf::from(value));
-                    continue;
-                }
-                let value = value
-                    .to_str()
-                    .ok_or_else(|| invalid("non-UTF-8 option value"))?;
-                parse_value(&mut options, flag, value)?;
             }
             _ => return Err(invalid(&format!("unknown option: {flag}"))),
         }
@@ -160,6 +158,13 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
 }
 
 fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), DaemonError> {
+    if options.checkpoint.is_some() != options.checkpoint_id.is_some()
+        || options.checkpoint.is_some() && options.validators.is_none()
+    {
+        return Err(invalid(
+            "--checkpoint and --checkpoint-id require each other and --validators",
+        ));
+    }
     if options
         .metrics_listen
         .is_some_and(|address| !address.ip().is_loopback())
@@ -234,7 +239,11 @@ fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), Da
 }
 
 fn parse_value(options: &mut Options, flag: &str, value: &str) -> Result<(), DaemonError> {
-    if flag == "--discover-in" {
+    if flag == "--checkpoint-id" {
+        let bytes = rpc::client::decode_hex::<32>(value)
+            .map_err(|_| invalid("checkpoint pin must be 32-byte hex"))?;
+        options.checkpoint_id = Some(types::Hash256(bytes));
+    } else if flag == "--discover-in" {
         options.discovery = Some(value.parse().map_err(invalid)?);
     } else if flag == "--metrics-listen" {
         options.metrics_listen = Some(

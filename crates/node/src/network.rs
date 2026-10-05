@@ -3,8 +3,10 @@
 
 //! Fixed-membership reference network with durable voting and certified catch-up.
 
+mod checkpoint;
 mod potb;
 mod rotation;
+pub use checkpoint::RecoveryCheckpoint;
 
 use crate::network_wire::{
     MAX_EXCHANGE_BYTES, MAX_TRANSACTION_BYTES, NetworkMessage, SyncRequest, decode_exchange,
@@ -91,6 +93,7 @@ pub struct StaticNetwork {
     hash: Hash256,
     keys: Vec<[u8; 32]>,
     potb: Option<PotbConfiguration>,
+    checkpoint: Option<RecoveryCheckpoint>,
 }
 impl StaticNetwork {
     /// Explicitly selects all genesis validators for the fixed round-robin profile.
@@ -109,6 +112,7 @@ impl StaticNetwork {
             hash,
             keys,
             potb: None,
+            checkpoint: None,
         };
         result.committee(1)?;
         if result.rotating() {
@@ -128,6 +132,7 @@ impl StaticNetwork {
             hash: configuration.commitment(),
             keys,
             potb: Some(configuration),
+            checkpoint: None,
         })
     }
 
@@ -206,7 +211,14 @@ impl StaticNetwork {
         } else {
             network.genesis.materialize().map_err(input)?
         };
+        if self.checkpoint.is_some() && !directory.join("chain.bin").is_file() {
+            return Err(input("pinned recovery requires existing retained history"));
+        }
         let mut storage = ChainStorage::open(directory.join("chain.bin")).map_err(local)?;
+        if self.checkpoint.is_some() {
+            let producer = self.recover_checkpoint(&storage)?;
+            return Ok(RecoveredNetwork { storage, producer });
+        }
         if storage.checkpoint().is_none() {
             storage
                 .initialize_genesis(network.hash, initial.clone())
@@ -242,6 +254,13 @@ impl StaticNetwork {
         &self,
         storage: &ChainStorage,
     ) -> Result<storage::Checkpoint, NetworkNodeError> {
+        if self.checkpoint.is_some() {
+            self.recover_checkpoint(storage)?;
+            return storage
+                .checkpoint()
+                .copied()
+                .ok_or_else(|| input("missing retained checkpoint"));
+        }
         if let Some(profile) = &self.potb {
             BlockProducer::recover_potb(self.producer_config(), profile, &self.keys, storage)?;
             return storage

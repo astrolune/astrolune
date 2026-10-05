@@ -108,6 +108,38 @@ pub struct HandoffVerifier {
 }
 
 impl HandoffVerifier {
+    /// Resumes from independently pinned checkpoint coordinates and history frontier.
+    /// The caller pins the frontier as well as the coordinates; earlier ancestry is not verified.
+    pub fn from_checkpoint(
+        height: u64,
+        parent: Hash256,
+        root: Hash256,
+        witness: &StateValueProof,
+        history: crate::history::CommitteeHistory,
+    ) -> Result<Self, ConsensusError> {
+        if height == 0 || parent.is_zero() {
+            return Err(ConsensusError::InvalidTransition);
+        }
+        let bytes = witness
+            .verify(root, &committee_state_key())
+            .map_err(|_| ConsensusError::InvalidProof)?
+            .ok_or(ConsensusError::InvalidProof)?;
+        let current =
+            CommitteeState::from_bytes(bytes).map_err(|_| ConsensusError::InvalidProof)?;
+        if height.checked_add(1) != Some(current.height())
+            || history.entries() != height
+            || history.genesis() != current.genesis()
+            || history.chain_id() != current.chain_id()
+        {
+            return Err(ConsensusError::InvalidTransition);
+        }
+        Ok(Self {
+            current,
+            parent,
+            history,
+        })
+    }
+
     /// Starts at genesis and validates the complete registered-key set.
     pub fn new(genesis: &Genesis, keys: &[[u8; 32]]) -> Result<Self, ConsensusError> {
         let current = CommitteeState::from_genesis(genesis, keys)?;

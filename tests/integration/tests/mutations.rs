@@ -5,12 +5,11 @@
 
 #[path = "support/extensions.rs"]
 mod extensions;
-#[path = "../../../crates/consensus/tests/support/potb.rs"]
-mod potb_support;
 #[path = "support/governance_compatibility.rs"]
 mod governance_support;
 use contract_sdk::registry::{MAX_CALL, RegistryAction, RegistryCall, RegistryRecord};
 use crypto::{VrfInput, VrfRole};
+use governance_support::fixture as potb_support;
 use state::StateDatabase;
 use types::{Hash256, Resources, ValidatorId};
 

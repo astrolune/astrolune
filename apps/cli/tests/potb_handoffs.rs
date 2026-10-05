@@ -75,21 +75,56 @@ fn hex(bytes: &[u8]) -> String {
 #[allow(clippy::too_many_lines)]
 fn governance_cli_authenticates_requests_protects_signers_and_requires_quorum() {
     let (base, keys) = support::fixture();
-    let directory = Fixture(std::env::temp_dir().join(format!("astrolune-governance-cli-{}", std::process::id())));
+    let directory = Fixture(
+        std::env::temp_dir().join(format!("astrolune-governance-cli-{}", std::process::id())),
+    );
     std::fs::create_dir(&directory.0).unwrap();
     std::fs::write(directory.0.join("base"), base.to_bytes()).unwrap();
     std::fs::write(directory.0.join("keys"), keys.concat()).unwrap();
-    let run = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_cli")).current_dir(&directory.0).args(args).output().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_cli"))
+            .current_dir(&directory.0)
+            .args(args)
+            .output()
+            .unwrap()
+    };
     let check = |args: &[&str]| {
         let output = run(args);
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     };
-    check(&["governance-config", "base", "2", "500000,131072,16384,65536", "2000000,2000000,2000000,2000000", "10,10,10,10", "profile"]);
-    let profile = PotbConfiguration::from_bytes(&std::fs::read(directory.0.join("profile")).unwrap()).unwrap();
+    check(&[
+        "governance-config",
+        "base",
+        "2",
+        "500000,131072,16384,65536",
+        "2000000,2000000,2000000,2000000",
+        "10,10,10,10",
+        "profile",
+    ]);
+    let profile =
+        PotbConfiguration::from_bytes(&std::fs::read(directory.0.join("profile")).unwrap())
+            .unwrap();
     assert_eq!(profile, support::governed(base));
-    check(&["governance-request", "profile", "keys", "1", "600000,200000,20000,70000", "2,1,2,1", "request", "127.0.0.1:9"]);
+    check(&[
+        "governance-request",
+        "profile",
+        "keys",
+        "1",
+        "600000,200000,20000,70000",
+        "2,1,2,1",
+        "request",
+        "127.0.0.1:9",
+    ]);
     check(&["governance-inspect", "profile", "keys", "request"]);
-    assert!(!run(&["governance-inspect", "base", "keys", "request"]).status.success());
+    assert!(
+        !run(&["governance-inspect", "base", "keys", "request"])
+            .status
+            .success()
+    );
     let trusted = PotbVerifier::new(&profile, &keys).unwrap();
     let mut approvals = vec![];
     for id in trusted.current().committee().context().unwrap().members() {
@@ -101,30 +136,103 @@ fn governance_cli_authenticates_requests_protects_signers_and_requires_quorum() 
         check(&["init-validator", "profile", &seed_path, &journal]);
         let journal = format!("{journal}/signing.journal");
         let before = std::fs::read(directory.0.join(&journal)).unwrap();
-        check(&["governance-approve", "profile", "keys", "request", &seed_path, &journal, &approval]);
+        check(&[
+            "governance-approve",
+            "profile",
+            "keys",
+            "request",
+            &seed_path,
+            &journal,
+            &approval,
+        ]);
         assert_eq!(std::fs::read(directory.0.join(&journal)).unwrap(), before);
         // Approval is explicitly separate from BFT vote reservation.
-        assert!(!run(&["governance-approve", "profile", "keys", "request", &seed_path, &journal, &approval]).status.success());
+        assert!(
+            !run(&[
+                "governance-approve",
+                "profile",
+                "keys",
+                "request",
+                &seed_path,
+                &journal,
+                &approval
+            ])
+            .status
+            .success()
+        );
         approvals.push(approval);
     }
-    assert!(!run(&["governance-assemble", "profile", "keys", "request", "insufficient", &approvals[0], &approvals[1]]).status.success());
+    assert!(
+        !run(&[
+            "governance-assemble",
+            "profile",
+            "keys",
+            "request",
+            "insufficient",
+            &approvals[0],
+            &approvals[1]
+        ])
+        .status
+        .success()
+    );
     assert!(!directory.0.join("insufficient").exists());
-    check(&["governance-assemble", "profile", "keys", "request", "certificate", &approvals[0], &approvals[1], &approvals[2]]);
-    check(&["governance-verify", "profile", "keys", "request", "certificate"]);
+    check(&[
+        "governance-assemble",
+        "profile",
+        "keys",
+        "request",
+        "certificate",
+        &approvals[0],
+        &approvals[1],
+        &approvals[2],
+    ]);
+    check(&[
+        "governance-verify",
+        "profile",
+        "keys",
+        "request",
+        "certificate",
+    ]);
     let mut bytes = std::fs::read(directory.0.join("certificate")).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     std::fs::write(directory.0.join("corrupt"), bytes).unwrap();
-    assert!(!run(&["governance-verify", "profile", "keys", "request", "corrupt"]).status.success());
+    assert!(
+        !run(&["governance-verify", "profile", "keys", "request", "corrupt"])
+            .status
+            .success()
+    );
     std::fs::write(directory.0.join("wallet"), [98; 32]).unwrap();
     let recipient = types::Address([99; 32]).to_string();
-    check(&["sign-payment", "71", "wallet", &recipient, "10", "0", "100", "payment"]);
-    check(&["reprice-transaction", "payment", "wallet", "2,1,2,1", "repriced"]);
+    check(&[
+        "sign-payment",
+        "71",
+        "wallet",
+        &recipient,
+        "10",
+        "0",
+        "100",
+        "payment",
+    ]);
+    check(&[
+        "reprice-transaction",
+        "payment",
+        "wallet",
+        "2,1,2,1",
+        "repriced",
+    ]);
     check(&["inspect-payment", "repriced"]);
-    assert_ne!(std::fs::read(directory.0.join("payment")).unwrap(), std::fs::read(directory.0.join("repriced")).unwrap());
+    assert_ne!(
+        std::fs::read(directory.0.join("payment")).unwrap(),
+        std::fs::read(directory.0.join("repriced")).unwrap()
+    );
     let mut sidecar = std::fs::read(directory.0.join("request.handoffs")).unwrap();
     sidecar[16] ^= 1;
     std::fs::write(directory.0.join("request.handoffs"), sidecar).unwrap();
-    assert!(!run(&["governance-inspect", "profile", "keys", "request"]).status.success());
+    assert!(
+        !run(&["governance-inspect", "profile", "keys", "request"])
+            .status
+            .success()
+    );
 }
 fn serve(replies: Vec<Vec<u8>>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

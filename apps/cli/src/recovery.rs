@@ -17,6 +17,9 @@ fn error(value: impl std::fmt::Display) -> CliError {
 }
 
 pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
+    if matches!(command, "export-retained" | "verify-retained") {
+        return retained(command, args);
+    }
     let expected = if command == "export-history" { 5 } else { 4 };
     if args.len() != expected {
         return Err(error("invalid history arguments; run cli help"));
@@ -108,4 +111,63 @@ fn copy_new(source: &Path, destination: &Path, maximum: u64) -> Result<(), CliEr
         return Err(error("source changed during exclusive history export"));
     }
     output.sync_all().map_err(error)
+}
+
+fn retained(command: &str, args: &[OsString]) -> Result<(), CliError> {
+    if !(args.len() == 6 || command == "export-retained" && args.len() == 8) {
+        return Err(error("invalid retained-history arguments; run cli help"));
+    }
+    let (genesis, keys) = anchors(Path::new(&args[0]), Path::new(&args[1]))?;
+    let mut network = genesis.network(keys.clone())?;
+    let pin_offset = if command == "verify-retained" {
+        Some(4)
+    } else if args.len() == 8 {
+        Some(6)
+    } else {
+        None
+    };
+    if let Some(at) = pin_offset {
+        let bytes = crate::contracts::read_bounded(
+            Path::new(&args[at]),
+            node::network::RecoveryCheckpoint::MAX_BYTES,
+        )?;
+        let pin = rpc::client::decode_hex::<32>(wallet::text(&args[at + 1])?).map_err(error)?;
+        let pin = types::Hash256(pin);
+        network = network
+            .with_checkpoint(
+                node::network::RecoveryCheckpoint::from_bytes(&bytes, pin).map_err(error)?,
+            )
+            .map_err(error)?;
+    }
+    let path = Path::new(&args[2]).join("chain.bin");
+    if !std::fs::symlink_metadata(&path)
+        .map_err(error)?
+        .file_type()
+        .is_file()
+    {
+        return Err(error("existing regular chain.bin required"));
+    }
+    let storage = ChainStorage::open(&path).map_err(error)?;
+    let head = network.verify_storage(&storage).map_err(error)?;
+    if head.height < wallet::integer(&args[3])? {
+        return Err(error("history precedes the independent minimum height"));
+    }
+    if command == "export-retained" {
+        let destination = Path::new(&args[5]);
+        let checkpoint = network
+            .export_retained(&storage, wallet::integer(&args[4])?, destination)
+            .map_err(error)?;
+        write_new(&destination.join("genesis.bin"), &genesis.to_bytes())?;
+        write_new(&destination.join("validators.bin"), &keys.concat())?;
+        write_new(&destination.join("checkpoint.bin"), &checkpoint.to_bytes())?;
+        let mut marker = b"ALOB".to_vec();
+        marker.extend_from_slice(network.genesis_hash().as_bytes());
+        write_new(&destination.join("observer.mode"), &marker)?;
+        write_new(&destination.join("RECOVERY.txt"), format!("Retained observer history. Retain this pin independently: {}\nStart with --checkpoint checkpoint.bin --checkpoint-id {} and the original trusted profile/keys.\nThe original directory remains intact. No signing or transport keys are exported.\n", checkpoint.id(), checkpoint.id()).as_bytes())?;
+        println!("checkpoint_id: {}", checkpoint.id());
+        println!("checkpoint_height: {}", checkpoint.checkpoint().height);
+    }
+    println!("verified_height: {}", head.height);
+    println!("verified_block: {}", head.block);
+    Ok(())
 }

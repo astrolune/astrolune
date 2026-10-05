@@ -104,6 +104,28 @@ pub struct PotbVerifier {
 }
 
 impl PotbVerifier {
+    /// Resumes from independently trusted checkpoint coordinates and a state witness.
+    /// The caller pins the coordinates outside untrusted storage. Earlier ancestry is not verified.
+    pub fn from_checkpoint(
+        height: u64,
+        parent: Hash256,
+        root: Hash256,
+        witness: &StateValueProof,
+    ) -> Result<Self, ConsensusError> {
+        if height == 0 || parent.is_zero() {
+            return Err(ConsensusError::InvalidTransition);
+        }
+        let bytes = witness
+            .verify(root, &potb_state_key())
+            .map_err(|_| ConsensusError::InvalidProof)?
+            .ok_or(ConsensusError::InvalidProof)?;
+        let current = PotbState::from_bytes(bytes).map_err(|_| ConsensusError::InvalidProof)?;
+        if height.checked_add(1) != Some(current.committee().height()) {
+            return Err(ConsensusError::InvalidTransition);
+        }
+        Ok(Self { current, parent })
+    }
+
     /// Validates bootstrap configuration and exact registered public keys.
     pub fn new(config: &PotbConfiguration, keys: &[[u8; 32]]) -> Result<Self, ConsensusError> {
         Ok(Self {

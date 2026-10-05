@@ -27,7 +27,7 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 - [x] Canonical RFC 9381 VRF proofs, role-bound context, RFC vectors and malformed-proof rejection.
 - [x] Freeze supported genesis-v1/v2 histories in 50 binary compatibility fixtures, with authenticated replay and independent commitment/framing checks; [details](docs/41-protocol-compatibility.md).
 - [x] Freeze eight separate PoTB producer-profile fixtures, with authenticated replay and independent framing/commitment checks; [details](docs/44-potb-state-transitions.md).
-- [ ] Qualify governance protocol envelopes and future daemon activation compatibility.
+- [x] Qualify explicit governance envelopes, daemon activation and preserved legacy compatibility; [rules and tests](docs/48-parameter-governance.md).
 - [x] Shared extension fuzz oracle, 81 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
 - [ ] Long fuzz campaigns, dependency/security review, and cross-platform suite qualification.
 - [x] Upgrade qualification: current stable dependencies, legacy vault compatibility,
@@ -37,7 +37,7 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 
 Signed envelopes, validation order, account/state commitments, immutable snapshots, proofs, state diffs, atomic commit, recovery, pruning, and snapshot exchange.
 
-Current progress: signed admission validates existing transaction fields against an account view. Merkle state commitments, membership and absence proofs, immutable snapshots, bounded transitions, atomic state/whole-chain archive recovery, and verified snapshot exchange are implemented with rollback tests. Proposal execution stays private until successful commit. Sequential signed payment overlays, balance/nonce transitions, fixed reference fees, execution revalidation, and daemon account/submission RPC are implemented. The [versioned transaction envelope](docs/14-versioned-transactions.md), expiry enforcement, and post-commit expiry eviction are implemented. [Append-only block/delta logs](docs/22-append-only-chain-storage.md) now provide durable publication, disk history reads, linear replay and legacy compatibility for new network directories. [Protected signing-journal rollover](docs/23-signing-journal-rollover.md) now continues after the former decision cap with constant file size and lock-preserving recovery. Bounded recent transaction indexing and certified receipt recovery are implemented. Production fee governance, historical state indexing, physical retention and rollback-resistant key custody remain open. Local daemon block/state restart integration is implemented; daemon signing-state integration and independent authentication of recovered history are implemented in the certified reference-network profile. See [state and recovery](docs/10-state-and-recovery.md) and [chain archives](docs/11-chain-archives.md).
+Current progress: signed admission validates existing transaction fields against an account view. Merkle state commitments, membership and absence proofs, immutable snapshots, bounded transitions, atomic state/whole-chain archive recovery, and verified snapshot exchange are implemented with rollback tests. Proposal execution stays private until successful commit. Sequential signed payment overlays, balance/nonce transitions, fixed reference fees, execution revalidation, and daemon account/submission RPC are implemented. The [versioned transaction envelope](docs/14-versioned-transactions.md), expiry enforcement, and post-commit expiry eviction are implemented. [Append-only block/delta logs](docs/22-append-only-chain-storage.md) now provide durable publication, disk history reads, linear replay and legacy compatibility for new network directories. [Protected signing-journal rollover](docs/23-signing-journal-rollover.md) now continues after the former decision cap with constant file size and lock-preserving recovery. Bounded recent transaction indexing and certified receipt recovery are implemented. Quorum fee/capacity governance and bounded historical state indexing are implemented. Explicit bounded history export and pinned recovery are implemented; automated retention and rollback-resistant key custody remain open. Local daemon block/state restart integration is implemented; daemon signing-state integration and independent authentication of recovered history are implemented in the certified reference-network profile. See [state and recovery](docs/10-state-and-recovery.md) and [chain archives](docs/11-chain-archives.md).
 
 ## M3 — deterministic Rust contracts
 
@@ -61,7 +61,7 @@ Access leasing, execution waves, multiple lanes, optimistic validation, determin
 - [x] Mixed contract/payment waves, aggregate capacity enforcement and deterministic serial replay.
 - [x] Explicit rotating-producer system lane with reserved VRF resources, mixed application execution and atomic publication.
 - [x] Explicit genesis-v2 daemon activation of the VRF system lane.
-- [ ] Consensus capacity/fee governance.
+- [x] Consensus capacity/fee governance: more than 2/3 incumbent weight, next-epoch activation; [details](docs/48-parameter-governance.md).
 - [x] Bounded verified VRF transition cache and single-pass evidence history verification, with equivalence tests and [local measurements](docs/40-live-vrf-network.md#repeated-verification-cost).
 - [ ] Remaining locality/fusion/prefetch/pool optimizations and signature batching with equivalence tests.
 
@@ -95,7 +95,7 @@ in the [separate producer profile](docs/44-potb-state-transitions.md), with
 
 Authenticated encrypted transport, peer discovery, rate limiting, compact blocks, finalized sync, bounded queues, stage pipelining, speculative work, external RPC, and adaptive-capacity governance.
 
-Current progress: [certified reference networking](docs/19-reference-network.md) connects independent daemon processes with fixed genesis membership, signed proposals/votes, step timers, payment gossip, bounded mutually authenticated TLS 1.3 exchanges, protected journals, durable available-value recovery, and sequential certified catch-up. Local devnet generation and explicit signer provisioning are implemented. Real process tests cover quorum operation, RPC payments, restart, and late join. [TLS identity validation and provisioning](docs/20-authenticated-transport.md) are implemented with independent transport keys and deadline tests. [Non-voting full nodes](docs/21-observer-nodes.md) now independently authenticate history, execute imported blocks, relay payments, serve RPC, and recover without signing authority. [Scoped private-network discovery, bounded TLS sessions, local metrics and authenticated observer recovery](docs/36-private-network-operations.md) are implemented/tested. Public-network hardening, physical history retention remain open. Explicit genesis-v2 rotating consensus is implemented.
+Current progress: [certified reference networking](docs/19-reference-network.md) connects independent daemon processes with fixed genesis membership, signed proposals/votes, step timers, payment gossip, bounded mutually authenticated TLS 1.3 exchanges, protected journals, durable available-value recovery, and sequential certified catch-up. Local devnet generation and explicit signer provisioning are implemented. Real process tests cover quorum operation, RPC payments, restart, and late join. [TLS identity validation and provisioning](docs/20-authenticated-transport.md) are implemented with independent transport keys and deadline tests. [Non-voting full nodes](docs/21-observer-nodes.md) now independently authenticate history, execute imported blocks, relay payments, serve RPC, and recover without signing authority. [Scoped private-network discovery, bounded TLS sessions, local metrics and authenticated observer recovery](docs/36-private-network-operations.md) are implemented/tested. Explicit pinned history retention is implemented. Public-network hardening and automated retention remain open. Explicit genesis-v2 rotating consensus is implemented.
 
 ## M7 — ecosystem
 
@@ -129,7 +129,8 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Complete the Rust SDK host adapter.
 - [x] Complete bounded source-package tooling and exact artifact reconstruction.
 - [ ] Complete mixed-lane execution, capacity/fee governance and deterministic optimization qualification.
-- [ ] Add state/transaction indexing and bounded retention with authenticated recovery.
+- [x] Add bounded state/transaction indexes and exact-height certified state proofs; [details](docs/47-historical-state-index.md).
+- [x] Add explicit bounded history export and independently pinned recovery; [operator workflow and limits](docs/49-pinned-history-retention.md).
 - [x] Add encrypted wallet custody, OS-generated wallet keys and direct vault signing.
 - [x] Add certified state membership/absence proofs and offline verification.
 - [x] Add receipt queries and transaction finality waiting.

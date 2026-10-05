@@ -81,6 +81,139 @@ fn advance(nodes: &mut [NetworkNode], height: u64) {
 }
 
 #[test]
+fn retained_checkpoints_require_independent_pins_and_resume_all_profiles() {
+    use node::network::RecoveryCheckpoint;
+    use storage::ChainStorage;
+    for profile_kind in 0..4 {
+        let (base, keys) = support::fixture();
+        let network = match profile_kind {
+            0 => {
+                let mut genesis = base.genesis().clone();
+                genesis.version = 1;
+                genesis.committee_size = genesis.validators.len();
+                StaticNetwork::new(genesis, keys).unwrap()
+            }
+            1 => StaticNetwork::new(base.genesis().clone(), keys).unwrap(),
+            2 => StaticNetwork::with_potb(base, keys).unwrap(),
+            _ => StaticNetwork::with_potb(support::governed(base), keys).unwrap(),
+        };
+        let directory = Directory(std::env::temp_dir().join(format!(
+            "astrolune-retained-{profile_kind}-{}",
+            std::process::id()
+        )));
+        std::fs::create_dir(&directory.0).unwrap();
+        for seed in 1..=4 {
+            let path = directory.0.join(seed.to_string());
+            std::fs::create_dir(&path).unwrap();
+            drop(
+                DurableSigner::create_protected(
+                    path.join("signing.journal"),
+                    SigningContext {
+                        chain_id: network.chain_id(),
+                        genesis: network.genesis_hash(),
+                    },
+                    [seed; 32],
+                )
+                .unwrap(),
+            );
+        }
+        let mut nodes: Vec<_> = (1..=4)
+            .map(|seed| open(&directory, &network, seed))
+            .collect();
+        if profile_kind == 3 {
+            let (base, keys) = support::fixture();
+            let trusted = PotbVerifier::new(&support::governed(base), &keys).unwrap();
+            nodes[0]
+                .submit_governance(support::parameters(trusted.current(), trusted.parent()))
+                .unwrap();
+        }
+        advance(&mut nodes, 5);
+        let original = *nodes[0].storage().checkpoint().unwrap();
+        let destination = directory.0.join("retained");
+        let point = network
+            .export_retained(nodes[0].storage(), 3, &destination)
+            .unwrap();
+        assert_eq!(point.checkpoint().height, 1);
+        assert!(
+            network
+                .export_retained(nodes[0].storage(), 3, &destination)
+                .is_err()
+        );
+        let bytes = point.to_bytes();
+        assert!(RecoveryCheckpoint::from_bytes(&bytes, types::Hash256([9; 32])).is_err());
+        let mut altered = bytes.clone();
+        altered[40] ^= 1;
+        assert!(RecoveryCheckpoint::from_bytes(&altered, point.id()).is_err());
+        let decoded = RecoveryCheckpoint::from_bytes(&bytes, point.id()).unwrap();
+        assert_eq!(decoded, point);
+        let pinned = network.clone().with_checkpoint(decoded).unwrap();
+        {
+            let store = ChainStorage::open(destination.join("chain.bin")).unwrap();
+            assert_eq!(store.block_count(), 3);
+            assert!(store.read_finalized(1).unwrap().is_none());
+            assert_eq!(pinned.verify_storage(&store).unwrap(), original);
+            assert!(network.verify_storage(&store).is_err());
+            let second = directory.0.join("retained-again");
+            let later = pinned.export_retained(&store, 1, &second).unwrap();
+            assert_eq!(later.checkpoint().height, 3);
+            let later_network = network.clone().with_checkpoint(later).unwrap();
+            let store = ChainStorage::open(second.join("chain.bin")).unwrap();
+            assert_eq!(later_network.verify_storage(&store).unwrap(), original);
+            assert!(pinned.verify_storage(&store).is_err());
+        }
+        assert!(ObserverNode::open(network.clone(), &destination).is_err());
+        let mut observer = ObserverNode::open(pinned.clone(), &destination).unwrap();
+        assert_eq!(observer.request().height, 5);
+        advance(&mut nodes, 7);
+        while observer.request().height < 7 {
+            observer
+                .receive(&nodes[0].respond(observer.request()).unwrap())
+                .unwrap();
+        }
+        assert_eq!(
+            observer.storage().checkpoint(),
+            nodes[0].storage().checkpoint()
+        );
+        drop(observer);
+        assert_eq!(
+            ObserverNode::open(pinned, &destination)
+                .unwrap()
+                .request()
+                .height,
+            7
+        );
+        let zero = directory.0.join("checkpoint-only");
+        let latest = network
+            .export_retained(nodes[0].storage(), 0, &zero)
+            .unwrap();
+        let latest_network = network.clone().with_checkpoint(latest).unwrap();
+        assert_eq!(
+            ChainStorage::open(zero.join("chain.bin"))
+                .unwrap()
+                .block_count(),
+            0
+        );
+        // A separately provisioned test signer can recover and bind the current committee.
+        let signer = DurableSigner::create_protected(
+            zero.join("signing.journal"),
+            SigningContext {
+                chain_id: network.chain_id(),
+                genesis: network.genesis_hash(),
+            },
+            [1; 32],
+        )
+        .unwrap();
+        let recovered =
+            NetworkNode::open(latest_network, &zero, signer, Duration::from_millis(100)).unwrap();
+        assert_eq!(recovered.request().height, 7);
+        assert_eq!(
+            recovered.storage().checkpoint(),
+            nodes[0].storage().checkpoint()
+        );
+    }
+}
+
+#[test]
 fn governance_gossip_survives_restart_activates_at_epoch_and_observer_authenticates_it() {
     let (base, keys) = support::fixture();
     let profile = support::governed(base);

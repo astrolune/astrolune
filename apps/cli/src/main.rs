@@ -129,6 +129,9 @@ Commands:
            Create a registered validator's context-bound VRF proof offline
   vrf-verify <genesis> <public-key> <epoch> <height> <parent-randomness> <committee|producer> <round> <proof>
            Independently verify the proof and claimed randomness
+  export-retained <genesis> <validators> <directory> <minimum-height> <retain-blocks> <new-directory> [checkpoint-file checkpoint-id]
+  verify-retained <genesis> <validators> <directory> <minimum-height> <checkpoint-file> <checkpoint-id>
+           Export a bounded suffix or verify history from an independently pinned checkpoint
   verify-history <genesis> <validators> <directory> <minimum-height>
            Exclusively recover and authenticate existing finalized history
   export-history <genesis> <validators> <directory> <minimum-height> <new-directory>
@@ -185,9 +188,9 @@ fn run() -> Result<(), CliError> {
         Some(command @ ("receipt" | "verify-receipt" | "wait-finality")) => {
             receipts::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }
-        Some(command @ ("verify-history" | "export-history")) => {
-            recovery::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
-        }
+        Some(
+            command @ ("verify-history" | "export-history" | "verify-retained" | "export-retained"),
+        ) => recovery::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
         Some("verify") => cmd_verify(),
         Some(command @ ("wallet-create" | "wallet-encrypt")) => {
             vault::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())

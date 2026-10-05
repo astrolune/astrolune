@@ -32,6 +32,25 @@ macro_rules! dispatch {
 }
 
 impl ChainStorage {
+    /// Reads a log's committed anchor; legacy archives require complete-history recovery.
+    pub fn read_anchor(&self) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        match &self.0 {
+            Backend::Log(log) => log.read_anchor(),
+            Backend::Archive(_) => Ok(None),
+        }
+    }
+
+    /// Installs independently authenticated checkpoint state in an empty append log.
+    pub fn initialize_checkpoint(
+        &mut self,
+        checkpoint: Checkpoint,
+        state: InMemoryState,
+    ) -> Result<Checkpoint, StorageError> {
+        match &mut self.0 {
+            Backend::Log(log) => log.install_anchor(checkpoint, state),
+            Backend::Archive(_) => Err(StorageError::Unsupported),
+        }
+    }
     /// Opens the detected format, or creates a new log in an existing directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref();

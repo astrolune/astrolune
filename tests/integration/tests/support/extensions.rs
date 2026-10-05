@@ -226,11 +226,25 @@ fn check_potb(bytes: &[u8]) -> usize {
 }
 
 fn check_governance(bytes: &[u8]) -> usize {
-    use consensus::governance::{GovernanceIntent, GovernanceApproval, GovernanceCertificate, GovernanceState};
+    use consensus::governance::{
+        GovernanceApproval, GovernanceCertificate, GovernanceIntent, GovernanceState,
+    };
     let mut accepted = 0;
-    if let Ok(value) = GovernanceIntent::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
-    if let Ok(value) = GovernanceApproval::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
-    if let Ok(value) = GovernanceCertificate::from_bytes(bytes) { assert_eq!(value.to_bytes().unwrap(), bytes); accepted += 1; }
-    if let Ok(value) = GovernanceState::from_bytes(bytes) { assert_eq!(value.to_bytes(), bytes); accepted += 1; }
+    if let Ok(value) = GovernanceIntent::from_bytes(bytes) {
+        assert_eq!(value.to_bytes(), bytes);
+        accepted += 1;
+    }
+    if let Ok(value) = GovernanceApproval::from_bytes(bytes) {
+        assert_eq!(value.to_bytes(), bytes);
+        accepted += 1;
+    }
+    if let Ok(value) = GovernanceCertificate::from_bytes(bytes) {
+        assert_eq!(value.to_bytes().unwrap(), bytes);
+        accepted += 1;
+    }
+    if let Ok(value) = GovernanceState::from_bytes(bytes) {
+        assert_eq!(value.to_bytes(), bytes);
+        accepted += 1;
+    }
     accepted
 }

@@ -196,6 +196,26 @@ impl AppendOnlyStorage {
         self.index.len()
     }
 
+    /// Reads the committed anchor independently of recent-index eviction.
+    /// Structural integrity is checked; authentication requires an independent trust pin.
+    pub fn read_anchor(&self) -> Result<Option<(Checkpoint, InMemoryState)>, StorageError> {
+        self.ready()?;
+        if self.end == HEADER_BYTES {
+            return Ok(None);
+        }
+        let mut file = File::open(&self.path).map_err(|_| StorageError::Io)?;
+        let (record, _) = read_record(
+            &mut file,
+            HEADER_BYTES,
+            self.end,
+            domain_hash(DOMAIN, MAGIC),
+        )?;
+        match record {
+            Record::Anchor(cp, state) if cp.state_root == state.root() => Ok(Some((cp, state))),
+            _ => Err(StorageError::Corrupt),
+        }
+    }
+
     /// Installs a trusted genesis anchor into an empty log.
     pub fn initialize_genesis(
         &mut self,
@@ -212,7 +232,7 @@ impl AppendOnlyStorage {
         )
     }
 
-    fn install_anchor(
+    pub(crate) fn install_anchor(
         &mut self,
         cp: Checkpoint,
         state: InMemoryState,

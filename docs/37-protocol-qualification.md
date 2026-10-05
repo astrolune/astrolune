@@ -79,3 +79,8 @@ On 2026-10-04 the live PoTB network added admission/evidence gossip and stored
 PoTB effects, for 81 structured seeds. The one-million-input campaign passed
 with 293,326 accepted decoder paths. The original 50 legacy and eight PoTB policy
 fixtures remain unchanged; [activation and verification scope](45-live-potb-network.md).
+
+On 2026-10-05 the governance extension adds 18 frozen objects and raises the
+shared corpus to 99 seeds. Its one-million-input deterministic campaign passed
+with 279,302 accepted decoder paths. This remains a mutation campaign, not a
+coverage-guided result; [governance qualification](48-parameter-governance.md).

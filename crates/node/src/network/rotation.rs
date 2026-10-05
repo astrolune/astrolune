@@ -211,7 +211,17 @@ impl StaticNetwork {
         let head = storage
             .checkpoint()
             .ok_or_else(|| local("missing checkpoint"))?;
+        if self.checkpoint.is_some() {
+            (potb, trusted) = self.pinned_authorities(storage)?;
+        }
         for proof in ordered {
+            if self
+                .checkpoint
+                .as_ref()
+                .is_some_and(|point| proof.height() <= point.checkpoint().height)
+            {
+                return Err(local("evidence precedes the pinned retention boundary"));
+            }
             if proof.height() == 0 || proof.height() > head.height.saturating_add(1) {
                 return Err(local("evidence height is not authenticated"));
             }

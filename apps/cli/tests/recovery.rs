@@ -187,6 +187,100 @@ fn recovery_exports_both_backends_as_observers_and_rejects_forgery_lock_rollback
         .success()
     );
     assert!(!fixture.0.join("missing").exists());
+    check_retained(&fixture);
+}
+
+fn check_retained(fixture: &Fixture) {
+    for source in ["log", "archive"] {
+        let output = format!("{source}-retained");
+        let exported = run(
+            fixture,
+            &[
+                "export-retained",
+                "genesis",
+                "validators",
+                source,
+                "1",
+                "0",
+                &output,
+            ],
+        );
+        assert!(
+            exported.status.success(),
+            "{}",
+            String::from_utf8_lossy(&exported.stderr)
+        );
+        let stdout = String::from_utf8(exported.stdout).unwrap();
+        let pin = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("checkpoint_id: "))
+            .unwrap();
+        let descriptor = format!("{output}/checkpoint.bin");
+        assert!(
+            run(
+                fixture,
+                &[
+                    "verify-retained",
+                    "genesis",
+                    "validators",
+                    &output,
+                    "1",
+                    &descriptor,
+                    pin
+                ]
+            )
+            .status
+            .success()
+        );
+        assert!(
+            !run(
+                fixture,
+                &[
+                    "verify-retained",
+                    "genesis",
+                    "validators",
+                    &output,
+                    "2",
+                    &descriptor,
+                    pin
+                ]
+            )
+            .status
+            .success()
+        );
+        assert!(
+            !run(
+                fixture,
+                &[
+                    "verify-retained",
+                    "genesis",
+                    "validators",
+                    &output,
+                    "1",
+                    &descriptor,
+                    &Hash256([9; 32]).to_string()
+                ]
+            )
+            .status
+            .success()
+        );
+        assert!(
+            !run(
+                fixture,
+                &["verify-history", "genesis", "validators", &output, "1"]
+            )
+            .status
+            .success()
+        );
+        assert_eq!(
+            ChainStorage::open(fixture.0.join(&output).join("chain.bin"))
+                .unwrap()
+                .block_count(),
+            0
+        );
+        assert!(fixture.0.join(&output).join("observer.mode").is_file());
+        assert!(!fixture.0.join(&output).join("signing.journal").exists());
+    }
 }
 
 fn check_export(

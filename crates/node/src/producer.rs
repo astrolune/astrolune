@@ -500,6 +500,41 @@ impl BlockProducer {
         self.commit_block(proposal, bytes, storage)
     }
 
+    /// Read-only recovery of a certified suffix after an independently authenticated anchor.
+    pub(crate) fn replay_certified(
+        &mut self,
+        block: types::Block,
+        certificate: &consensus::FinalityCertificate,
+        committee: &consensus::AuthenticatedCommittee,
+    ) -> Result<(), ProducerError> {
+        committee.verify_certificate(certificate, &block.header)?;
+        self.check_rotation_committee(committee.root())?;
+        self.prepare_received_vrf(&block)?;
+        let proposal = self.execute_received_block(block)?;
+        let encoded = certificate
+            .encode()
+            .map_err(|_| consensus::ConsensusError::InvalidCertificate)?;
+        self.verify_rotation_certificate(&proposal, &encoded)?;
+        let (staged, _) = self.prepare_verified(&proposal)?;
+        let rotation = self.next_rotation(&staged)?;
+        let potb = self.next_potb(&proposal, &encoded, &staged)?;
+        let height = self
+            .height
+            .checked_add(1)
+            .ok_or(consensus::ConsensusError::InvalidTransition)?;
+        if let Some(trusted) = &potb {
+            self.config.block_capacity = trusted.current().committee().capacity();
+        }
+        self.parent_hash = proposal.block.header.compute_hash();
+        self.height = height;
+        self.state = staged;
+        self.rotation = rotation;
+        self.potb = potb;
+        self.contributions = None;
+        self.potb_batch = None;
+        Ok(())
+    }
+
     /// Commits a finalized block to storage after consensus approval.
     ///
     /// Re-executes the reference transition, verifies commitments and resource totals,

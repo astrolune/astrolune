@@ -12,6 +12,12 @@ cargo-fuzz = true
 
 [workspace]
 
+[features]
+windows-coverage = []
+
+[build-dependencies]
+cc = "1"
+
 [dependencies]
 crypto = { path = "../../crypto" }
 rpc = { path = "../../rpc" }

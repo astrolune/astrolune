@@ -1090,3 +1090,74 @@ fn governance_rpc_persists_only_valid_current_quorum_and_survives_restart() {
         .verify_potb_genesis(&profile, &fixture.keys, &genesis::genesis_key())
         .unwrap();
 }
+
+#[test]
+fn daemon_retained_recovery_requires_both_descriptor_and_independent_pin() {
+    let fixture = Fixture::with_governance(2, 3, true, true);
+    let profile = potb_support::governed(potb_profile(&fixture.genesis));
+    let mut reservations: Vec<_> = (0..4)
+        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
+        .collect();
+    let peers: Vec<_> = reservations
+        .iter()
+        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .collect();
+    let mut processes = Vec::new();
+    for index in 1..=4 {
+        drop(reservations[index - 1].take());
+        processes.push(fixture.start(index, &peers));
+    }
+    let client =
+        rpc::TcpRpcClient::new(processes[0].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while client.chain_status().unwrap().finalized_height < 3 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(processes);
+    let network = node::network::StaticNetwork::with_potb(profile, fixture.keys.clone()).unwrap();
+    let source = storage::ChainStorage::open(fixture.path.join("1/chain.bin")).unwrap();
+    let destination = fixture.path.join("retained");
+    let point = network.export_retained(&source, 1, &destination).unwrap();
+    std::fs::write(destination.join("checkpoint.bin"), point.to_bytes()).unwrap();
+    let run = |pin: Option<String>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_daemon"));
+        command
+            .args(["--blocks", "0", "--observer"])
+            .arg("--genesis")
+            .arg(fixture.path.join("genesis.bin"))
+            .arg("--validators")
+            .arg(fixture.path.join("validators.bin"))
+            .arg("--tls-dir")
+            .arg(fixture.path.join("5/tls"))
+            .arg("--data-dir")
+            .arg(&destination)
+            .arg("--checkpoint")
+            .arg(destination.join("checkpoint.bin"));
+        if let Some(pin) = pin {
+            command.args(["--checkpoint-id", &pin]);
+        }
+        command.output().unwrap()
+    };
+    assert!(!run(None).status.success());
+    assert!(
+        !run(Some(types::Hash256([9; 32]).to_string()))
+            .status
+            .success()
+    );
+    let recovered = run(Some(point.id().to_string()));
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&recovered.stdout)
+            .contains("Certified history and node-role recovery complete.")
+    );
+    assert!(run(Some(point.id().to_string())).status.success());
+    let mut altered = point.to_bytes();
+    altered[40] ^= 1;
+    std::fs::write(destination.join("checkpoint.bin"), altered).unwrap();
+    assert!(!run(Some(point.id().to_string())).status.success());
+}
