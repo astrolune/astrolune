@@ -16,7 +16,7 @@ types = { version = "0.1.0", path = "../types" }
 wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "portable-dispatch", "prefer-btree-collections"] }
 
 [dev-dependencies]
-wat = "=1.260.0"
+wat = "=1.261.0"
 
 [lints]
 workspace = true

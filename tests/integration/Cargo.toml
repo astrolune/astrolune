@@ -39,4 +39,4 @@ workspace = true
 [dev-dependencies]
 contract-sdk = { version = "0.1.0", path = "../../crates/contract-sdk", default-features = false }
 runtime = { version = "0.1.0", path = "../../crates/runtime" }
-wat = "=1.260.0"
+wat = "=1.261.0"
