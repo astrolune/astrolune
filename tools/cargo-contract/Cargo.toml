@@ -21,7 +21,7 @@ types = { version = "0.1.0", path = "../../crates/types" }
 
 [dev-dependencies]
 contract-sdk = { version = "0.1.0", path = "../../crates/contract-sdk", default-features = false }
-wat = "=1.260.0"
+wat = "=1.261.0"
 
 [lints]
 workspace = true

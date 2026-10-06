@@ -29,4 +29,4 @@ types = { version = "0.1.0", path = "../types" }
 workspace = true
 
 [dev-dependencies]
-wat = "=1.260.0"
+wat = "=1.261.0"
