@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Real CLI provisioning and offline verification of a `PoTB` authority stream.

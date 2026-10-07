@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Local voting, proof validation, durable lock recovery, and adversarial schedules.

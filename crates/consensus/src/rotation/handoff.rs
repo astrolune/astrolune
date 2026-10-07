@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Streaming trust transfer from an old quorum to a fully verified next committee.

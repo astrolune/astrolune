@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Signed proposal metadata; block bodies and verified prevote evidence travel separately.

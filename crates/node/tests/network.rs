@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Distributed message delivery, durable recovery, and adversarial reference-network checks.
@@ -7,7 +7,7 @@ use crypto::blake2s::{blake2s, ed25519_public_key, ed25519_sign};
 use genesis::{Allocation, Genesis, GenesisValidator};
 use keystore::{DurableSigner, SigningContext};
 use node::{
-    network::{NetworkNode, StaticNetwork},
+    network::{NetworkNode, PreparedExchange, StaticNetwork},
     network_wire::{NetworkMessage, SyncRequest, decode_exchange, encode_exchange},
     observer::ObserverNode,
 };
@@ -378,6 +378,242 @@ fn prepared_finalized_and_future_responses_match_for_both_roles() {
         observer.prepare_response(future).unwrap().encode().unwrap(),
         empty
     );
+}
+
+#[test]
+fn prepared_live_exchanges_own_bytes_and_use_current_admission_state() {
+    for admit_before_apply in [false, true] {
+        let raw_fixture = Fixture::new(1);
+        let prepared_fixture = Fixture::new(1);
+        let mut raw_validator = raw_fixture.open(1);
+        let mut prepared_validator = prepared_fixture.open(1);
+        let mut raw_observer = ObserverNode::open(
+            raw_fixture.network.clone(),
+            &raw_fixture.path.join("observer"),
+        )
+        .unwrap();
+        let mut prepared_observer = ObserverNode::open(
+            prepared_fixture.network.clone(),
+            &prepared_fixture.path.join("observer"),
+        )
+        .unwrap();
+        let request = raw_validator.request();
+        let tx = transfer();
+        let raw_bytes =
+            encode_exchange(request.genesis, &[NetworkMessage::Transaction(tx.clone())]).unwrap();
+        let worker_bytes = raw_bytes.clone();
+        let (validator_exchange, observer_exchange) = std::thread::spawn(move || {
+            let validator = PreparedExchange::decode(request.genesis, &worker_bytes).unwrap();
+            let observer = PreparedExchange::decode(request.genesis, &worker_bytes).unwrap();
+            drop(worker_bytes);
+            (validator, observer)
+        })
+        .join()
+        .unwrap();
+
+        // Preparation does not reserve admission: application sees the current pool.
+        if admit_before_apply {
+            raw_validator.submit_transaction(tx.clone()).unwrap();
+            prepared_validator.submit_transaction(tx.clone()).unwrap();
+            raw_observer.submit_transaction(tx.clone()).unwrap();
+            prepared_observer.submit_transaction(tx).unwrap();
+        }
+        let expected_rejected = usize::from(admit_before_apply);
+        assert_eq!(
+            raw_validator.receive(&raw_bytes).unwrap(),
+            expected_rejected
+        );
+        assert_eq!(
+            prepared_validator
+                .receive_prepared(validator_exchange)
+                .unwrap(),
+            expected_rejected
+        );
+        assert_eq!(raw_observer.receive(&raw_bytes).unwrap(), expected_rejected);
+        assert_eq!(
+            prepared_observer
+                .receive_prepared(observer_exchange)
+                .unwrap(),
+            expected_rejected
+        );
+        assert_eq!(
+            raw_validator.respond(request).unwrap(),
+            prepared_validator.respond(request).unwrap()
+        );
+        assert_eq!(raw_observer.respond(request).unwrap(), raw_bytes);
+        assert_eq!(prepared_observer.respond(request).unwrap(), raw_bytes);
+        assert_eq!(
+            raw_validator.storage().checkpoint(),
+            prepared_validator.storage().checkpoint()
+        );
+        assert_eq!(
+            raw_validator.storage().state().root(),
+            prepared_validator.storage().state().root()
+        );
+        assert_eq!(
+            raw_observer.storage().checkpoint(),
+            prepared_observer.storage().checkpoint()
+        );
+        assert_eq!(
+            raw_observer.storage().state().root(),
+            prepared_observer.storage().state().root()
+        );
+    }
+}
+
+#[test]
+fn prepared_finalized_exchanges_match_sequential_catch_up_for_both_roles() {
+    let source_fixture = Fixture::new(1);
+    let raw_fixture = Fixture::new(1);
+    let prepared_fixture = Fixture::new(1);
+    let mut source = source_fixture.open(1);
+    source.submit_transaction(transfer()).unwrap();
+    let now = Instant::now();
+    for step in 0..40 {
+        source.tick(now + Duration::from_millis(step)).unwrap();
+        if source.request().height >= 4 {
+            break;
+        }
+    }
+    assert!(source.request().height >= 4);
+    let mut raw_validator = raw_fixture.open(1);
+    let mut prepared_validator = prepared_fixture.open(1);
+    let mut raw_observer = ObserverNode::open(
+        raw_fixture.network.clone(),
+        &raw_fixture.path.join("observer"),
+    )
+    .unwrap();
+    let mut prepared_observer = ObserverNode::open(
+        prepared_fixture.network.clone(),
+        &prepared_fixture.path.join("observer"),
+    )
+    .unwrap();
+
+    while raw_validator.request().height < source.request().height {
+        let request = raw_validator.request();
+        let bytes = source.respond(request).unwrap();
+        let validator_exchange = PreparedExchange::decode(request.genesis, &bytes).unwrap();
+        let observer_exchange = PreparedExchange::decode(request.genesis, &bytes).unwrap();
+        assert_eq!(raw_validator.receive(&bytes).unwrap(), 0);
+        assert_eq!(
+            prepared_validator
+                .receive_prepared(validator_exchange)
+                .unwrap(),
+            0
+        );
+        assert_eq!(raw_observer.receive(&bytes).unwrap(), 0);
+        assert_eq!(
+            prepared_observer
+                .receive_prepared(observer_exchange)
+                .unwrap(),
+            0
+        );
+        for checkpoint in [
+            prepared_validator.storage().checkpoint(),
+            raw_observer.storage().checkpoint(),
+            prepared_observer.storage().checkpoint(),
+        ] {
+            assert_eq!(checkpoint, raw_validator.storage().checkpoint());
+        }
+        for root in [
+            prepared_validator.storage().state().root(),
+            raw_observer.storage().state().root(),
+            prepared_observer.storage().state().root(),
+        ] {
+            assert_eq!(root, raw_validator.storage().state().root());
+        }
+        assert_eq!(prepared_validator.respond(request).unwrap(), bytes);
+        assert_eq!(raw_observer.respond(request).unwrap(), bytes);
+        assert_eq!(prepared_observer.respond(request).unwrap(), bytes);
+        assert_eq!(
+            raw_validator.respond(raw_validator.request()).unwrap(),
+            prepared_validator
+                .respond(prepared_validator.request())
+                .unwrap()
+        );
+    }
+    assert_eq!(
+        raw_validator.storage().checkpoint(),
+        source.storage().checkpoint()
+    );
+    assert_eq!(
+        raw_validator.storage().state().root(),
+        source.storage().state().root()
+    );
+}
+
+#[test]
+fn prepared_exchange_requires_complete_decoding_before_application() {
+    let fixture = Fixture::new(1);
+    let mut validator = fixture.open(1);
+    let mut observer =
+        ObserverNode::open(fixture.network.clone(), &fixture.path.join("observer")).unwrap();
+    let request = validator.request();
+    let validator_before = validator.respond(request).unwrap();
+    let observer_before = observer.respond(request).unwrap();
+    let checkpoint = *validator.storage().checkpoint().unwrap();
+    let root = validator.storage().state().root();
+    let tx = transfer();
+    let bytes = encode_exchange(
+        request.genesis,
+        &[
+            NetworkMessage::Transaction(tx.clone()),
+            NetworkMessage::Transaction(tx),
+        ],
+    )
+    .unwrap();
+    let incomplete = &bytes[..bytes.len() - 1];
+    assert!(matches!(
+        PreparedExchange::decode(request.genesis, incomplete),
+        Err(node::network::NetworkNodeError::Input(_))
+    ));
+    assert!(validator.receive(incomplete).is_err());
+    assert!(observer.receive(incomplete).is_err());
+    assert_eq!(validator.respond(request).unwrap(), validator_before);
+    assert_eq!(observer.respond(request).unwrap(), observer_before);
+    assert_eq!(validator.storage().checkpoint(), Some(&checkpoint));
+    assert_eq!(observer.storage().checkpoint(), Some(&checkpoint));
+    assert_eq!(validator.storage().state().root(), root);
+    assert_eq!(observer.storage().state().root(), root);
+
+    assert_eq!(
+        validator
+            .receive_prepared(PreparedExchange::decode(request.genesis, &bytes).unwrap())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        observer
+            .receive_prepared(PreparedExchange::decode(request.genesis, &bytes).unwrap())
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn prepared_exchanges_preserve_the_receiving_nodes_genesis_binding() {
+    let fixture = Fixture::new(1);
+    let mut validator = fixture.open(1);
+    let mut observer =
+        ObserverNode::open(fixture.network.clone(), &fixture.path.join("observer")).unwrap();
+    let request = validator.request();
+    let validator_before = validator.respond(request).unwrap();
+    let observer_before = observer.respond(request).unwrap();
+    let other_genesis = Hash256([200; 32]);
+    assert_ne!(other_genesis, request.genesis);
+    let bytes = encode_exchange(other_genesis, &[NetworkMessage::Transaction(transfer())]).unwrap();
+    assert!(matches!(
+        validator.receive_prepared(PreparedExchange::decode(other_genesis, &bytes).unwrap()),
+        Err(node::network::NetworkNodeError::Input(_))
+    ));
+    assert!(matches!(
+        observer.receive_prepared(PreparedExchange::decode(other_genesis, &bytes).unwrap()),
+        Err(node::network::NetworkNodeError::Input(_))
+    ));
+    assert_eq!(validator.respond(request).unwrap(), validator_before);
+    assert_eq!(observer.respond(request).unwrap(), observer_before);
+    assert_eq!(validator.storage().checkpoint().unwrap().height, 0);
+    assert_eq!(observer.storage().checkpoint().unwrap().height, 0);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Fixed-membership reference network with durable voting and certified catch-up.
@@ -67,6 +67,50 @@ impl PreparedResponse {
     /// Consumes the snapshot and encodes its messages without accessing the node.
     pub fn encode(self) -> Result<Vec<u8>, NetworkNodeError> {
         encode_exchange(self.genesis, &self.messages).map_err(input)
+    }
+
+    /// Encodes compact block bodies for an explicitly advertised transaction dictionary.
+    /// Returns the ordinary exchange when compact encoding would not reduce its size.
+    pub fn encode_compact(self, known: &[Hash256]) -> Result<Vec<u8>, NetworkNodeError> {
+        crate::compact_wire::encode_response(self.genesis, &self.messages, known).map_err(input)
+    }
+}
+
+/// An owned, structurally decoded exchange that can be prepared outside the node lock.
+///
+/// Decoding does not authenticate messages. Receiving nodes still process each message
+/// against their current state, even when that state changed after decoding.
+pub struct PreparedExchange {
+    genesis: Hash256,
+    messages: Vec<NetworkMessage>,
+}
+
+impl PreparedExchange {
+    /// Decodes a complete exchange with the reference codec's existing bounds.
+    pub fn decode(genesis: Hash256, bytes: &[u8]) -> Result<Self, NetworkNodeError> {
+        let messages = decode_exchange(genesis, bytes).map_err(input)?;
+        Ok(Self { genesis, messages })
+    }
+
+    /// Reconstructs compact block bodies from the request's owned dictionary.
+    /// Ordinary full responses are accepted through the same interface.
+    pub fn decode_compact(
+        genesis: Hash256,
+        bytes: &[u8],
+        known: &crate::compact_wire::TransactionDictionary,
+    ) -> Result<Self, NetworkNodeError> {
+        let messages = crate::compact_wire::decode_response(genesis, bytes, known).map_err(input)?;
+        Ok(Self { genesis, messages })
+    }
+
+    pub(crate) fn into_messages(
+        self,
+        genesis: Hash256,
+    ) -> Result<Vec<NetworkMessage>, NetworkNodeError> {
+        if self.genesis != genesis {
+            return Err(input(codec::DecodeError::Unsupported));
+        }
+        Ok(self.messages)
     }
 }
 
@@ -457,6 +501,12 @@ impl NetworkNode {
             height: self.producer().height(),
         }
     }
+
+    /// Owns a bounded set of pending transactions for one compact exchange.
+    #[must_use]
+    pub fn compact_dictionary(&self) -> crate::compact_wire::TransactionDictionary {
+        crate::compact_wire::TransactionDictionary::new(self.producer().pending_transactions())
+    }
     /// Current round, useful for operator diagnostics and simulations.
     #[must_use]
     pub fn round(&self) -> u32 {
@@ -560,7 +610,17 @@ impl NetworkNode {
     /// Decodes the complete response, then authenticates messages individually.
     /// Returns the number rejected; local signing/storage errors are never suppressed.
     pub fn receive(&mut self, bytes: &[u8]) -> Result<usize, NetworkNodeError> {
-        let messages = decode_exchange(self.network.hash, bytes).map_err(input)?;
+        self.receive_prepared(PreparedExchange::decode(self.network.hash, bytes)?)
+    }
+
+    /// Processes a decoded exchange against the current node state.
+    /// Messages remain unauthenticated until the ordinary receive checks succeed.
+    /// Returns the number rejected; local signing/storage errors are never suppressed.
+    pub fn receive_prepared(
+        &mut self,
+        exchange: PreparedExchange,
+    ) -> Result<usize, NetworkNodeError> {
+        let messages = exchange.into_messages(self.network.hash)?;
         let mut rejected = 0;
         for message in messages {
             match self.receive_message(message) {

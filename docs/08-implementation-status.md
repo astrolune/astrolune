@@ -1,10 +1,10 @@
-<!-- Copyright (c) 2026 Astrolune contributors. SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
 # 8. Implementation Status and Roadmap
 
 ## 8.1 Current baseline
 
-As of 2026-10-06, this repository contains a Rust 2024 workspace with:
+As of 2026-10-07, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
@@ -108,6 +108,8 @@ Authenticated encrypted transport, peer discovery, rate limits, compact blocks, 
 
 Owned response preparation and encoding are separated in both node roles. The
 daemon releases its node lock before encoding; [scope and byte-equivalence tests](19-reference-network.md#response-preparation-and-encoding).
+Incoming exchanges are decoded once in peer workers and retained in the bounded
+mailbox for processing against current node state; [scope and equivalence tests](19-reference-network.md#incoming-exchange-preparation).
 
 Compact-block propagation, a full block-stage pipeline and speculative work beyond execution
 waves still require separate reference-network protocol integration. Automatic

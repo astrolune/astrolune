@@ -1,11 +1,11 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Certified daemon, bounded peer polling, and committed account RPC.
 
 use crate::{DaemonError, io_error, options::Options};
 use codec::{CanonicalDecode, CanonicalEncode};
-use node::network::{NetworkNodeError, StaticNetwork};
+use node::network::{NetworkNodeError, PreparedExchange, StaticNetwork};
 use p2p::tls::{PeerStream, PeerTlsConfig};
 use rpc::{RpcError, RpcRequest, RpcResponse, RpcService, TcpRpcServer};
 use state::StateDatabase;
@@ -219,7 +219,7 @@ fn load_identity(options: &Options) -> Result<NetworkIdentity, DaemonError> {
 }
 
 struct Workers {
-    receiver: mpsc::Receiver<Vec<u8>>,
+    receiver: mpsc::Receiver<PreparedExchange>,
     handles: Vec<std::thread::JoinHandle<()>>,
 }
 
@@ -262,7 +262,7 @@ fn drive(
     listener: &TcpListener,
     signals: &DriveSignals,
     initial_height: u64,
-    receiver: &mpsc::Receiver<Vec<u8>>,
+    receiver: &mpsc::Receiver<PreparedExchange>,
 ) -> Result<(), DaemonError> {
     let mut reported = initial_height;
     loop {
@@ -301,8 +301,8 @@ fn drive(
                 "finalized history read failed; storage recovery required",
             ));
         }
-        for bytes in receiver.try_iter().take(4) {
-            match node.receive(&bytes) {
+        for exchange in receiver.try_iter().take(4) {
+            match node.receive_prepared(exchange) {
                 Ok(rejected) => signals
                     .peers
                     .metrics

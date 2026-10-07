@@ -1,12 +1,15 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Non-voting full nodes independently verify finalized history and execution.
 //! This module never loads a consensus key, reserves a signature, or creates a vote.
 
 use crate::{
-    network::{NetworkNodeError, PreparedResponse, RecoveredNetwork, StaticNetwork, input, local},
-    network_wire::{NetworkMessage, SyncRequest, decode_exchange},
+    network::{
+        NetworkNodeError, PreparedExchange, PreparedResponse, RecoveredNetwork, StaticNetwork,
+        input, local,
+    },
+    network_wire::{NetworkMessage, SyncRequest},
 };
 use std::{
     io::{Read, Write},
@@ -111,6 +114,14 @@ impl ObserverNode {
     }
 
     /// Serves already authenticated finalized blocks or bounded pending transactions.
+    ///
+    /// The dictionary is separate from response selection and remains valid after pool changes.
+    #[must_use]
+    pub fn compact_dictionary(&self) -> crate::compact_wire::TransactionDictionary {
+        crate::compact_wire::TransactionDictionary::new(self.chain.producer.pending_transactions())
+    }
+
+    /// Serves already authenticated finalized blocks or bounded pending transactions.
     /// Proposals, prevotes, precommits and available-value proofs are never originated or relayed.
     pub fn respond(&self, request: SyncRequest) -> Result<Vec<u8>, NetworkNodeError> {
         self.prepare_response(request)?.encode()
@@ -152,7 +163,21 @@ impl ObserverNode {
     /// Returns rejected transaction/block count; ignores live consensus messages.
     /// Local storage failures are fatal and never downgraded to peer input failures.
     pub fn receive(&mut self, bytes: &[u8]) -> Result<usize, NetworkNodeError> {
-        let messages = decode_exchange(self.network.genesis_hash(), bytes).map_err(input)?;
+        self.receive_prepared(PreparedExchange::decode(
+            self.network.genesis_hash(),
+            bytes,
+        )?)
+    }
+
+    /// Processes a decoded exchange against the current node state.
+    /// Messages remain unauthenticated until the ordinary receive checks succeed.
+    /// Returns rejected transaction/block count; ignores live consensus messages.
+    /// Local storage failures are fatal and never downgraded to peer input failures.
+    pub fn receive_prepared(
+        &mut self,
+        exchange: PreparedExchange,
+    ) -> Result<usize, NetworkNodeError> {
+        let messages = exchange.into_messages(self.network.genesis_hash())?;
         let mut rejected = 0;
         for message in messages {
             match self.receive_message(message) {

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Strict daemon arguments, parsed before opening files or sockets.
@@ -28,6 +28,7 @@ Options:
   --tls-dir PATH    Network ca.der, cert.der and PKCS#8 key.der (required for peers)
   --allow-plaintext  Explicit insecure loopback-only development transport
   --peers ADDR,...   Configured peers to poll and reconnect (up to 32)
+  --compact-blocks   Request compact block bodies with full-response fallback
   --discover-in CIDR  Discover TLS peers inside this private IPv4 subnet only
   --metrics-listen ADDR  Optional loopback Prometheus HTTP endpoint
   --round-timeout-ms N  Initial BFT step deadline (100..60000; default 1000)
@@ -58,6 +59,7 @@ pub(crate) struct Options {
     pub tls_dir: Option<PathBuf>,
     pub allow_plaintext: bool,
     pub peers: Vec<SocketAddr>,
+    pub compact_blocks: bool,
     pub round_timeout_ms: u64,
     pub discovery: Option<p2p::discovery::DiscoveryScope>,
     pub metrics_listen: Option<SocketAddr>,
@@ -90,6 +92,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
         tls_dir: None,
         allow_plaintext: false,
         peers: Vec::new(),
+        compact_blocks: false,
         round_timeout_ms: 1000,
         discovery: None,
         metrics_listen: None,
@@ -114,6 +117,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             "--dry-run" => options.dry_run = true,
             "--allow-plaintext" => options.allow_plaintext = true,
             "--observer" => options.observer = true,
+            "--compact-blocks" => options.compact_blocks = true,
             "--run" => {}
             "--blocks" | "--data-dir" | "--genesis" | "--p2p-listen" | "--rpc-listen"
             | "--validators" | "--validator-key" | "--tls-dir" | "--peers"
@@ -223,6 +227,7 @@ fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), Da
             }
         }
     } else if options.validator_key.is_some()
+        || options.compact_blocks
         || options.discovery.is_some()
         || options.metrics_listen.is_some()
         || options.observer

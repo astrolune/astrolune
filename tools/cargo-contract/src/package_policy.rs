@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Restricted Cargo package profile; no build scripts, environment or external inputs.
@@ -7,7 +7,7 @@ use proc_macro2::{TokenStream, TokenTree};
 use std::str::FromStr;
 use toml::{Table, Value};
 
-pub(super) const MANIFEST: &str = "# Copyright (c) 2026 Astrolune contributors\n# SPDX-License-Identifier: MIT\n[package]\nname = \"astrolune-contract\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.99.0\"\n[lib]\ncrate-type = [\"cdylib\"]\n[dependencies.contract-sdk]\nversion = \"=0.1.0\"\ndefault-features = false\n[workspace]\n";
+pub(super) const MANIFEST: &str = "# Copyright (c) 2026 Ankerin\n# SPDX-License-Identifier: MIT\n[package]\nname = \"astrolune-contract\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.99.0\"\n[lib]\ncrate-type = [\"cdylib\"]\n[dependencies.contract-sdk]\nversion = \"=0.1.0\"\ndefault-features = false\n[workspace]\n";
 
 pub(super) fn manifest(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() > 16 * 1024 {

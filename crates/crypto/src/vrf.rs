@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Canonical RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI proofs.

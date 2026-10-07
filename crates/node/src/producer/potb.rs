@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Explicit `PoTB` system execution, atomic storage publication and authenticated replay.
@@ -82,6 +82,7 @@ impl BlockProducer {
             return Err(invalid("PoTB system envelope exceeds transaction limit"));
         }
         self.potb_batch = Some((batch, next));
+        self.clear_execution();
         Ok(())
     }
 

@@ -1,11 +1,11 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Explicit daemon roles sharing transport and committed-state RPC.
 
 use crate::{DaemonError, io_error, options::Options};
 use node::{
-    network::{NetworkNode, NetworkNodeError, PreparedResponse, StaticNetwork},
+    network::{NetworkNode, NetworkNodeError, PreparedExchange, PreparedResponse, StaticNetwork},
     network_wire::SyncRequest,
     observer::ObserverNode,
 };
@@ -102,10 +102,13 @@ impl PeerNode {
         }
     }
 
-    pub(super) fn receive(&mut self, bytes: &[u8]) -> Result<usize, NetworkNodeError> {
+    pub(super) fn receive_prepared(
+        &mut self,
+        exchange: PreparedExchange,
+    ) -> Result<usize, NetworkNodeError> {
         match self {
-            Self::Validator(node) => node.receive(bytes),
-            Self::Observer(node) => node.receive(bytes),
+            Self::Validator(node) => node.receive_prepared(exchange),
+            Self::Observer(node) => node.receive_prepared(exchange),
         }
     }
 

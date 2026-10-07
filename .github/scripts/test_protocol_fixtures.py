@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Astrolune contributors
+# Copyright (c) 2026 Ankerin
 # SPDX-License-Identifier: MIT
 
 """Independent stdlib checks for frozen framing and BLAKE2s commitments.

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Explicit rotating-profile execution; the version-1 daemon never enables it implicitly.
@@ -20,6 +20,7 @@ use super::{
 
 // Only installed after complete verification against this producer's private current state.
 // Successful commit clears it; failed publication preserves it with the unchanged parent.
+#[derive(Clone, Eq, PartialEq)]
 pub(super) struct VerifiedTransition {
     batch: VrfBatch,
     next: CommitteeState,
@@ -150,6 +151,7 @@ impl BlockProducer {
             .ok_or(ConsensusError::InvalidTransition)?
             .transition(&batch)?;
         self.contributions = Some(VerifiedTransition { batch, next });
+        self.clear_execution();
         Ok(())
     }
 

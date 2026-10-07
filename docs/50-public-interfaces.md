@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Astrolune contributors. SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
 # 50. Public interface naming and compatibility
 

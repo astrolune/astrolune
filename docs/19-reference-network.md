@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Astrolune contributors. SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
 # 19. Certified Reference Network
 
@@ -103,11 +103,11 @@ A block is a length-prefixed canonical block header, a `u32` transaction count, 
 | Transaction | 64 KiB |
 | Structurally decoded transactions per block | 256 |
 | Accepted/produced transactions per reference-network block | 15 |
-| Pending response mailbox | 4 packets |
+| Pending response mailbox | 4 fully decoded exchanges |
 | Concurrent inbound requests | Configured `max_peers` (daemon default 32) |
 | Accept work per loop iteration | 8 connections |
 
-The lower production transaction count ensures a block fits the wire bound even at maximum transaction size. Polling is every 50 ms per configured peer; a full response mailbox drops a redundant response for a later retry. Repeated identical votes/proposals do not consume new slots. Incoming untrusted failures do not stop consensus, while local failures do.
+The lower production transaction count ensures a block fits the wire bound even at maximum transaction size. Polling is every 50 ms per configured peer; a full response mailbox drops a redundant response for a later retry. Each queued exchange has passed the existing byte, message and nested codec limits; the mailbox retains owned decoded messages instead of a copy of their wire bytes. Repeated identical votes/proposals do not consume new slots. Incoming untrusted failures do not stop consensus, while local failures do.
 
 ## Qualification and remaining work
 
@@ -130,6 +130,28 @@ snapshots across transaction admission, and encode them on another thread after
 the nodes have been dropped. This is response-stage overlap only: compact-block
 propagation, a full block-stage pipeline and speculative consensus work remain
 unimplemented. No end-to-end throughput improvement is claimed.
+
+### Incoming exchange preparation
+
+`PreparedExchange::decode` performs the existing complete structural decode and
+owns the resulting messages. Both node roles accept it through `receive_prepared`;
+their original `receive` APIs remain decode-and-process wrappers. The prepared
+exchange is bound to its genesis namespace and exposes no mutable message list.
+Preparation does not establish message authenticity or capture a state snapshot:
+admission, execution and consensus processing still use the node's state when the
+exchange is consumed, in the original message order and with the same error handling.
+
+Peer workers retain this decoded result instead of discarding it and copying the
+payload bytes. The main node loop consumes it without a second structural decode
+under the node mutex. The existing four-entry mailbox, four-exchange processing
+budget, retry behavior and session deadlines are unchanged. An exchange can be
+decoded while the node processes a previous one; height transitions and commits
+remain sequential.
+
+Receive-path tests compare queued and direct processing, ownership across threads,
+state changes between preparation and consumption, and finalized catch-up for both
+node roles. These checks establish functional equivalence, not an end-to-end
+throughput measurement.
 
 ### Existing network qualification
 

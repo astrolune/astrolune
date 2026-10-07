@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Astrolune contributors. SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
 # AstroLune Roadmap
 
@@ -99,6 +99,7 @@ in the [separate producer profile](docs/44-potb-state-transitions.md), with
 Authenticated encrypted transport, peer discovery, rate limiting, compact blocks, finalized sync, bounded queues, stage pipelining, speculative work, external RPC, and adaptive-capacity governance.
 
 - [x] Prepare owned outgoing response snapshots and encode outside the daemon node lock, with byte-equivalence and snapshot-lifetime tests; [scope](docs/19-reference-network.md#response-preparation-and-encoding).
+- [x] Decode incoming exchanges once in peer workers and pass owned messages through the bounded mailbox, with receive-path equivalence tests; [scope](docs/19-reference-network.md#incoming-exchange-preparation).
 
 Current progress: [certified reference networking](docs/19-reference-network.md) connects independent daemon processes with fixed genesis membership, signed proposals/votes, step timers, payment gossip, bounded mutually authenticated TLS 1.3 exchanges, protected journals, durable available-value recovery, and sequential certified catch-up. Local devnet generation and explicit signer provisioning are implemented. Real process tests cover quorum operation, RPC payments, restart, and late join. [TLS identity validation and provisioning](docs/20-authenticated-transport.md) are implemented with independent transport keys and deadline tests. [Non-voting full nodes](docs/21-observer-nodes.md) now independently authenticate history, execute imported blocks, relay payments, serve RPC, and recover without signing authority. [Scoped private-network discovery, bounded TLS sessions, local metrics and authenticated observer recovery](docs/36-private-network-operations.md) are implemented/tested. Explicit pinned history retention is implemented. Public-network hardening and automated retention remain open. Explicit genesis-v2 rotating consensus is implemented.
 
@@ -151,5 +152,5 @@ The reference execution optimizations above do not complete the whole roadmap.
 
 - Security-related work is deferred: signature batching, long coverage-guided and contract fuzz campaigns, Byzantine/churn simulations, formal safety/liveness, provider/dependency review, key custody, release signing and external audits. Alternate runtime backends and automated history retention also remain unimplemented; they require runtime/metering qualification and checkpoint/signing-state recovery design respectively.
 - Platform and release evidence remains external to the local Windows checks: Linux suite execution, cross-platform contract artifacts and reproducibility on independent machines. Configured CI gates do not establish observed results.
-- M6 response preparation and encoding can overlap with node processing. Compact-block propagation, a full block-stage pipeline and speculative work beyond execution waves still require separate protocol integration. Existing reference-network transport, sequential catch-up and manual pinned history export do not implement those features.
+- M6 incoming exchange decoding and outgoing response encoding can overlap with node processing. Compact-block propagation, a full block-stage pipeline and speculative work beyond execution waves still require separate protocol integration. Existing reference-network transport, sequential catch-up and manual pinned history export do not implement those features.
 - Distributed calibration and production operating procedures remain release activities. Functional equivalence and deterministic read/thread/allocation checks do not establish end-to-end throughput.

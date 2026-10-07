@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Block production pipeline.
@@ -14,9 +14,12 @@
 //! ```
 
 mod potb;
+mod pipeline;
 mod rotation;
 
-use std::collections::BTreeMap;
+pub(crate) use pipeline::VerifiedExecution;
+
+use std::{collections::BTreeMap, sync::{Arc, Mutex}};
 
 use execution::{
     ExecutionError, ExecutionPolicy, ExecutorConfig, SignedSession, SimpleExecutor,
@@ -171,6 +174,7 @@ pub struct BlockProducer {
         consensus::potb_transition::PotbBatch,
         consensus::potb_transition::PotbState,
     )>,
+    verified_execution: Mutex<Option<Arc<VerifiedExecution>>>,
 }
 
 impl BlockProducer {
@@ -232,6 +236,7 @@ impl BlockProducer {
             contributions: None,
             potb: None,
             potb_batch: None,
+            verified_execution: Mutex::new(None),
         }
     }
 
@@ -526,6 +531,8 @@ impl BlockProducer {
             self.config.block_capacity = trusted.current().committee().capacity();
         }
         self.parent_hash = proposal.block.header.compute_hash();
+
+        self.clear_execution();
         self.height = height;
         self.state = staged;
         self.rotation = rotation;
@@ -620,6 +627,7 @@ impl BlockProducer {
         self.height = next_height;
         self.mempool.remove_expired(next_height);
         self.parent_hash = proposal.block.header.compute_hash();
+        self.clear_execution();
 
         Ok(checkpoint)
     }
@@ -649,6 +657,9 @@ impl BlockProducer {
                 "network block context mismatch".into(),
             ));
         }
+        if let Some(verified) = self.verified_for_block(&block) {
+            return Ok(verified.proposal.clone());
+        }
         let mut staged = self.state.clone();
         let (outputs, state_root) = self.execute_transactions(&mut staged, &block.transactions)?;
         let receipts: Vec<_> = outputs
@@ -664,12 +675,15 @@ impl BlockProducer {
                 "network execution commitment mismatch".into(),
             ));
         }
-        Ok(BlockProposal {
+        let proposal = BlockProposal {
             block,
             outputs,
             state_root,
             resources_used,
-        })
+        };
+        let diffs = proposal.outputs.iter().map(|output| output.diff.clone()).collect();
+        self.remember_execution(&proposal, &staged, diffs);
+        Ok(proposal)
     }
 
     /// Bounded admission candidates for reference transaction gossip.
@@ -726,6 +740,9 @@ impl BlockProducer {
                 "proposal commitments do not match".into(),
             ));
         }
+        if let Some(verified) = self.verified_for_proposal(proposal) {
+            return Ok((verified.staged.clone(), verified.diffs.clone()));
+        }
         // Re-execute the reference transition: mutually consistent forged roots are not proof
         // that the supplied outputs actually follow from these transactions and this parent.
         let mut staged = self.state.clone();
@@ -737,6 +754,8 @@ impl BlockProducer {
             ));
         }
         let diffs: Vec<StateDiff> = outputs.into_iter().map(|output| output.diff).collect();
+
+        self.remember_execution(proposal, &staged, diffs.clone());
 
         Ok((staged, diffs))
     }

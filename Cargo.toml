@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Astrolune contributors
+# Copyright (c) 2026 Ankerin
 # SPDX-License-Identifier: MIT
 
 [workspace]
@@ -37,7 +37,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
-authors = ["Astrolune contributors"]
+authors = ["Ankerin"]
 repository = "https://github.com/astrolune-network/astrolune"
 
 [workspace.lints.rust]

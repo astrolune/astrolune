@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Astrolune contributors
+# Copyright (c) 2026 Ankerin
 # SPDX-License-Identifier: MIT
 
 # Coverage feedback only: this does not enable AddressSanitizer or instrument std.

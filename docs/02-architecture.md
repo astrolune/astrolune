@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 Astrolune contributors. SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
 # 2. Rust Architecture, Networking, and Capacity
 

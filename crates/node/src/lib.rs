@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Node pipeline coordination across propagation, consensus, execution, and commit.
@@ -13,6 +13,7 @@
 mod evidence;
 
 pub mod capacity;
+pub mod compact_wire;
 pub mod full_service;
 pub mod handoff;
 pub mod network;

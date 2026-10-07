@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Astrolune contributors
+// Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
 //! Bounded authenticated sessions, scoped discovery and reconnect backoff.
@@ -6,7 +6,10 @@
 use super::{
     DaemonError, IO_TIMEOUT, NetworkNodeError, Options, PeerNode, PeerTransport, Workers, io_error,
 };
-use node::network_wire::{MAX_EXCHANGE_BYTES, SyncRequest};
+use node::{
+    network::PreparedExchange,
+    network_wire::{MAX_EXCHANGE_BYTES, SyncRequest},
+};
 use p2p::{
     discovery::{self, PeerDirectory},
     exchange::{read_packet, write_packet},
@@ -133,7 +136,7 @@ impl PeerRuntime {
             handles: vec![manager],
         })
     }
-    fn manage(&self, sender: &mpsc::SyncSender<Vec<u8>>) -> io::Result<()> {
+    fn manage(&self, sender: &mpsc::SyncSender<PreparedExchange>) -> io::Result<()> {
         let mut handles: BTreeMap<SocketAddr, std::thread::JoinHandle<()>> = BTreeMap::new();
         let result = (|| {
             while !self.stop.load(Ordering::Acquire) {
@@ -185,7 +188,11 @@ impl PeerRuntime {
             std::thread::sleep(remaining.min(Duration::from_millis(50)));
         }
     }
-    fn poll(&self, address: SocketAddr, sender: &mpsc::SyncSender<Vec<u8>>) -> io::Result<()> {
+    fn poll(
+        &self,
+        address: SocketAddr,
+        sender: &mpsc::SyncSender<PreparedExchange>,
+    ) -> io::Result<()> {
         let mut session: Option<Session> = None;
         let mut backoff = 100_u64;
         while !self.stop.load(Ordering::Acquire) && self.directory()?.addresses().contains(&address)
@@ -202,9 +209,9 @@ impl PeerRuntime {
                 self.metrics
                     .set(NodeMetric::KnownPeers, directory.addresses().len() as u64);
             }
-            if let Ok(bytes) = result {
+            if let Ok(exchange) = result {
                 self.metrics.add(NodeMetric::Exchanges, 1);
-                match sender.try_send(bytes) {
+                match sender.try_send(exchange) {
                     Ok(()) => {}
                     Err(mpsc::TrySendError::Full(_)) => self.metrics.add(NodeMetric::QueueDrops, 1),
                     Err(mpsc::TrySendError::Disconnected(_)) => break,
@@ -219,7 +226,11 @@ impl PeerRuntime {
         }
         Ok(())
     }
-    fn exchange(&self, address: SocketAddr, session: &mut Option<Session>) -> io::Result<Vec<u8>> {
+    fn exchange(
+        &self,
+        address: SocketAddr,
+        session: &mut Option<Session>,
+    ) -> io::Result<PreparedExchange> {
         if session.is_none() {
             let connect = || {
                 self.transport
@@ -253,11 +264,12 @@ impl PeerRuntime {
                 IO_TIMEOUT,
             )?;
             let (hints, payload) = self.unpack(&bytes, MAX_EXCHANGE_BYTES)?;
-            // Validate framing before promoting a route; signatures stay the node's responsibility.
-            node::network_wire::decode_exchange(self.genesis, payload).map_err(invalid)?;
+            // Retain the complete decode for the node loop instead of decoding again
+            // under its mutex. Message validation still runs against current node state.
+            let prepared = PreparedExchange::decode(self.genesis, payload).map_err(invalid)?;
             self.learn(&hints)?;
             session.count += 1;
-            Ok(payload.to_vec())
+            Ok(prepared)
         };
         exchange().inspect_err(|_| self.metrics.add(NodeMetric::ExchangeFailures, 1))
     }
