@@ -5,7 +5,8 @@
 
 use crate::{
     CliError,
-    wallet::{integer, read_raw_seed, text, write_new},
+    vault::read_consensus_seed,
+    wallet::{integer, text, write_new},
 };
 use codec::CanonicalDecode;
 use crypto::{Blake2sProvider, CryptoProvider, VrfInput, VrfOutput, VrfRole, prove_vrf};
@@ -55,7 +56,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
         ));
     }
     let seed = if command == "vrf-prove" {
-        Some(read_raw_seed(Path::new(key))?)
+        Some(read_consensus_seed(Path::new(key))?)
     } else {
         None
     };

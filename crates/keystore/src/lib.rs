@@ -6,15 +6,18 @@
 #![forbid(unsafe_code)]
 
 pub mod admission;
+pub mod anchor;
 mod durable;
 pub mod error;
 pub mod governance;
 mod journal;
 pub mod key;
 pub mod mock;
+pub mod release;
 pub mod signer;
 pub mod vault;
 
+pub use anchor::ANCHOR_BYTES as SIGNING_ANCHOR_BYTES;
 pub use durable::DurableSigner;
 pub use error::KeystoreError;
 pub use journal::{

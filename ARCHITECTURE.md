@@ -45,4 +45,8 @@ Consensus fixes transaction order. Execution produces receipts and state diffs. 
 - **Audited:** an independent review has been completed and findings addressed.
 - **Production-ready:** release gates, operations, and supported-version policy are complete.
 
-Most of the repository is currently an **interface baseline**. The `node` crate now contains **implemented** block production and pipeline coordination with real subsystem integration.
+The repository implements a certified reference network, deterministic execution,
+durable storage and ecosystem services. Its daemon integrates
+[compact propagation and bounded execution-stage overlap](docs/54-compact-blocks-and-execution-pipeline.md).
+The [implementation status](docs/08-implementation-status.md) distinguishes tested
+reference behavior from unresolved production and external qualification gates.

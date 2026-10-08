@@ -96,7 +96,8 @@ A block is a length-prefixed canonical block header, a `u32` transaction count, 
 | Resource | Bound |
 | --- | --- |
 | Configured validators / outgoing peers | 32 each |
-| Request | 48 bytes |
+| Legacy request | 48 bytes |
+| Optional compact request | 8242 bytes before discovery framing |
 | Complete response / cache | 8 MiB |
 | Messages per response | 512 |
 | Encoded block | 1 MiB |
@@ -104,6 +105,8 @@ A block is a length-prefixed canonical block header, a `u32` transaction count, 
 | Structurally decoded transactions per block | 256 |
 | Accepted/produced transactions per reference-network block | 15 |
 | Pending response mailbox | 4 fully decoded exchanges |
+| Node execution mailbox | 4 exchanges, one active computation |
+| Messages processed per execution poll | 32 plus a completed job |
 | Concurrent inbound requests | Configured `max_peers` (daemon default 32) |
 | Accept work per loop iteration | 8 connections |
 
@@ -127,9 +130,9 @@ session limits and write deadlines remain unchanged.
 
 Tests compare live, finalized and empty responses for both node roles, preserve
 snapshots across transaction admission, and encode them on another thread after
-the nodes have been dropped. This is response-stage overlap only: compact-block
-propagation, a full block-stage pipeline and speculative consensus work remain
-unimplemented. No end-to-end throughput improvement is claimed.
+the nodes have been dropped. This specifically checks response-stage overlap;
+[compact propagation and detached execution](54-compact-blocks-and-execution-pipeline.md)
+have their own integration checks. No end-to-end throughput improvement is claimed.
 
 ### Incoming exchange preparation
 

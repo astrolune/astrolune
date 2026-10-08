@@ -134,6 +134,24 @@ impl Fixture {
         Self::with_profile(count, runtime_version, 1, usize::from(count))
     }
     fn with_profile(count: u8, runtime_version: u32, version: u16, committee_size: usize) -> Self {
+        Self::with_allocations(
+            count,
+            runtime_version,
+            version,
+            committee_size,
+            vec![Allocation {
+                address: address_from_public_key(&ed25519_public_key(&[99; 32])),
+                amount: 1_000_000,
+            }],
+        )
+    }
+    fn with_allocations(
+        count: u8,
+        runtime_version: u32,
+        version: u16,
+        committee_size: usize,
+        allocations: Vec<Allocation>,
+    ) -> Self {
         let path = std::env::temp_dir().join(format!(
             "astrolune-network-{}-{}",
             std::process::id(),
@@ -164,10 +182,7 @@ impl Fixture {
                 bandwidth: 1_000_000,
             },
             validators,
-            allocations: vec![Allocation {
-                address: address_from_public_key(&ed25519_public_key(&[99; 32])),
-                amount: 1_000_000,
-            }],
+            allocations,
         };
         let network = StaticNetwork::new(genesis.clone(), keys).unwrap();
         for index in 1..=count {
@@ -232,7 +247,11 @@ fn exchange(nodes: &mut [NetworkNode], now: Instant) {
 }
 
 fn transfer() -> Transaction {
-    let key = ed25519_public_key(&[99; 32]);
+    transfer_from(99)
+}
+
+fn transfer_from(seed: u8) -> Transaction {
+    let key = ed25519_public_key(&[seed; 32]);
     let sender = address_from_public_key(&key);
     let recipient = Address([77; 32]);
     let mut access_list = vec![state::account_key(sender), state::account_key(recipient)];
@@ -259,8 +278,245 @@ fn transfer() -> Transaction {
         signature: [0; 64],
     };
     tx.resource_limit = execution::payment_resources(&tx).unwrap();
-    tx.signature = ed25519_sign(&[99; 32], signing_hash(&tx).as_bytes());
+    tx.signature = ed25519_sign(&[seed; 32], signing_hash(&tx).as_bytes());
     tx
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn background_catchup_matches_serial_with_bounded_queued_exchanges() {
+    let source_fixture = Fixture::new(1);
+    let serial_fixture = Fixture::new(1);
+    let background_fixture = Fixture::new(1);
+    let mut source = source_fixture.open(1);
+    source.submit_transaction(transfer()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while source.request().height < 4 {
+        assert!(Instant::now() < deadline);
+        source.tick(Instant::now()).unwrap();
+    }
+    let mut serial = serial_fixture.open(1);
+    let mut background = background_fixture.open(1);
+    let mut serial_observer = ObserverNode::open(
+        serial_fixture.network.clone(),
+        &serial_fixture.path.join("observer"),
+    )
+    .unwrap();
+    let mut background_observer = ObserverNode::open(
+        background_fixture.network.clone(),
+        &background_fixture.path.join("observer"),
+    )
+    .unwrap();
+    background.enable_execution_pipeline().unwrap();
+    background_observer.enable_execution_pipeline().unwrap();
+    let initial = background.storage().checkpoint().copied();
+    let initial_root = background.storage().state().root();
+    let request = background.request();
+    for height in 1..=3 {
+        let bytes = source.respond(SyncRequest { height, ..request }).unwrap();
+        assert_eq!(serial.receive(&bytes).unwrap(), 0);
+        assert_eq!(serial_observer.receive(&bytes).unwrap(), 0);
+        assert_eq!(background.receive(&bytes).unwrap(), 0);
+        assert_eq!(background_observer.receive(&bytes).unwrap(), 0);
+    }
+    let mut pending = transfer();
+    pending.nonce = 1;
+    pending.signature = ed25519_sign(&[99; 32], signing_hash(&pending).as_bytes());
+    let pending =
+        encode_exchange(request.genesis, &[NetworkMessage::Transaction(pending)]).unwrap();
+    for node in [&mut serial, &mut background] {
+        assert_eq!(node.receive(&pending).unwrap(), 0);
+    }
+    for node in [&mut serial_observer, &mut background_observer] {
+        assert_eq!(node.receive(&pending).unwrap(), 0);
+    }
+    assert!(!background.can_receive());
+    assert!(!background_observer.can_receive());
+    assert!(background.receive(&pending).is_err());
+    assert!(background_observer.receive(&pending).is_err());
+    // The first poll starts execution; only a subsequent poll may publish it.
+    assert_eq!(background.poll_execution().unwrap(), 0);
+    assert_eq!(background_observer.poll_execution().unwrap(), 0);
+    assert_eq!(background.storage().checkpoint().copied(), initial);
+    assert_eq!(background_observer.storage().checkpoint().copied(), initial);
+    assert_eq!(background.storage().state().root(), initial_root);
+    assert_eq!(background_observer.storage().state().root(), initial_root);
+    assert_eq!(background.request(), request);
+    background.respond(request).unwrap();
+    background_observer.respond(request).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        assert!(Instant::now() < deadline, "queued catchup did not finish");
+        assert_eq!(background.poll_execution().unwrap(), 0);
+        assert_eq!(background_observer.poll_execution().unwrap(), 0);
+        if background.request().height == 4
+            && background_observer.request().height == 4
+            && background.respond(background.request()).unwrap()
+                == serial.respond(serial.request()).unwrap()
+            && background_observer
+                .respond(background_observer.request())
+                .unwrap()
+                == pending
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(background.can_receive());
+    assert!(background_observer.can_receive());
+    for checkpoint in [
+        background.storage().checkpoint(),
+        serial_observer.storage().checkpoint(),
+        background_observer.storage().checkpoint(),
+    ] {
+        assert_eq!(checkpoint, serial.storage().checkpoint());
+    }
+    for root in [
+        background.storage().state().root(),
+        serial_observer.storage().state().root(),
+        background_observer.storage().state().root(),
+    ] {
+        assert_eq!(root, serial.storage().state().root());
+    }
+    for height in 1..=3 {
+        let request = SyncRequest { height, ..request };
+        assert_eq!(
+            background.respond(request).unwrap(),
+            source.respond(request).unwrap()
+        );
+        assert_eq!(
+            background_observer.respond(request).unwrap(),
+            source.respond(request).unwrap()
+        );
+    }
+}
+
+#[test]
+fn background_production_keeps_captured_candidate_and_recovers_after_three_heights() {
+    let serial_fixture = Fixture::new(1);
+    let background_fixture = Fixture::new(1);
+    let mut serial = serial_fixture.open(1);
+    let mut background = background_fixture.open(1);
+    background.enable_execution_pipeline().unwrap();
+    // Start an empty candidate, then change admission while detached work owns its snapshot.
+    background.tick(Instant::now()).unwrap();
+    // The serial reference chooses the same empty first candidate before admission.
+    serial.tick(Instant::now()).unwrap();
+    serial.submit_transaction(transfer()).unwrap();
+    background.submit_transaction(transfer()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while serial.request().height < 4 || background.request().height < 4 {
+        assert!(
+            Instant::now() < deadline,
+            "background production did not finish"
+        );
+        if serial.request().height < 4 {
+            serial.tick(Instant::now()).unwrap();
+        }
+        if background.request().height < 4 {
+            assert_eq!(background.poll_execution().unwrap(), 0);
+            background.tick(Instant::now()).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        background.storage().checkpoint(),
+        serial.storage().checkpoint()
+    );
+    assert_eq!(
+        background.storage().state().root(),
+        serial.storage().state().root()
+    );
+    let (first, _) = background.storage().read_finalized(1).unwrap().unwrap();
+    assert!(first.transactions.is_empty());
+    let (second, _) = background.storage().read_finalized(2).unwrap().unwrap();
+    assert_eq!(second.transactions, vec![transfer()]);
+    let checkpoint = background.storage().checkpoint().copied();
+    drop(background);
+    let mut recovered = background_fixture.open(1);
+    assert_eq!(recovered.storage().checkpoint().copied(), checkpoint);
+    recovered.enable_execution_pipeline().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while recovered.request().height < 5 || serial.request().height < 5 {
+        assert!(
+            Instant::now() < deadline,
+            "recovered background production did not finish"
+        );
+        if recovered.request().height < 5 {
+            assert_eq!(recovered.poll_execution().unwrap(), 0);
+            recovered.tick(Instant::now()).unwrap();
+        }
+        if serial.request().height < 5 {
+            serial.tick(Instant::now()).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        recovered.storage().checkpoint(),
+        serial.storage().checkpoint()
+    );
+}
+
+#[test]
+fn background_production_progresses_during_continuous_admission() {
+    let mut allocations: Vec<_> = (100..=179)
+        .map(|seed| Allocation {
+            address: address_from_public_key(&ed25519_public_key(&[seed; 32])),
+            amount: 1_000_000,
+        })
+        .collect();
+    allocations.sort_by_key(|allocation| allocation.address);
+    let fixture = Fixture::with_allocations(1, 1, 1, 1, allocations);
+    let transactions: Vec<_> = (100..=179).map(transfer_from).collect();
+    let mut node = fixture.open(1);
+    node.enable_execution_pipeline().unwrap();
+    node.tick(Instant::now()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for tx in transactions {
+        assert!(
+            Instant::now() < deadline,
+            "production exceeded its deadline"
+        );
+        // Every collection observes a newer admission sequence than its captured job.
+        node.submit_transaction(tx).unwrap();
+        assert_eq!(node.poll_execution().unwrap(), 0);
+        node.tick(Instant::now()).unwrap();
+        if node.request().height > 1 {
+            let (first, _) = node.storage().read_finalized(1).unwrap().unwrap();
+            assert!(first.transactions.is_empty());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("each later admission postponed the captured candidate");
+}
+
+#[test]
+fn background_production_gets_a_turn_with_a_nonempty_receive_backlog() {
+    let fixture = Fixture::new(1);
+    let mut node = fixture.open(1);
+    node.enable_execution_pipeline().unwrap();
+    let packet = encode_exchange(
+        node.request().genesis,
+        &vec![NetworkMessage::Transaction(transfer()); 512],
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while node.request().height == 1 {
+        assert!(
+            Instant::now() < deadline,
+            "receive backlog starved production"
+        );
+        while node.can_receive() {
+            node.receive(&packet).unwrap();
+        }
+        // Refill faster than the bounded message budget can drain the mailbox.
+        node.poll_execution().unwrap();
+        node.tick(Instant::now()).unwrap();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let (first, _) = node.storage().read_finalized(1).unwrap().unwrap();
+    assert_eq!(first.transactions, vec![transfer()]);
 }
 
 #[test]

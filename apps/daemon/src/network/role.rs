@@ -56,15 +56,20 @@ impl PeerNode {
                 .map_err(io_error);
         }
         let seed = seed.ok_or_else(|| DaemonError::Config("validator seed required".into()))?;
-        // Open-only: selecting the voting role never provisions or recreates a journal.
-        let signer = keystore::DurableSigner::open(
-            options.config.data_dir.join("signing.journal"),
-            keystore::SigningContext {
-                chain_id: network.chain_id(),
-                genesis: network.genesis_hash(),
-            },
-            *seed,
-        )
+        let journal = options.config.data_dir.join("signing.journal");
+        let context = keystore::SigningContext {
+            chain_id: network.chain_id(),
+            genesis: network.genesis_hash(),
+        };
+        // Open-only: selecting the voting role never provisions or recreates a journal
+        // or an anchor. A separately provisioned anchor adds its rollback check; a
+        // journal behind that anchor is a restored older prefix and fails closed here.
+        let signer = match &options.signing_anchor {
+            Some(anchor) => {
+                keystore::DurableSigner::open_with_anchor(journal, context, *seed, anchor)
+            }
+            None => keystore::DurableSigner::open(journal, context, *seed),
+        }
         .map_err(io_error)?;
         drop(seed);
         NetworkNode::open(
@@ -99,6 +104,34 @@ impl PeerNode {
         match self {
             Self::Validator(node) => node.prepare_response(request),
             Self::Observer(node) => node.prepare_response(request),
+        }
+    }
+
+    pub(super) fn compact_dictionary(&self) -> node::compact_wire::TransactionDictionary {
+        match self {
+            Self::Validator(node) => node.compact_dictionary(),
+            Self::Observer(node) => node.compact_dictionary(),
+        }
+    }
+
+    pub(super) fn enable_execution_pipeline(&mut self) -> Result<(), NetworkNodeError> {
+        match self {
+            Self::Validator(node) => node.enable_execution_pipeline(),
+            Self::Observer(node) => node.enable_execution_pipeline(),
+        }
+    }
+
+    pub(super) fn can_receive(&self) -> bool {
+        match self {
+            Self::Validator(node) => node.can_receive(),
+            Self::Observer(node) => node.can_receive(),
+        }
+    }
+
+    pub(super) fn poll_execution(&mut self) -> Result<usize, NetworkNodeError> {
+        match self {
+            Self::Validator(node) => node.poll_execution(),
+            Self::Observer(node) => node.poll_execution(),
         }
     }
 

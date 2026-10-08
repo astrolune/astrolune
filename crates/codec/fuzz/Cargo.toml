@@ -118,3 +118,9 @@ name = "decode_extensions"
 path = "fuzz_targets/decode_extensions.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "execute_contract"
+path = "fuzz_targets/execute_contract.rs"
+test = false
+doc = false

@@ -5,7 +5,7 @@
 
 use crate::{
     ChainSigner, KeyHandle, KeyPurpose, KeystoreError, Signer, SigningContext, SigningPosition,
-    SigningSafety, journal::Journal,
+    SigningSafety, anchor::AnchorStore, journal::Journal,
 };
 use crypto::blake2s::{blake2s, ed25519_public_key, ed25519_sign};
 use std::path::Path;
@@ -15,8 +15,11 @@ use zeroize::Zeroizing;
 /// Single-key reference signer with non-exporting, zeroizing in-memory key material.
 ///
 /// The caller provisions the same raw Ed25519 seed and original journal on restart.
-/// No private key is stored in the journal. This is not encrypted key storage, an
-/// HSM, or protection against restoring an older valid journal or cloning a key.
+/// No private key is stored in the journal. This is not encrypted key storage or an
+/// HSM, and the journal alone cannot detect a restored older journal or a cloned key.
+/// Pair the journal with a separately provisioned [independent anchor](crate::anchor)
+/// through `open_with_anchor` to obtain the rollback check described there; an
+/// anchor-free signer keeps its original behavior and limits.
 pub struct DurableSigner {
     seed: Zeroizing<[u8; 32]>,
     public_key: [u8; 32],
@@ -24,6 +27,7 @@ pub struct DurableSigner {
     handle: KeyHandle,
     context: SigningContext,
     journal: Journal,
+    anchor: Option<AnchorStore>,
 }
 
 impl std::fmt::Debug for DurableSigner {
@@ -33,6 +37,7 @@ impl std::fmt::Debug for DurableSigner {
             .field("handle", &self.handle)
             .field("context", &self.context)
             .field("last_position", &self.last_position())
+            .field("anchored", &self.anchor.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -72,6 +77,89 @@ impl DurableSigner {
         seed: [u8; 32],
     ) -> Result<Self, KeystoreError> {
         Self::initialize(path.as_ref(), context, Zeroizing::new(seed), true, true)
+    }
+
+    /// Explicitly provisions a new independent anchor for an existing journal.
+    ///
+    /// The journal is opened, never created. The anchor path is intended to name
+    /// storage that cannot be restored together with the journal; this API cannot
+    /// verify that separation. Refuses to overwrite an existing anchor.
+    ///
+    /// # Errors
+    /// Missing or invalid journals, an existing anchor, locks, and failed writes fail closed.
+    pub fn create_anchor(
+        path: impl AsRef<Path>,
+        context: SigningContext,
+        seed: [u8; 32],
+        anchor: impl AsRef<Path>,
+    ) -> Result<Self, KeystoreError> {
+        let mut signer =
+            Self::initialize(path.as_ref(), context, Zeroizing::new(seed), false, false)?;
+        let store = AnchorStore::create(
+            anchor.as_ref(),
+            context,
+            signer.public_key,
+            signer.journal.identity(),
+            signer.journal.state(),
+        )?;
+        signer.anchor = Some(store);
+        Ok(signer)
+    }
+
+    /// Opens an existing journal together with its separately provisioned anchor.
+    ///
+    /// A journal behind the anchor is the restored-older-journal case and fails with
+    /// `StalePosition`. A journal exactly one decision ahead is the interrupted
+    /// anchor write; the anchor catches up durably before any signature is released.
+    ///
+    /// # Errors
+    /// Missing, corrupt, locked or mismatched journals and anchors fail closed.
+    pub fn open_with_anchor(
+        path: impl AsRef<Path>,
+        context: SigningContext,
+        seed: [u8; 32],
+        anchor: impl AsRef<Path>,
+    ) -> Result<Self, KeystoreError> {
+        let mut signer =
+            Self::initialize(path.as_ref(), context, Zeroizing::new(seed), false, false)?;
+        let mut store = AnchorStore::open(
+            anchor.as_ref(),
+            context,
+            signer.public_key,
+            signer.journal.identity(),
+        )?;
+        store.reconcile(signer.journal.state(), signer.journal.previous_state())?;
+        signer.anchor = Some(store);
+        Ok(signer)
+    }
+
+    /// Decision count durably witnessed by the independent anchor, when one is paired.
+    #[must_use]
+    pub fn anchor_sequence(&self) -> Option<u64> {
+        self.anchor.as_ref().map(|store| store.latest().sequence)
+    }
+
+    /// Journal origin commitment the paired anchor is bound to, when one is paired.
+    #[must_use]
+    pub fn anchor_journal_identity(&self) -> Option<Hash256> {
+        self.anchor.as_ref().map(AnchorStore::journal_identity)
+    }
+
+    fn witness(&mut self) -> Result<(), KeystoreError> {
+        let state = self.journal.state();
+        match self.anchor.as_mut() {
+            Some(store) => store.commit(state),
+            None => Ok(()),
+        }
+    }
+
+    // Refuse before the journal advances: a poisoned anchor cannot witness the
+    // decision, and the signature must not escape without a durable witness.
+    fn anchor_ready(&self) -> Result<(), KeystoreError> {
+        if self.anchor.as_ref().is_some_and(AnchorStore::is_poisoned) {
+            return Err(KeystoreError::DurabilityUnknown);
+        }
+        Ok(())
     }
 
     /// Generates a role-bound VRF proof without exporting secret material or reserving a vote.
@@ -202,6 +290,7 @@ impl DurableSigner {
             handle,
             context,
             journal,
+            anchor: None,
         })
     }
 
@@ -241,6 +330,7 @@ impl DurableSigner {
     /// # Errors
     /// Rejects raw journals, missing/invalid safety state, stale or conflicting slots,
     /// and failed writes. Lock rounds cannot regress or clear within a height.
+    /// A paired anchor must also witness the decision durably before signing.
     pub fn sign_protected(
         &mut self,
         handle: &KeyHandle,
@@ -249,7 +339,9 @@ impl DurableSigner {
         safety: SigningSafety,
     ) -> Result<[u8; 64], KeystoreError> {
         self.validator_id(handle)?;
+        self.anchor_ready()?;
         self.journal.reserve_protected(position, message, safety)?;
+        self.witness()?;
         Ok(ed25519_sign(&self.seed, &message.0))
     }
 }
@@ -272,7 +364,9 @@ impl Signer for DurableSigner {
         message: Hash256,
     ) -> Result<[u8; 64], KeystoreError> {
         self.validator_id(handle)?;
+        self.anchor_ready()?;
         self.journal.reserve(position, message)?;
+        self.witness()?;
         Ok(ed25519_sign(&self.seed, &message.0))
     }
 }

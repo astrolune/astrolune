@@ -10,7 +10,8 @@ use std::{ffi::OsString, fs::File, io::Read, path::Path};
 use crate::{
     CliError,
     handoffs::Trust,
-    wallet::{integer, read_raw_seed, read_seed, write_new},
+    vault::read_consensus_seed,
+    wallet::{integer, read_seed, write_new},
 };
 
 fn error(value: impl std::fmt::Display) -> CliError {
@@ -71,7 +72,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
                 return Err(error("output already exists"));
             }
             let (request, trust) = load(Path::new(genesis), Path::new(keys), Path::new(path))?;
-            let seed = read_raw_seed(Path::new(seed))?;
+            let seed = read_consensus_seed(Path::new(seed))?;
             let signer = DurableSigner::open(
                 Path::new(journal),
                 SigningContext {

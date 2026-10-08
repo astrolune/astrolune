@@ -9,9 +9,10 @@ use crate::{
     ConsensusError,
     rotation::{CommitteeState, MAX_ROTATION_VALIDATORS},
 };
-use crypto::blake2s::ed25519_verify;
+use crypto::DigestRequest;
 pub use keystore::governance::GovernanceIntent;
 pub use state::{GovernancePolicy, GovernanceState, NetworkParameters};
+use std::collections::BTreeMap;
 use types::{Hash256, ValidatorId};
 
 /// Explicit operator approval of a typed parameter request.
@@ -52,29 +53,42 @@ impl GovernanceApproval {
         self.voter
     }
 
-    fn verify(
+    fn credentials(
         &self,
         request: &GovernanceIntent,
-        current: &CommitteeState,
-    ) -> Result<u128, ConsensusError> {
+        context: &crate::AuthenticatedCommittee,
+        keys: &BTreeMap<ValidatorId, [u8; 32]>,
+    ) -> Result<(u128, DigestRequest), ConsensusError> {
         if self.request != request.id() {
             return Err(ConsensusError::InvalidTransition);
         }
-        let power = current
-            .context()?
+        let power = context
             .voting_power(self.voter)
             .ok_or(ConsensusError::UnknownVoter)?;
-        let key = current
-            .roster()
-            .iter()
-            .find(|member| ValidatorId(crypto::blake2s_hash(&member.public_key).0) == self.voter)
-            .ok_or(ConsensusError::UnknownVoter)?
-            .public_key;
-        if !ed25519_verify(&key, &request.approval_hash(self.voter).0, &self.signature) {
-            return Err(ConsensusError::InvalidProof);
-        }
-        Ok(power)
+        let public_key = *keys.get(&self.voter).ok_or(ConsensusError::UnknownVoter)?;
+        Ok((
+            power,
+            DigestRequest {
+                public_key,
+                digest: request.approval_hash(self.voter).0,
+                signature: self.signature,
+            },
+        ))
     }
+}
+
+/// Indexes the roster by derived identity, replacing a linear scan per approval.
+///
+/// A validated [`CommitteeState`] roster is strictly ordered by derived
+/// identity, so this map has exactly one entry per roster member and resolves
+/// the same key the scan it replaces would have found.
+fn roster_keys(current: &CommitteeState) -> BTreeMap<ValidatorId, [u8; 32]> {
+    let mut keys = BTreeMap::new();
+    for member in current.roster() {
+        keys.entry(ValidatorId(crypto::blake2s_hash(&member.public_key).0))
+            .or_insert(member.public_key);
+    }
+    keys
 }
 
 /// Strictly more than two thirds of current voting weight approving one exact update.
@@ -108,12 +122,39 @@ impl GovernanceCertificate {
         self.validate_shape()
             .map_err(|_| ConsensusError::InvalidCertificate)?;
         policy.verify_request(current, parent, &self.request)?;
-        let power = self.approvals.iter().try_fold(0u128, |power, approval| {
-            power
-                .checked_add(approval.verify(&self.request, current)?)
+        let context = current.context()?;
+        let keys = roster_keys(current);
+        // Hoist every cheap check, keeping its serial order, and stop at the
+        // first one that rejects. Only approvals below that position were
+        // reached serially, so they are exactly the signatures to decide as one
+        // batch. Reaching quorum never ends the loop.
+        let mut batch = Vec::with_capacity(self.approvals.len());
+        let mut weights = Vec::with_capacity(self.approvals.len());
+        let mut rejected = None;
+        for approval in &self.approvals {
+            match approval.credentials(&self.request, &context, &keys) {
+                Ok((power, request)) => {
+                    weights.push(power);
+                    batch.push(request);
+                }
+                Err(error) => {
+                    rejected = Some(error);
+                    break;
+                }
+            }
+        }
+        if crypto::batch::first_digest_failure(&batch).is_some() {
+            return Err(ConsensusError::InvalidProof);
+        }
+        if let Some(error) = rejected {
+            return Err(error);
+        }
+        let power = weights.into_iter().try_fold(0u128, |total, weight| {
+            total
+                .checked_add(weight)
                 .ok_or(ConsensusError::InvalidCertificate)
         })?;
-        if power < current.context()?.quorum() {
+        if power < context.quorum() {
             return Err(ConsensusError::InvalidCertificate);
         }
         Ok(())

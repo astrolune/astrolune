@@ -52,7 +52,7 @@ pub(crate) fn run(options: &Options) -> Result<(), DaemonError> {
         println!("[dry-run] network configuration valid; no files written or listeners opened.");
         return Ok(());
     }
-    let node = PeerNode::open(options, network.clone(), seed)?;
+    let mut node = PeerNode::open(options, network.clone(), seed)?;
     println!(
         "storage   : {}",
         if node.storage().is_legacy_archive() {
@@ -66,6 +66,7 @@ pub(crate) fn run(options: &Options) -> Result<(), DaemonError> {
         println!("Certified history and node-role recovery complete.");
         return Ok(());
     }
+    node.enable_execution_pipeline().map_err(io_error)?;
     let initial_height = node.request().height;
     let metrics = Arc::new(NodeMetrics::new(initial_height - 1, options.observer));
     let node = Arc::new(Mutex::new(node));
@@ -301,7 +302,13 @@ fn drive(
                 "finalized history read failed; storage recovery required",
             ));
         }
-        for exchange in receiver.try_iter().take(4) {
+        for _ in 0..4 {
+            if !node.can_receive() {
+                break;
+            }
+            let Ok(exchange) = receiver.try_recv() else {
+                break;
+            };
             match node.receive_prepared(exchange) {
                 Ok(rejected) => signals
                     .peers
@@ -313,6 +320,11 @@ fn drive(
                 Err(error) => return Err(io_error(error)),
             }
         }
+        let rejected = node.poll_execution().map_err(io_error)?;
+        signals
+            .peers
+            .metrics
+            .add(NodeMetric::RejectedMessages, rejected as u64);
         node.tick(Instant::now()).map_err(io_error)?;
         let height = node.request().height;
         if height != reported {

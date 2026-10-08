@@ -22,7 +22,7 @@ MAX_SAMPLES = 10_000
 HEIGHT = "astrolune_finalized_height"
 UPTIME = "astrolune_uptime_seconds"
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
-METRIC = re.compile(r"(astrolune_[a-z_]+) ([0-9]{1,20})\Z")
+METRIC = re.compile(r"(astrolune_[a-z][a-z0-9_]*) ([0-9]{1,20})\Z")
 
 
 def utc_now():
@@ -49,9 +49,7 @@ def endpoint(value):
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
-        or address.scope_id
-        if isinstance(address, ipaddress.IPv6Address)
-        else False
+        or (isinstance(address, ipaddress.IPv6Address) and address.scope_id)
     ):
         # Scoped IPv6 requires an interface binding outside this portable sampler.
         raise ValueError("endpoint requires plain HTTP, explicit port and /metrics only")
@@ -204,9 +202,11 @@ def summarize(samples, names):
             key=lambda row: row["observed_offset_seconds"],
         )
         good = [row for row in rows if row["ok"]]
-        resets, regressions, progress, elapsed = [], [], 0, 0.0
+        good_indices = [index for index, row in enumerate(rows) if row["ok"]]
+        resets, regressions, gaps, progress, elapsed = [], [], [], 0, 0.0
         counters = {}
-        for previous, current in zip(good, good[1:]):
+        for previous_index, current_index in zip(good_indices, good_indices[1:]):
+            previous, current = rows[previous_index], rows[current_index]
             before, after = previous["metrics"], current["metrics"]
             shared_counters = sorted(
                 key for key in before.keys() & after.keys() if key.endswith("_total")
@@ -224,7 +224,25 @@ def summarize(samples, names):
                 current["observed_offset_seconds"]
                 - previous["observed_offset_seconds"]
             )
-            if reset_keys or after[HEIGHT] < before[HEIGHT] or delta <= 0:
+            failed_between = current_index - previous_index - 1
+            # Round numbers also capture skipped slots when polling overruns.
+            missed_rounds = max(0, current.get("round", 0) - previous.get("round", 0) - 1)
+            if failed_between or missed_rounds:
+                gaps.append(
+                    {
+                        "observed_utc": current["observed_utc"],
+                        "elapsed_seconds": delta,
+                        "failed_polls": failed_between,
+                        "missing_rounds": missed_rounds,
+                    }
+                )
+            if (
+                reset_keys
+                or after[HEIGHT] < before[HEIGHT]
+                or delta <= 0
+                or failed_between
+                or missed_rounds
+            ):
                 continue
             progress += after[HEIGHT] - before[HEIGHT]
             elapsed += delta
@@ -247,6 +265,7 @@ def summarize(samples, names):
             "counter_deltas_between_comparable_samples": counters,
             "observed_reset_boundaries": resets,
             "height_regressions": regressions,
+            "excluded_gaps": gaps,
             "poll_duration_ms_all": quantiles([row["poll_duration_ms"] for row in rows]),
             "poll_duration_ms_successful": quantiles(
                 [row["poll_duration_ms"] for row in good]
@@ -320,7 +339,11 @@ def run(args):
     if not 1 <= len(targets) <= 32 or len(set(names)) != len(names):
         raise ValueError("supply 1..32 uniquely named endpoints")
     if (
-        args.duration > 3600
+        not all(
+            math.isfinite(value) and value > 0
+            for value in (args.duration, args.interval, args.timeout)
+        )
+        or args.duration > 3600
         or args.interval < 0.1
         or args.timeout > 10
         or not 1 <= args.workers <= 8
@@ -367,7 +390,7 @@ def run(args):
             "Metrics are process-local observations, not independently verified chain facts.",
             "Finalized progress includes catch-up; it is not transaction throughput.",
             "Polling duration quantiles measure HTTP sampling, not consensus latency.",
-            "Rates exclude intervals with observed counter/uptime decreases or height regressions.",
+            "Rates exclude observed counter/uptime decreases, height regressions, failed polls and missed rounds.",
             "Restarts without an observed decrease can be missed; gaps can hide activity and resets.",
             "Counters are not atomic snapshots; do not sum replicated node progress into network throughput.",
             "Revision and topology are operator-supplied; this sampler does not verify them.",
@@ -377,17 +400,18 @@ def run(args):
     samples = []
     started = time.monotonic()
     deadline = started + args.duration
-    next_round = started
+    round_number = 0
+    maximum_rounds = math.ceil(args.duration / args.interval)
     interrupted = False
     with (args.output / "samples.jsonl").open(
         "x", encoding="utf-8", newline="\n"
     ) as raw:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
             try:
-                while time.monotonic() < deadline:
-                    delay = next_round - time.monotonic()
+                while round_number < maximum_rounds and time.monotonic() < deadline:
+                    delay = started + round_number * args.interval - time.monotonic()
                     if delay > 0:
-                        time.sleep(min(delay, remaining(deadline)))
+                        time.sleep(min(delay, max(0, deadline - time.monotonic())))
                     if time.monotonic() >= deadline:
                         break
                     futures = [
@@ -396,6 +420,7 @@ def run(args):
                     ]
                     for future in concurrent.futures.as_completed(futures):
                         sample = future.result()
+                        sample["round"] = round_number
                         raw.write(
                             json.dumps(sample, sort_keys=True, allow_nan=False) + "\n"
                         )
@@ -407,12 +432,10 @@ def run(args):
                                 if key != "raw_metrics"
                             }
                         )
-                    next_round += args.interval
-                    now = time.monotonic()
-                    if next_round < now:
-                        next_round += (
-                            math.ceil((now - next_round) / args.interval) * args.interval
-                        )
+                    round_number = max(
+                        round_number + 1,
+                        math.ceil((time.monotonic() - started) / args.interval),
+                    )
             except KeyboardInterrupt:
                 interrupted = True
     report = {
@@ -423,7 +446,9 @@ def run(args):
         "nodes": summarize(samples, names),
     }
     write_json(args.output / "report.json", report)
-    return 130 if interrupted else (1 if any(not row["ok"] for row in samples) else 0)
+    return 130 if interrupted else (
+        1 if not samples or any(not row["ok"] for row in samples) else 0
+    )
 
 
 def main(argv=None):

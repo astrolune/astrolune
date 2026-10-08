@@ -28,18 +28,43 @@ impl PrevoteCertificate {
         if first.block.is_none() {
             return Err(ConsensusError::InvalidCertificate);
         }
-        let mut total = 0u128;
+        // The per-vote phase, round and block checks are cheap, so they run for
+        // the whole set first, in their serial order. The loop stops at the
+        // first rejection, which leaves exactly the signatures the serial path
+        // would have reached to be decided as one batch.
+        let mut batch = Vec::with_capacity(votes.len());
+        let mut weights = Vec::with_capacity(votes.len());
+        let mut rejected = None;
         for vote in &votes {
             if vote.phase != VotePhase::Prevote
                 || vote.round != first.round
                 || vote.block != first.block
             {
-                return Err(ConsensusError::InvalidCertificate);
+                rejected = Some(ConsensusError::InvalidCertificate);
+                break;
             }
-            total = total
-                .checked_add(context.verify_vote(vote)?)
-                .ok_or(ConsensusError::InvalidCertificate)?;
+            match context.vote_credentials(vote) {
+                Ok((power, request)) => {
+                    weights.push(power);
+                    batch.push(request);
+                }
+                Err(error) => {
+                    rejected = Some(error);
+                    break;
+                }
+            }
         }
+        if crypto::batch::first_digest_failure(&batch).is_some() {
+            return Err(ConsensusError::InvalidProof);
+        }
+        if let Some(error) = rejected {
+            return Err(error);
+        }
+        let total = weights.into_iter().try_fold(0u128, |total, power| {
+            total
+                .checked_add(power)
+                .ok_or(ConsensusError::InvalidCertificate)
+        })?;
         if total < context.quorum() {
             return Err(ConsensusError::InvalidCertificate);
         }

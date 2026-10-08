@@ -6,7 +6,7 @@
 use crate::{
     Committee, ConsensusError, FinalityCertificate, Proposal, Vote, VotePhase, quorum_power,
 };
-use crypto::{Blake2sProvider, CryptoProvider};
+use crypto::{Blake2sProvider, CryptoProvider, DigestRequest};
 use std::collections::{BTreeMap, BTreeSet};
 use types::{BlockHeader, Hash256, ValidatorId};
 
@@ -185,23 +185,49 @@ impl AuthenticatedCommittee {
 
     /// Verifies all signed context fields and returns this voter's trusted power.
     pub fn verify_vote(&self, vote: &Vote) -> Result<u128, ConsensusError> {
+        let (power, request) = self.vote_credentials(vote)?;
+        if !request.verify() {
+            return Err(ConsensusError::InvalidProof);
+        }
+        Ok(power)
+    }
+
+    /// Resolves the non-cryptographic part of [`Self::verify_vote`] in its exact order.
+    ///
+    /// Returns this voter's trusted power together with a fully prepared strict
+    /// verification request. A caller may run the cheap checks for an entire
+    /// certificate before deciding any signature, then batch the signatures,
+    /// and still report the error the serial order would have reported: a
+    /// rejection here always sits at a lower position than any signature
+    /// failure it stops the caller from reaching. A registered identity always
+    /// has a registered key, so the `InvalidProof` below is unreachable; it
+    /// mirrors what `verify_signature` returns for an unknown key.
+    pub(crate) fn vote_credentials(
+        &self,
+        vote: &Vote,
+    ) -> Result<(u128, DigestRequest), ConsensusError> {
         if vote.chain_id != self.chain_id
             || vote.height != self.height
             || vote.committee_root != self.root
         {
             return Err(ConsensusError::InvalidTransition);
         }
-        let power = self
+        let power = *self
             .powers
             .get(&vote.voter)
             .ok_or(ConsensusError::UnknownVoter)?;
-        if !self
+        let public_key = self
             .crypto
-            .verify_signature(vote.voter, &vote.signing_hash().0, &vote.signature)
-        {
-            return Err(ConsensusError::InvalidProof);
-        }
-        Ok(*power)
+            .registered_key(vote.voter)
+            .ok_or(ConsensusError::InvalidProof)?;
+        Ok((
+            power,
+            DigestRequest {
+                public_key,
+                digest: vote.signing_hash().0,
+                signature: vote.signature,
+            },
+        ))
     }
 
     /// Independently authenticates a canonical precommit quorum for this exact header.
@@ -223,7 +249,12 @@ impl AuthenticatedCommittee {
         {
             return Err(ConsensusError::InvalidCertificate);
         }
-        let mut total = 0u128;
+        // Hoist every cheap check, keeping its serial order, and stop at the
+        // first one that rejects. Only entries below that position were reached
+        // serially, so they are exactly the signatures to decide as one batch.
+        let mut batch = Vec::with_capacity(certificate.signatures.len());
+        let mut weights = Vec::with_capacity(certificate.signatures.len());
+        let mut rejected = None;
         for entry in &certificate.signatures {
             let vote = Vote {
                 chain_id: certificate.chain_id,
@@ -235,10 +266,28 @@ impl AuthenticatedCommittee {
                 voter: entry.voter,
                 signature: entry.signature,
             };
-            total = total
-                .checked_add(self.verify_vote(&vote)?)
-                .ok_or(ConsensusError::InvalidCertificate)?;
+            match self.vote_credentials(&vote) {
+                Ok((power, request)) => {
+                    weights.push(power);
+                    batch.push(request);
+                }
+                Err(error) => {
+                    rejected = Some(error);
+                    break;
+                }
+            }
         }
+        if crypto::batch::first_digest_failure(&batch).is_some() {
+            return Err(ConsensusError::InvalidProof);
+        }
+        if let Some(error) = rejected {
+            return Err(error);
+        }
+        let total = weights.into_iter().try_fold(0u128, |total, power| {
+            total
+                .checked_add(power)
+                .ok_or(ConsensusError::InvalidCertificate)
+        })?;
         if total < self.quorum() {
             return Err(ConsensusError::InvalidCertificate);
         }

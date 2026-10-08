@@ -23,6 +23,7 @@ pub const OBSERVER_MARKER: &str = "observer.mode";
 
 /// A non-voting full node with independent certified recovery and state-aware gossip.
 pub struct ObserverNode {
+    background: Option<crate::network_background::BackgroundExecution>,
     network: StaticNetwork,
     chain: RecoveredNetwork,
 }
@@ -84,7 +85,11 @@ impl ObserverNode {
             }
             Err(error) => return Err(local(error)),
         }
-        Ok(Self { network, chain })
+        Ok(Self {
+            network,
+            chain,
+            background: None,
+        })
     }
 
     /// Current committed state and archive. Pending transactions are never exposed as state.
@@ -113,12 +118,38 @@ impl ObserverNode {
             .map_err(Into::into)
     }
 
-    /// Serves already authenticated finalized blocks or bounded pending transactions.
+    /// Owns pending transactions for one compact exchange.
     ///
     /// The dictionary is separate from response selection and remains valid after pool changes.
     #[must_use]
     pub fn compact_dictionary(&self) -> crate::compact_wire::TransactionDictionary {
         crate::compact_wire::TransactionDictionary::new(self.chain.producer.pending_transactions())
+    }
+
+    /// Enables a single bounded execution worker with sequential publication.
+    pub fn enable_execution_pipeline(&mut self) -> Result<(), NetworkNodeError> {
+        if self.background.is_none() {
+            self.background = Some(crate::network_background::BackgroundExecution::new()?);
+        }
+        Ok(())
+    }
+
+    /// Whether another decoded exchange fits the bounded receive mailbox.
+    #[must_use]
+    pub fn can_receive(&self) -> bool {
+        self.background
+            .as_ref()
+            .is_none_or(crate::network_background::BackgroundExecution::can_receive)
+    }
+
+    /// Applies completed execution and a bounded part of the queued receive stream.
+    pub fn poll_execution(&mut self) -> Result<usize, NetworkNodeError> {
+        let Some(mut background) = self.background.take() else {
+            return Ok(0);
+        };
+        let result = background.drive(self);
+        self.background = Some(background);
+        result
     }
 
     /// Serves already authenticated finalized blocks or bounded pending transactions.
@@ -178,6 +209,10 @@ impl ObserverNode {
         exchange: PreparedExchange,
     ) -> Result<usize, NetworkNodeError> {
         let messages = exchange.into_messages(self.network.genesis_hash())?;
+        if let Some(background) = &mut self.background {
+            background.enqueue(messages)?;
+            return Ok(0);
+        }
         let mut rejected = 0;
         for message in messages {
             match self.receive_message(message) {
@@ -220,6 +255,27 @@ impl ObserverNode {
             | NetworkMessage::ValidValue { .. } => {}
         }
         Ok(())
+    }
+}
+
+impl crate::network_background::ExecutionHost for ObserverNode {
+    fn execution_position(&self) -> (u64, u32) {
+        (self.request().height, 0)
+    }
+
+    fn execution_producer(&self) -> &crate::BlockProducer {
+        &self.chain.producer
+    }
+
+    fn execution_block<'a>(&self, message: &'a NetworkMessage) -> Option<&'a types::Block> {
+        match message {
+            NetworkMessage::Finalized { block, .. } => Some(block),
+            _ => None,
+        }
+    }
+
+    fn process_message(&mut self, message: NetworkMessage) -> Result<(), NetworkNodeError> {
+        self.receive_message(message)
     }
 }
 

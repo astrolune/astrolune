@@ -6,7 +6,10 @@
 //! Every request is decided by the same [`ed25519_verify`] call used on the
 //! serial path. Workers only split independent requests across threads, so the
 //! accept/reject decision never depends on the worker count, the chunk layout
-//! or the host's available parallelism.
+//! or the host's available parallelism. [`first_failure`] additionally reports
+//! *which* request failed, combining chunk results with a minimum rather than a
+//! first-observed short circuit, so the reported index is also independent of
+//! the worker count and of thread scheduling.
 //!
 //! This is deliberately not Ed25519 batch verification in the cryptographic
 //! sense. The randomized batch equation is cofactored and would accept
@@ -52,37 +55,115 @@ impl SignatureRequest<'_> {
 /// verifying the remaining requests on the calling thread.
 #[must_use]
 pub fn verify_all(requests: &[SignatureRequest<'_>], workers: usize) -> bool {
+    first_failure(requests, workers).is_none()
+}
+
+/// Returns the lowest failing request index, or `None` when every request passes.
+///
+/// The result equals `requests.iter().position(|r| !r.verify())` for any
+/// `workers` value, including zero and values above [`MAX_VERIFY_WORKERS`].
+/// Chunk results are combined by taking the smaller index, never by returning
+/// the first failure a thread happens to report, so the reported index is the
+/// same for every worker count and every chunk layout. Call sites that must
+/// report a positioned rejection use this instead of [`verify_all`].
+///
+/// An empty request list has no failing index. Verification is pure, so a
+/// failed thread spawn falls back to the calling thread and is never itself a
+/// verification outcome. A panicking worker is reported as a failure at its
+/// chunk's first index, because a panic can never be evidence that its chunk
+/// verified. Every spawned worker is joined before this function returns.
+#[must_use]
+pub fn first_failure(requests: &[SignatureRequest<'_>], workers: usize) -> Option<usize> {
     let workers = workers.min(MAX_VERIFY_WORKERS).min(requests.len());
     if workers < 2 || requests.len() < MIN_PARALLEL_REQUESTS {
-        return requests.iter().all(SignatureRequest::verify);
+        return chunk_failure(requests, 0);
     }
     // Chunk length is at least one because workers never exceeds the request count.
     let chunk = requests.len().div_ceil(workers);
     std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
-        let mut pending: &[SignatureRequest<'_>] = &[];
+        let mut pending: (usize, &[SignatureRequest<'_>]) = (0, &[]);
         for (index, part) in requests.chunks(chunk).enumerate() {
+            let base = index * chunk;
             // Keep the first chunk on this thread instead of spawning for it.
             if index == 0 {
-                pending = part;
+                pending = (base, part);
                 continue;
             }
-            match std::thread::Builder::new().spawn_scoped(scope, move || {
-                part.iter().all(SignatureRequest::verify)
-            }) {
-                Ok(handle) => handles.push(handle),
+            match std::thread::Builder::new().spawn_scoped(scope, move || chunk_failure(part, base))
+            {
+                Ok(handle) => handles.push((base, handle)),
                 // Spawn failure is a host condition, never a verification outcome.
-                Err(_) => return requests.iter().all(SignatureRequest::verify),
+                Err(_) => return chunk_failure(requests, 0),
             }
         }
-        let mut valid = pending.iter().all(SignatureRequest::verify);
+        let mut failure = chunk_failure(pending.1, pending.0);
         // Join every worker before returning so no verification outlives the scope.
-        for handle in handles {
+        for (base, handle) in handles {
             // A panic in pure verification cannot be treated as success.
-            valid &= handle.join().unwrap_or(false);
+            failure = lower(failure, handle.join().unwrap_or(Some(base)));
         }
-        valid
+        failure
     })
+}
+
+/// Lowest failing index inside one chunk, reported in whole-slice coordinates.
+fn chunk_failure(requests: &[SignatureRequest<'_>], base: usize) -> Option<usize> {
+    requests
+        .iter()
+        .position(|request| !request.verify())
+        .map(|offset| base + offset)
+}
+
+/// Combines two chunk results by lowest index, making the join order irrelevant.
+fn lower(left: Option<usize>, right: Option<usize>) -> Option<usize> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(index), None) | (None, Some(index)) => Some(index),
+        (None, None) => None,
+    }
+}
+
+/// One independent strict verification over an owned 32-byte digest.
+///
+/// [`SignatureRequest`] only borrows, so a caller that computes its signed
+/// digests while hoisting cheap checks needs somewhere to keep them. This type
+/// owns that material; the decision is the same strict predicate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DigestRequest {
+    /// Candidate 32-byte Ed25519 public key; weak and non-canonical keys fail.
+    pub public_key: [u8; 32],
+    /// Exact 32-byte digest that was signed.
+    pub digest: [u8; 32],
+    /// Candidate 64-byte signature; malleable encodings fail.
+    pub signature: [u8; 64],
+}
+
+impl DigestRequest {
+    /// Decides this single request exactly as the serial path does.
+    #[must_use]
+    pub fn verify(&self) -> bool {
+        ed25519_verify(&self.public_key, &self.digest, &self.signature)
+    }
+}
+
+/// Returns the lowest failing index of an owned digest batch, or `None`.
+///
+/// Equivalent to borrowing each entry as a [`SignatureRequest`] and calling
+/// [`first_failure`] with [`suggested_workers`]. The worker count is chosen
+/// locally and never changes the result, so it is not a parameter here; the
+/// result equals `requests.iter().position(|r| !r.verify())`.
+#[must_use]
+pub fn first_digest_failure(requests: &[DigestRequest]) -> Option<usize> {
+    let borrowed: Vec<SignatureRequest<'_>> = requests
+        .iter()
+        .map(|request| SignatureRequest {
+            public_key: &request.public_key,
+            message: &request.digest,
+            signature: &request.signature,
+        })
+        .collect();
+    first_failure(&borrowed, suggested_workers(borrowed.len()))
 }
 
 /// Returns a bounded nonzero worker count for `requests` on this host.
@@ -117,7 +198,8 @@ mod tests {
             let mut messages = Vec::with_capacity(count);
             let mut signatures = Vec::with_capacity(count);
             for index in 0..count {
-                let secret = crate::blake2s::derive_key(&[index as u8; 32], "batch.test");
+                let seed = u8::try_from(index).expect("fixture count stays below 256");
+                let secret = crate::blake2s::derive_key(&[seed; 32], "batch.test");
                 let message = *crate::blake2s::blake2s(&index.to_le_bytes()).as_bytes();
                 keys.push(ed25519_public_key(&secret));
                 signatures.push(ed25519_sign(&secret, &message));
@@ -136,6 +218,16 @@ mod tests {
                     public_key: &self.keys[index],
                     message: &self.messages[index],
                     signature: &self.signatures[index],
+                })
+                .collect()
+        }
+
+        fn digests(&self) -> Vec<DigestRequest> {
+            (0..self.keys.len())
+                .map(|index| DigestRequest {
+                    public_key: self.keys[index],
+                    digest: self.messages[index],
+                    signature: self.signatures[index],
                 })
                 .collect()
         }
@@ -223,7 +315,7 @@ mod tests {
         assert_eq!(suggested_workers(MIN_PARALLEL_REQUESTS - 1), 1);
         for requests in [MIN_PARALLEL_REQUESTS, 64, 4096] {
             let workers = suggested_workers(requests);
-            assert!(workers >= 1 && workers <= MAX_VERIFY_WORKERS && workers <= requests);
+            assert!((1..=MAX_VERIFY_WORKERS).contains(&workers) && workers <= requests);
         }
     }
 
@@ -236,6 +328,106 @@ mod tests {
         requests[32].signature = &broken;
         for workers in [2, 3, 4, 8, 32] {
             assert!(!verify_all(&requests, workers), "workers {workers}");
+        }
+    }
+
+    #[test]
+    fn first_failure_reports_the_lowest_index_at_every_worker_count() {
+        let fixture = Fixture::new(17);
+        let broken = [0xAA; 64];
+        for position in 0..fixture.keys.len() {
+            let mut requests = fixture.requests();
+            requests[position].signature = &broken;
+            for workers in WORKER_COUNTS {
+                assert_eq!(
+                    first_failure(&requests, workers),
+                    Some(position),
+                    "position {position} workers {workers}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn first_failure_reports_the_lowest_of_several_failures_at_every_worker_count() {
+        let fixture = Fixture::new(10);
+        let forged = [0x11; 64];
+        let wrong_key = [0x22; 32];
+        // Every subset of the first six positions, so chunk boundaries at some
+        // worker count separate a higher failure from the lowest one.
+        for mask in 0..1u32 << 6 {
+            let mut requests = fixture.requests();
+            let mut expected = None;
+            for (index, request) in requests.iter_mut().enumerate().take(6) {
+                if (mask >> index) & 1 == 0 {
+                    continue;
+                }
+                if index % 2 == 0 {
+                    request.signature = &forged;
+                } else {
+                    request.public_key = &wrong_key;
+                }
+                expected = expected.or(Some(index));
+            }
+            let serial = requests.iter().position(|request| !request.verify());
+            assert_eq!(serial, expected, "mask {mask}");
+            for workers in WORKER_COUNTS {
+                assert_eq!(
+                    first_failure(&requests, workers),
+                    expected,
+                    "mask {mask} workers {workers}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn first_failure_and_verify_all_agree_on_mixed_batches() {
+        let fixture = Fixture::new(13);
+        let forged = [0x11; 64];
+        for mask in 0..16u32 {
+            let mut requests = fixture.requests();
+            for (index, request) in requests.iter_mut().enumerate() {
+                if (mask >> (index % 4)) & 1 == 1 && index % 3 == 0 {
+                    request.signature = &forged;
+                }
+            }
+            for workers in WORKER_COUNTS {
+                assert_eq!(
+                    first_failure(&requests, workers).is_none(),
+                    verify_all(&requests, workers),
+                    "mask {mask} workers {workers}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn first_failure_is_none_for_valid_and_empty_batches() {
+        let fixture = Fixture::new(17);
+        let requests = fixture.requests();
+        for workers in WORKER_COUNTS {
+            assert_eq!(first_failure(&requests, workers), None, "workers {workers}");
+            assert_eq!(first_failure(&[], workers), None, "workers {workers}");
+        }
+    }
+
+    #[test]
+    fn first_digest_failure_matches_the_serial_digest_scan() {
+        let fixture = Fixture::new(13);
+        let digests = fixture.digests();
+        assert_eq!(first_digest_failure(&digests), None);
+        assert_eq!(first_digest_failure(&[]), None);
+        for position in 0..digests.len() {
+            let mut corrupted = digests.clone();
+            corrupted[position].signature[0] ^= 1;
+            let serial = corrupted.iter().position(|request| !request.verify());
+            assert_eq!(serial, Some(position), "position {position}");
+            assert_eq!(
+                first_digest_failure(&corrupted),
+                serial,
+                "position {position}"
+            );
         }
     }
 }

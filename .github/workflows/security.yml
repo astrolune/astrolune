@@ -39,3 +39,25 @@ jobs:
           cargo +stable install cargo-audit --version 0.22.2 --locked
       - name: Audit dependencies
         run: cargo +stable audit
+      - name: Audit the workspace-excluded fuzz lockfile
+        run: cargo +stable audit --file crates/codec/fuzz/Cargo.lock
+
+  registry-advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - name: Bounded lookup regression tests
+        run: python -B -m unittest discover -s .github/scripts -p 'test_audit_dependencies.py' -v
+      - name: Verify the pinned snapshot still covers both lockfiles
+        run: python -B .github/scripts/audit-dependencies.py --offline
+      - name: Query OSV for every locked registry package
+        run: python -B .github/scripts/audit-dependencies.py --timeout 30 --max-requests 16
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-advisories
+          path: target/dependency-advisories.json

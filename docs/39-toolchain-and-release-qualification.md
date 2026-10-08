@@ -18,9 +18,16 @@ compiler-profile commitment; [old bundle handling](34-contract-source-packages.m
 All direct Cargo dependencies were checked against the crates.io stable releases;
 both workspace and standalone fuzz lock resolutions were refreshed. Upstream
 transitive requirements remain authoritative: forcing unrelated major versions
-through a dependency's API does not establish compatibility. An OSV query over
-all 132 registry packages in the workspace lockfile returned no known advisories
-on 2026-09-30. This is a database check, not an independent implementation audit.
+through a dependency's API does not establish compatibility. The 2026-09-30 OSV
+query over the workspace lockfile's 132 registry packages was manual and left no
+committed artifact. `.github/scripts/audit-dependencies.py` now performs that
+lookup reproducibly under an explicit request cap and timeout, covers the
+workspace-excluded fuzz lockfile as well, and distinguishes a live query from
+verification against its pinned snapshot; CI runs it from
+`.github/workflows/security.yml`. Measured counts, policy results and the
+per-dependency trust surface are recorded in
+[dependency and security review](51-dependency-and-security-review.md). A database
+check is not an independent implementation audit.
 
 ## Native artifacts
 
@@ -86,7 +93,9 @@ A new check of the official stable Rust manifest and both package registries fou
 Rust 1.99.0, `wat` 1.260.0, npm 12.2.0, Turbo 2.11.6, Next.js 16.3.8 and Node types
 26.6.4. Those versions are now pinned; Node itself remains 26.10.0. Both Cargo
 locks and the web lockfile were refreshed. The 132-package OSV query and npm audit
-returned no known vulnerabilities on this date.
+returned no known vulnerabilities on this date. Both were manual; the Cargo side is
+now reproduced by the committed script described above, while the npm audit has no
+committed automation.
 
 Rust 1.99 added strict Clippy diagnostics for empty-value assertions. Telemetry
 and test assertions now pass those gates. The atomic `try_update` rename remains

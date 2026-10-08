@@ -4,7 +4,7 @@
 
 ## 8.1 Current baseline
 
-As of 2026-10-07, this repository contains a Rust 2024 workspace with:
+As of 2026-10-08, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
@@ -111,8 +111,12 @@ daemon releases its node lock before encoding; [scope and byte-equivalence tests
 Incoming exchanges are decoded once in peer workers and retained in the bounded
 mailbox for processing against current node state; [scope and equivalence tests](19-reference-network.md#incoming-exchange-preparation).
 
-Compact-block propagation, a full block-stage pipeline and speculative work beyond execution
-waves still require separate reference-network protocol integration. Automatic
+Optional compact-block propagation, bounded detached execution, speculative local
+candidate preparation and next-height fetch are integrated with sequential voting
+and publication checks; [behavior and qualification](54-compact-blocks-and-execution-pipeline.md).
+Routine operations and reproducible metrics sampling have a [runbook](52-network-operations.md).
+Speculative execution/voting on uncommitted descendant state remains outside the
+reference profile. Automatic
 history retention is also unimplemented; the existing pinned export is an explicit
 offline operation with an independently retained checkpoint pin.
 

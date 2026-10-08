@@ -134,22 +134,30 @@ fn parse_address(value: &OsStr) -> Result<Address, CliError> {
 }
 
 pub(super) fn read_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>, CliError> {
-    let mut bytes = Zeroizing::new(Vec::with_capacity(keystore::vault::WALLET_VAULT_BYTES + 1));
+    use keystore::vault::{
+        CONSENSUS_VAULT_PURPOSE, WALLET_VAULT_BYTES, WALLET_VAULT_PURPOSE, decrypt_wallet_seed,
+        vault_purpose,
+    };
+    let mut bytes = Zeroizing::new(Vec::with_capacity(WALLET_VAULT_BYTES + 1));
     File::open(path)
         .map_err(error)?
-        .take(keystore::vault::WALLET_VAULT_BYTES as u64 + 1)
+        .take(WALLET_VAULT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(error)?;
-    if bytes.len() == keystore::vault::WALLET_VAULT_BYTES {
-        return keystore::vault::decrypt_wallet_seed(&bytes, &crate::vault::password()?)
-            .map_err(error);
+    match vault_purpose(&bytes) {
+        Some(WALLET_VAULT_PURPOSE) => {
+            decrypt_wallet_seed(&bytes, &crate::vault::password()?).map_err(error)
+        }
+        Some(CONSENSUS_VAULT_PURPOSE) => Err(error(
+            "this is a consensus vault; wallet commands require a wallet vault or raw seed",
+        )),
+        Some(_) => Err(error("unsupported vault purpose")),
+        None if bytes.starts_with(b"ALVAULT1") => Err(error("truncated or oversized wallet vault")),
+        None => Ok(Zeroizing::new(
+            <[u8; 32]>::try_from(bytes.as_slice())
+                .map_err(|_| error("expected a 32-byte raw seed or wallet vault"))?,
+        )),
     }
-    if bytes.starts_with(b"ALVAULT1") {
-        return Err(error("truncated or oversized wallet vault"));
-    }
-    let seed = <[u8; 32]>::try_from(bytes.as_slice())
-        .map_err(|_| error("expected a 32-byte raw seed or wallet vault"))?;
-    Ok(Zeroizing::new(seed))
 }
 
 pub(super) fn read_raw_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>, CliError> {

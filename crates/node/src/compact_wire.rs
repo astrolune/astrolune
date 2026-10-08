@@ -104,7 +104,9 @@ impl CompactRequest {
         let mut bytes = REQUEST_MAGIC.to_vec();
         bytes.extend_from_slice(self.sync.genesis.as_bytes());
         bytes.extend_from_slice(&self.sync.height.to_le_bytes());
-        bytes.extend_from_slice(&(self.known.len() as u16).to_le_bytes());
+        #[allow(clippy::cast_possible_truncation)] // Both constructors bound this to 256 ids.
+        let count = self.known.len() as u16;
+        bytes.extend_from_slice(&count.to_le_bytes());
         for id in &self.known {
             bytes.extend_from_slice(id.as_bytes());
         }
@@ -197,7 +199,8 @@ pub fn encode_response(
         let mut bytes = RESPONSE_MAGIC.to_vec();
         put_blob(&mut bytes, &skeleton)?;
         for transactions in bodies {
-            let count = u16::try_from(transactions.len()).map_err(|_| DecodeError::LimitExceeded)?;
+            let count =
+                u16::try_from(transactions.len()).map_err(|_| DecodeError::LimitExceeded)?;
             append(&mut bytes, &count.to_le_bytes())?;
             for transaction in transactions {
                 let id = crate::hash_transaction(&transaction);
@@ -221,8 +224,12 @@ pub fn encode_response(
 
 fn charge(block: &mut usize, exchange: &mut usize, length: usize) -> Result<(), DecodeError> {
     let length = length.checked_add(4).ok_or(DecodeError::LimitExceeded)?;
-    *block = block.checked_add(length).ok_or(DecodeError::LimitExceeded)?;
-    *exchange = exchange.checked_add(length).ok_or(DecodeError::LimitExceeded)?;
+    *block = block
+        .checked_add(length)
+        .ok_or(DecodeError::LimitExceeded)?;
+    *exchange = exchange
+        .checked_add(length)
+        .ok_or(DecodeError::LimitExceeded)?;
     if *block > MAX_BLOCK_BYTES || *exchange > MAX_EXCHANGE_BYTES {
         return Err(DecodeError::LimitExceeded);
     }
@@ -266,7 +273,10 @@ pub fn decode_response(
             let transaction = match reader.read_u8()? {
                 0 => {
                     let id = Hash256(reader.read_fixed()?);
-                    let known = dictionary.transactions.get(&id).ok_or(DecodeError::Unsupported)?;
+                    let known = dictionary
+                        .transactions
+                        .get(&id)
+                        .ok_or(DecodeError::Unsupported)?;
                     charge(&mut block_bytes, &mut exchange_bytes, known.encoded_len)?;
                     known.transaction.clone()
                 }

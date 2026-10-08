@@ -11,11 +11,13 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
 
+pub mod batch;
 pub mod blake2s;
 pub mod ed25519_provider;
 pub mod error;
 pub mod vrf;
 
+pub use batch::{DigestRequest, SignatureRequest, first_digest_failure};
 pub use blake2s::{Blake2sProvider, blake2s as blake2s_hash};
 pub use ed25519_provider::Ed25519Keystore;
 pub use error::CryptoError;

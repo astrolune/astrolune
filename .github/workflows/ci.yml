@@ -130,6 +130,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  fuzz:
+    name: Fuzz target compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: crates/codec/fuzz
+      - name: Compile-check the workspace-excluded fuzz package
+        run: cargo check --locked --manifest-path crates/codec/fuzz/Cargo.toml --all-targets
+
   workflows:
     name: Workflow validation
     runs-on: ubuntu-latest
@@ -147,7 +161,7 @@ jobs:
   quality:
     name: CI required checks
     if: ${{ always() }}
-    needs: [formatting, clippy, tests, docs, build, workflows]
+    needs: [formatting, clippy, tests, docs, build, fuzz, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -54,11 +54,16 @@ fixed routing: a closed connection is retried without changing protocol validity
 
 Outgoing failures use exponential backoff from 100 ms to five seconds, reset
 following a successful exchange. Success polls are spaced by 50 ms. There are
-at most 32 route workers, 32 incoming session slots and four queued snapshots;
-full mailboxes drop redundant snapshots for the next poll. Each driver iteration
-accepts at most eight connections and consumes at most four snapshots before its
-consensus step. Worker shutdown is bounded by current connect/packet deadlines.
+at most 32 route workers, 32 incoming session slots and four queued responses;
+full mailboxes drop redundant responses for the next poll. The node execution
+mailbox retains at most four additional exchanges. Each driver iteration accepts
+at most eight connections, transfers at most four responses into that mailbox
+when it has room, and processes up to 32 messages plus a completed execution job
+before its consensus step. Peer shutdown is bounded by current connect/packet
+deadlines; the execution worker joins its one current computation.
 These are local service policies, not consensus timing guarantees.
+Optional compact transport and bounded next-height fetching are described in
+the [execution pipeline specification](54-compact-blocks-and-execution-pipeline.md).
 
 ## Metrics and incident diagnosis
 

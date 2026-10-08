@@ -36,12 +36,26 @@ pub const MAX_ROLLOVER_JOURNAL_BYTES: u64 =
 pub(crate) struct Journal {
     file: File,
     count: u64,
+    identity: Hash256,
     tip: Hash256,
     last: Option<(SigningPosition, Hash256)>,
+    previous: Option<JournalState>,
     poisoned: bool,
     protected: bool,
     safety: Option<SigningSafety>,
     rollover: Option<Rollover>,
+}
+
+/// Observable watermark of one journal, independent of its storage layout.
+///
+/// `tip` is the chained record checksum; it stops advancing once a protected
+/// journal rolls over, where `sequence`, `position` and `message` still do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct JournalState {
+    pub(crate) sequence: u64,
+    pub(crate) position: Option<SigningPosition>,
+    pub(crate) message: Hash256,
+    pub(crate) tip: Hash256,
 }
 
 impl Drop for Journal {
@@ -204,7 +218,7 @@ fn validate_safety(
     Ok(())
 }
 
-fn canonical_path(path: &Path) -> Result<PathBuf, KeystoreError> {
+pub(crate) fn canonical_path(path: &Path) -> Result<PathBuf, KeystoreError> {
     let name = path.file_name().ok_or(KeystoreError::JournalFailure)?;
     let parent = path
         .parent()
@@ -219,7 +233,7 @@ fn canonical_path(path: &Path) -> Result<PathBuf, KeystoreError> {
     Ok(path)
 }
 
-fn lock(file: &File) -> Result<(), KeystoreError> {
+pub(crate) fn lock(file: &File) -> Result<(), KeystoreError> {
     file.try_lock().map_err(|error| match error {
         TryLockError::WouldBlock => KeystoreError::Locked,
         TryLockError::Error(_) => KeystoreError::JournalFailure,
@@ -229,7 +243,7 @@ fn lock(file: &File) -> Result<(), KeystoreError> {
 // Unix synchronizes the directory entry on create. Windows power-loss durability
 // depends on the filesystem; existing journal updates synchronize the same file.
 #[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
-fn sync_parent(path: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         File::open(path.parent().unwrap_or(Path::new(".")))?.sync_all()
@@ -287,8 +301,10 @@ impl Journal {
         Ok(Self {
             file,
             count: 0,
+            identity: domain_hash(HEADER_DOMAIN, &bytes[..76]),
             tip: domain_hash(HEADER_DOMAIN, &bytes[..76]),
             last: None,
+            previous: None,
             poisoned: false,
             protected,
             safety: None,
@@ -354,42 +370,16 @@ impl Journal {
         let mut journal = Self {
             file,
             count,
+            identity: checksum,
             tip: checksum,
             last: None,
+            previous: None,
             poisoned: false,
             protected,
             safety: None,
             rollover: None,
         };
-        for sequence in 1..=count {
-            let mut bytes = [0; PROTECTED_RECORD_BYTES];
-            journal
-                .file
-                .read_exact(&mut bytes[..record_size])
-                .map_err(|_| KeystoreError::InvalidJournal)?;
-            let (position, message, tip, safety) =
-                decode_entry(&bytes[..record_size], sequence, journal.tip, protected)?;
-            if let Some(next) = safety {
-                validate_safety(
-                    position,
-                    next,
-                    journal
-                        .last
-                        .zip(journal.safety)
-                        .map(|((position, _), safety)| (position, safety)),
-                )
-                .map_err(|_| KeystoreError::InvalidJournal)?;
-            }
-            if journal
-                .last
-                .is_some_and(|(previous, _)| position <= previous)
-            {
-                return Err(KeystoreError::InvalidJournal);
-            }
-            journal.safety = safety;
-            journal.last = Some((position, message));
-            journal.tip = tip;
-        }
+        journal.replay(count, record_size, protected)?;
         if rolled {
             journal.recover_rollover()?;
         }
@@ -404,6 +394,40 @@ impl Journal {
         Ok(journal)
     }
 
+    fn replay(
+        &mut self,
+        count: u64,
+        record_size: usize,
+        protected: bool,
+    ) -> Result<(), KeystoreError> {
+        for sequence in 1..=count {
+            let mut bytes = [0; PROTECTED_RECORD_BYTES];
+            self.file
+                .read_exact(&mut bytes[..record_size])
+                .map_err(|_| KeystoreError::InvalidJournal)?;
+            let (position, message, tip, safety) =
+                decode_entry(&bytes[..record_size], sequence, self.tip, protected)?;
+            if let Some(next) = safety {
+                validate_safety(
+                    position,
+                    next,
+                    self.last
+                        .zip(self.safety)
+                        .map(|((position, _), safety)| (position, safety)),
+                )
+                .map_err(|_| KeystoreError::InvalidJournal)?;
+            }
+            if self.last.is_some_and(|(previous, _)| position <= previous) {
+                return Err(KeystoreError::InvalidJournal);
+            }
+            self.previous = Some(self.state_at(sequence - 1));
+            self.safety = safety;
+            self.last = Some((position, message));
+            self.tip = tip;
+        }
+        Ok(())
+    }
+
     fn recover_rollover(&mut self) -> Result<(), KeystoreError> {
         let mut bytes = [0; rollover::EXTENSION_BYTES];
         self.file
@@ -411,11 +435,45 @@ impl Journal {
             .map_err(|_| KeystoreError::InvalidJournal)?;
         let rollover = Rollover::decode(self.tip, self.last, self.safety, &bytes)?;
         let latest = rollover.latest();
+        // Immediately after activation both slots repeat the prefix watermark, so the
+        // predecessor recovered while streaming the immutable prefix stays correct.
+        if let Some(older) = rollover.older() {
+            self.previous = Some(JournalState {
+                sequence: older.sequence,
+                position: Some(older.position),
+                message: older.message,
+                tip: self.tip,
+            });
+        }
         self.count = latest.sequence;
         self.last = Some((latest.position, latest.message));
         self.safety = Some(latest.safety);
         self.rollover = Some(rollover);
         Ok(())
+    }
+
+    pub(crate) const fn identity(&self) -> Hash256 {
+        self.identity
+    }
+
+    pub(crate) const fn state(&self) -> JournalState {
+        self.state_at(self.count)
+    }
+
+    const fn state_at(&self, sequence: u64) -> JournalState {
+        JournalState {
+            sequence,
+            position: self.last_position(),
+            message: match self.last {
+                Some((_, message)) => message,
+                None => Hash256::ZERO,
+            },
+            tip: self.tip,
+        }
+    }
+
+    pub(crate) const fn previous_state(&self) -> Option<JournalState> {
+        self.previous
     }
 
     pub(crate) const fn last_position(&self) -> Option<SigningPosition> {
@@ -578,10 +636,12 @@ impl Journal {
         // Any uncertain write poisons this instance. No signature can escape until
         // reopening validates the complete prefix and synchronizes it successfully.
         self.poisoned = true;
+        let snapshot = self.state();
         self.file
             .seek(SeekFrom::Start(offset))
             .map_err(|_| KeystoreError::DurabilityUnknown)?;
         persist(&mut self.file, &bytes).map_err(|_| KeystoreError::DurabilityUnknown)?;
+        self.previous = Some(snapshot);
         self.last = Some((position, message));
         self.safety = safety;
         if let Some((slot, _)) = update {

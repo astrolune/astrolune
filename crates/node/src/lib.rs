@@ -14,9 +14,11 @@ mod evidence;
 
 pub mod capacity;
 pub mod compact_wire;
+pub mod execution_pipeline;
 pub mod full_service;
 pub mod handoff;
 pub mod network;
+mod network_background;
 pub mod network_wire;
 pub mod observer;
 pub mod pipeline;

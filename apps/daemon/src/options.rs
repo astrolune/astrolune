@@ -24,6 +24,7 @@ Options:
   --checkpoint-id HASH  Independently trusted descriptor hash (required with --checkpoint)
   --validators PATH  Public keys file; enables certified fixed-committee networking
   --validator-key PATH  Raw 32-byte seed; requires an existing signing.journal
+  --signing-anchor PATH  Separately provisioned rollback anchor for that journal
   --observer        Verify and relay finalized blocks without a consensus key
   --tls-dir PATH    Network ca.der, cert.der and PKCS#8 key.der (required for peers)
   --allow-plaintext  Explicit insecure loopback-only development transport
@@ -46,6 +47,9 @@ pub(crate) enum Command {
     Run(Box<Options>),
 }
 
+// Independent operator switches, each explicitly validated below; grouping them
+// into sub-structures would not make an invalid combination unrepresentable.
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Options {
     pub config: NodeConfig,
     pub dry_run: bool,
@@ -55,6 +59,7 @@ pub(crate) struct Options {
     pub checkpoint: Option<PathBuf>,
     pub checkpoint_id: Option<types::Hash256>,
     pub validator_key: Option<PathBuf>,
+    pub signing_anchor: Option<PathBuf>,
     pub observer: bool,
     pub tls_dir: Option<PathBuf>,
     pub allow_plaintext: bool,
@@ -88,6 +93,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
         checkpoint: None,
         checkpoint_id: None,
         validator_key: None,
+        signing_anchor: None,
         observer: false,
         tls_dir: None,
         allow_plaintext: false,
@@ -122,7 +128,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             "--blocks" | "--data-dir" | "--genesis" | "--p2p-listen" | "--rpc-listen"
             | "--validators" | "--validator-key" | "--tls-dir" | "--peers"
             | "--round-timeout-ms" | "--discover-in" | "--metrics-listen" | "--checkpoint"
-            | "--checkpoint-id" => {
+            | "--checkpoint-id" | "--signing-anchor" => {
                 let value = args
                     .next()
                     .ok_or_else(|| invalid(&format!("missing value for {flag}")))?;
@@ -135,6 +141,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
                     "--genesis" => options.genesis = Some(PathBuf::from(value)),
                     "--validators" => options.validators = Some(PathBuf::from(value)),
                     "--validator-key" => options.validator_key = Some(PathBuf::from(value)),
+                    "--signing-anchor" => options.signing_anchor = Some(PathBuf::from(value)),
                     "--tls-dir" => options.tls_dir = Some(PathBuf::from(value)),
                     _ => parse_value(
                         &mut options,
@@ -167,6 +174,11 @@ fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), Da
     {
         return Err(invalid(
             "--checkpoint and --checkpoint-id require each other and --validators",
+        ));
+    }
+    if options.signing_anchor.is_some() && options.validator_key.is_none() {
+        return Err(invalid(
+            "--signing-anchor requires --validator-key and its existing journal",
         ));
     }
     if options
@@ -394,6 +406,64 @@ mod tests {
             parse(["--observer", "--validators", "keys", "--tls-dir", "tls"].map(OsString::from))
                 .is_err()
         );
+    }
+    #[test]
+    fn signing_anchor_requires_an_explicit_consensus_key_and_stays_optional() {
+        let base = [
+            "--validators",
+            "keys",
+            "--genesis",
+            "genesis",
+            "--tls-dir",
+            "tls",
+            "--validator-key",
+            "seed",
+        ];
+        // An anchor-free validator keeps its original open-only behavior.
+        let Ok(Command::Run(options)) = parse(base.map(OsString::from)) else {
+            panic!("validator options parse");
+        };
+        assert!(options.signing_anchor.is_none());
+
+        let anchored = ["--signing-anchor", "anchor.bin"];
+        let Ok(Command::Run(options)) =
+            parse(base.iter().chain(anchored.iter()).map(OsString::from))
+        else {
+            panic!("anchored validator options parse");
+        };
+        assert_eq!(
+            options.signing_anchor.as_deref(),
+            Some(std::path::Path::new("anchor.bin"))
+        );
+
+        // An anchor without a key names no journal, and an observer never signs.
+        for arguments in [
+            vec![
+                "--validators",
+                "keys",
+                "--genesis",
+                "genesis",
+                "--tls-dir",
+                "tls",
+                "--signing-anchor",
+                "anchor.bin",
+            ],
+            vec![
+                "--validators",
+                "keys",
+                "--genesis",
+                "genesis",
+                "--tls-dir",
+                "tls",
+                "--observer",
+                "--signing-anchor",
+                "anchor.bin",
+            ],
+            vec!["--signing-anchor", "anchor.bin"],
+        ] {
+            assert!(parse(arguments.iter().map(OsString::from)).is_err());
+        }
+        assert!(parse(base.iter().chain(["--signing-anchor"].iter()).map(OsString::from)).is_err());
     }
     #[test]
     fn discovery_and_metrics_need_explicit_scoped_network_configuration() {

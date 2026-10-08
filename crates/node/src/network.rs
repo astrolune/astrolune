@@ -86,6 +86,15 @@ pub struct PreparedExchange {
 }
 
 impl PreparedExchange {
+    /// A single finalized response may be followed by a bounded next-height request.
+    #[must_use]
+    pub fn finalized_height(&self) -> Option<u64> {
+        match self.messages.as_slice() {
+            [NetworkMessage::Finalized { block, .. }] => Some(block.header.height),
+            _ => None,
+        }
+    }
+
     /// Decodes a complete exchange with the reference codec's existing bounds.
     pub fn decode(genesis: Hash256, bytes: &[u8]) -> Result<Self, NetworkNodeError> {
         let messages = decode_exchange(genesis, bytes).map_err(input)?;
@@ -99,7 +108,8 @@ impl PreparedExchange {
         bytes: &[u8],
         known: &crate::compact_wire::TransactionDictionary,
     ) -> Result<Self, NetworkNodeError> {
-        let messages = crate::compact_wire::decode_response(genesis, bytes, known).map_err(input)?;
+        let messages =
+            crate::compact_wire::decode_response(genesis, bytes, known).map_err(input)?;
         Ok(Self { genesis, messages })
     }
 
@@ -114,6 +124,33 @@ impl PreparedExchange {
     }
 }
 
+impl crate::network_background::ExecutionHost for NetworkNode {
+    fn execution_position(&self) -> (u64, u32) {
+        (self.request().height, self.round())
+    }
+
+    fn execution_producer(&self) -> &BlockProducer {
+        self.producer()
+    }
+
+    fn execution_block<'a>(&self, message: &'a NetworkMessage) -> Option<&'a Block> {
+        match message {
+            NetworkMessage::Finalized { block, .. } => Some(block),
+            NetworkMessage::Proposal { block, .. }
+                if self.participant.is_some() && self.proposal.is_none() =>
+            {
+                Some(block)
+            }
+            NetworkMessage::ValidValue { block, .. } if self.participant.is_some() => Some(block),
+            _ => None,
+        }
+    }
+
+    fn process_message(&mut self, message: NetworkMessage) -> Result<(), NetworkNodeError> {
+        self.receive_message(message)
+    }
+}
+
 impl std::fmt::Display for NetworkNodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -124,7 +161,7 @@ impl std::fmt::Display for NetworkNodeError {
 impl std::error::Error for NetworkNodeError {}
 impl From<ProducerError> for NetworkNodeError {
     fn from(error: ProducerError) -> Self {
-        if matches!(error, ProducerError::Storage(_)) {
+        if matches!(error, ProducerError::Storage(_) | ProducerError::Worker(_)) {
             Self::Local(error.to_string())
         } else {
             Self::Input(error.to_string())
@@ -405,6 +442,7 @@ impl StaticNetwork {
 
 /// Network-driven participant. Only durable certificates advance its public checkpoint.
 pub struct NetworkNode {
+    background: Option<crate::network_background::BackgroundExecution>,
     admissions: BTreeMap<ValidatorId, consensus::admission::AdmissionCertificate>,
     governance: Option<consensus::governance::GovernanceCertificate>,
     inclusions: BTreeMap<ValidatorId, consensus::history::HistoricalEvidence>,
@@ -446,6 +484,7 @@ impl NetworkNode {
         let voter = signer.validator_id(&signer.key_handle()).map_err(local)?;
         let (participant, standby) = Self::bind_height(&network, producer, signer)?;
         let mut result = Self {
+            background: None,
             admissions: BTreeMap::new(),
             governance: None,
             inclusions: BTreeMap::new(),
@@ -506,6 +545,33 @@ impl NetworkNode {
     #[must_use]
     pub fn compact_dictionary(&self) -> crate::compact_wire::TransactionDictionary {
         crate::compact_wire::TransactionDictionary::new(self.producer().pending_transactions())
+    }
+
+    /// Enables a single bounded execution worker. All publication remains on this node.
+    pub fn enable_execution_pipeline(&mut self) -> Result<(), NetworkNodeError> {
+        if self.background.is_none() {
+            self.background = Some(crate::network_background::BackgroundExecution::new()?);
+        }
+        Ok(())
+    }
+
+    /// Whether another decoded exchange fits the node's bounded receive mailbox.
+    #[must_use]
+    pub fn can_receive(&self) -> bool {
+        self.background
+            .as_ref()
+            .is_none_or(crate::network_background::BackgroundExecution::can_receive)
+    }
+
+    /// Applies completed work and advances a bounded part of the queued receive stream.
+    /// Returns rejected message count; local publication failures remain fatal.
+    pub fn poll_execution(&mut self) -> Result<usize, NetworkNodeError> {
+        let Some(mut background) = self.background.take() else {
+            return Ok(0);
+        };
+        let result = background.drive(self);
+        self.background = Some(background);
+        result
     }
     /// Current round, useful for operator diagnostics and simulations.
     #[must_use]
@@ -621,6 +687,10 @@ impl NetworkNode {
         exchange: PreparedExchange,
     ) -> Result<usize, NetworkNodeError> {
         let messages = exchange.into_messages(self.network.hash)?;
+        if let Some(background) = &mut self.background {
+            background.enqueue(messages)?;
+            return Ok(0);
+        }
         let mut rejected = 0;
         for message in messages {
             match self.receive_message(message) {
@@ -896,6 +966,9 @@ impl NetworkNode {
             && self.participant().local().step() == VotingStep::AwaitingProposal
             && self.participant().proposer() == self.voter
         {
+            if self.background.is_some() && self.defer_proposal_execution()? {
+                return Ok(());
+            }
             let attempt = if let Some((block, proof)) = &self.valid {
                 if proof.round() < self.round() {
                     let proposal = self
@@ -928,6 +1001,37 @@ impl NetworkNode {
             }
         }
         Ok(())
+    }
+
+    fn defer_proposal_execution(&mut self) -> Result<bool, NetworkNodeError> {
+        let root = self.participant().local().committee().root();
+        let needs_job = match &self.valid {
+            Some((block, proof)) => {
+                proof.round() < self.round() && !self.producer().has_prepared_execution(block)
+            }
+            None => {
+                self.participant().local().locked().is_none()
+                    && !self.producer().has_prepared_production(root)
+            }
+        };
+        if !needs_job {
+            return Ok(false);
+        }
+        if self
+            .background
+            .as_ref()
+            .is_some_and(crate::network_background::BackgroundExecution::can_prepare_candidate)
+        {
+            let job = match &self.valid {
+                Some((block, _)) => self.producer().prepare_block_execution(block.clone()),
+                None => self.producer().prepare_block_production(root)?,
+            };
+            let position = (self.request().height, self.round());
+            if let Some(background) = &mut self.background {
+                background.prepare_candidate(position, job)?;
+            }
+        }
+        Ok(true)
     }
 
     fn advance_height(&mut self) -> Result<(), NetworkNodeError> {

@@ -7,6 +7,7 @@ use super::{
     DaemonError, IO_TIMEOUT, NetworkNodeError, Options, PeerNode, PeerTransport, Workers, io_error,
 };
 use node::{
+    compact_wire::{CompactRequest, MAX_COMPACT_REQUEST_BYTES},
     network::PreparedExchange,
     network_wire::{MAX_EXCHANGE_BYTES, SyncRequest},
 };
@@ -41,6 +42,7 @@ pub(super) struct PeerRuntime {
     node: Arc<Mutex<PeerNode>>,
     genesis: Hash256,
     discovery: bool,
+    compact_blocks: bool,
     pub(super) metrics: Arc<NodeMetrics>,
 }
 impl PeerRuntime {
@@ -67,6 +69,7 @@ impl PeerRuntime {
             node,
             genesis,
             discovery: options.discovery.is_some(),
+            compact_blocks: options.compact_blocks,
             metrics,
         })
     }
@@ -195,6 +198,8 @@ impl PeerRuntime {
     ) -> io::Result<()> {
         let mut session: Option<Session> = None;
         let mut backoff = 100_u64;
+        let mut compact = self.compact_blocks;
+        let mut next_height = None;
         while !self.stop.load(Ordering::Acquire) && self.directory()?.addresses().contains(&address)
         {
             if session.as_ref().is_some_and(|value| {
@@ -202,7 +207,8 @@ impl PeerRuntime {
             }) {
                 session = None;
             }
-            let result = self.exchange(address, &mut session);
+            let result =
+                self.exchange_with_fallback(address, &mut session, &mut compact, next_height);
             {
                 let mut directory = self.directory()?;
                 directory.result(address, result.is_ok());
@@ -211,8 +217,14 @@ impl PeerRuntime {
             }
             if let Ok(exchange) = result {
                 self.metrics.add(NodeMetric::Exchanges, 1);
+                let finalized = exchange.finalized_height();
+                if finalized.is_none() {
+                    next_height = None;
+                }
                 match sender.try_send(exchange) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        next_height = finalized.and_then(|height| height.checked_add(1));
+                    }
                     Err(mpsc::TrySendError::Full(_)) => self.metrics.add(NodeMetric::QueueDrops, 1),
                     Err(mpsc::TrySendError::Disconnected(_)) => break,
                 }
@@ -230,6 +242,8 @@ impl PeerRuntime {
         &self,
         address: SocketAddr,
         session: &mut Option<Session>,
+        compact: bool,
+        next_height: Option<u64>,
     ) -> io::Result<PreparedExchange> {
         if session.is_none() {
             let connect = || {
@@ -247,17 +261,35 @@ impl PeerRuntime {
                 metrics: self.metrics.clone(),
             });
         }
-        let request = self
-            .node
-            .lock()
-            .map_err(|_| io::Error::other("node lock poisoned"))?
-            .request();
-        let framed = self.frame(&request.encode(), 48)?;
+        let (request, dictionary) = {
+            let node = self
+                .node
+                .lock()
+                .map_err(|_| io::Error::other("node lock poisoned"))?;
+            let mut request = node.request();
+            request.height = poll_height(request.height, next_height);
+            (request, compact.then(|| node.compact_dictionary()))
+        };
+        let maximum = if compact {
+            MAX_COMPACT_REQUEST_BYTES
+        } else {
+            48
+        };
+        let payload = dictionary.as_ref().map_or_else(
+            || request.encode().to_vec(),
+            |known| CompactRequest::new(request, known).encode(),
+        );
+        let framed = self.frame(&payload, maximum)?;
         let session = session
             .as_mut()
             .ok_or_else(|| io::Error::other("missing peer session"))?;
         let mut exchange = || {
-            write_packet(&mut session.stream, &framed, self.limit(48), IO_TIMEOUT)?;
+            write_packet(
+                &mut session.stream,
+                &framed,
+                self.limit(maximum),
+                IO_TIMEOUT,
+            )?;
             let bytes = read_packet(
                 &mut session.stream,
                 self.limit(MAX_EXCHANGE_BYTES),
@@ -266,12 +298,34 @@ impl PeerRuntime {
             let (hints, payload) = self.unpack(&bytes, MAX_EXCHANGE_BYTES)?;
             // Retain the complete decode for the node loop instead of decoding again
             // under its mutex. Message validation still runs against current node state.
-            let prepared = PreparedExchange::decode(self.genesis, payload).map_err(invalid)?;
+            let prepared = match &dictionary {
+                Some(known) => PreparedExchange::decode_compact(self.genesis, payload, known),
+                None => PreparedExchange::decode(self.genesis, payload),
+            }
+            .map_err(invalid)?;
             self.learn(&hints)?;
             session.count += 1;
             Ok(prepared)
         };
         exchange().inspect_err(|_| self.metrics.add(NodeMetric::ExchangeFailures, 1))
+    }
+    fn exchange_with_fallback(
+        &self,
+        address: SocketAddr,
+        session: &mut Option<Session>,
+        compact: &mut bool,
+        next_height: Option<u64>,
+    ) -> io::Result<PreparedExchange> {
+        let result = self.exchange(address, session, *compact, next_height);
+        if result.is_err() && *compact && session.is_some() {
+            // A legacy peer can reject the new request, or reconstruction can fail.
+            // Start a fresh stream and keep the legacy preference for this polling
+            // worker, including session rotations, to avoid repeated failed probes.
+            *compact = false;
+            *session = None;
+            return self.exchange(address, session, false, next_height);
+        }
+        result
     }
     pub(super) fn serve(
         &self,
@@ -288,15 +342,27 @@ impl PeerRuntime {
             if timeout.is_zero() {
                 break;
             }
-            let bytes = read_packet(&mut stream, self.limit(48), timeout).map_err(io_error)?;
+            let bytes = read_packet(&mut stream, self.limit(MAX_COMPACT_REQUEST_BYTES), timeout)
+                .map_err(io_error)?;
             // Discovery-enabled nodes also serve old fixed-profile peers without learning routes.
-            let (hints, payload, wrapped) = if bytes.len() == 48 {
-                (Vec::new(), bytes.as_slice(), false)
+            let (hints, payload, wrapped) =
+                if bytes.len() == 48 || bytes.starts_with(b"ALCQ\x01\0\0\0") {
+                    (Vec::new(), bytes.as_slice(), false)
+                } else {
+                    let (hints, payload) = self
+                        .unpack(&bytes, MAX_COMPACT_REQUEST_BYTES)
+                        .map_err(io_error)?;
+                    (hints, payload, true)
+                };
+            let compact = if payload.len() == 48 {
+                None
             } else {
-                let (hints, payload) = self.unpack(&bytes, 48).map_err(io_error)?;
-                (hints, payload, true)
+                Some(CompactRequest::decode(payload).map_err(io_error)?)
             };
-            let request = SyncRequest::decode(payload).map_err(io_error)?;
+            let request = compact.as_ref().map_or_else(
+                || SyncRequest::decode(payload).map_err(io_error),
+                |request| Ok(request.sync()),
+            )?;
             let prepared = {
                 let node = self
                     .node
@@ -307,9 +373,11 @@ impl PeerRuntime {
             };
             // The response owns its messages. Encoding no longer holds up node
             // ticks, received messages or RPC operations behind the node mutex.
-            let response = prepared
-                .encode()
-                .map_err(|error| self.response_error(storage_failed, error))?;
+            let response = match compact {
+                Some(request) => prepared.encode_compact(request.known()),
+                None => prepared.encode(),
+            }
+            .map_err(|error| self.response_error(storage_failed, error))?;
             self.learn(&hints).map_err(io_error)?;
             let response = if wrapped {
                 self.frame(&response, MAX_EXCHANGE_BYTES)
@@ -344,6 +412,12 @@ impl PeerRuntime {
 fn invalid(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
+
+fn poll_height(committed_next: u64, speculative_next: Option<u64>) -> u64 {
+    speculative_next
+        .filter(|height| *height >= committed_next && *height <= committed_next.saturating_add(4))
+        .unwrap_or(committed_next)
+}
 struct Session {
     stream: PeerStream,
     started: Instant,
@@ -355,3 +429,6 @@ impl Drop for Session {
         self.metrics.subtract(NodeMetric::OutgoingSessions, 1);
     }
 }
+
+#[cfg(test)]
+mod tests;

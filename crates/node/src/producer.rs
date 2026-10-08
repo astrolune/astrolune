@@ -13,13 +13,16 @@
 //!              -> atomic finalized storage
 //! ```
 
-mod potb;
 mod pipeline;
+mod potb;
 mod rotation;
 
 pub(crate) use pipeline::VerifiedExecution;
 
-use std::{collections::BTreeMap, sync::{Arc, Mutex}};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use execution::{
     ExecutionError, ExecutionPolicy, ExecutorConfig, SignedSession, SimpleExecutor,
@@ -98,6 +101,8 @@ pub enum ProducerError {
     Storage(StorageError),
     /// Block assembly failed due to node constraints.
     Assembly(String),
+    /// Background execution infrastructure failed locally.
+    Worker(String),
 }
 
 impl std::fmt::Display for ProducerError {
@@ -108,6 +113,7 @@ impl std::fmt::Display for ProducerError {
             Self::Mempool(e) => write!(f, "mempool error: {e}"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
             Self::Assembly(msg) => write!(f, "assembly error: {msg}"),
+            Self::Worker(msg) => write!(f, "execution worker error: {msg}"),
         }
     }
 }
@@ -272,6 +278,7 @@ impl BlockProducer {
             contributions: None,
             potb: None,
             potb_batch: None,
+            verified_execution: Mutex::new(None),
         }
     }
 
@@ -478,6 +485,9 @@ impl BlockProducer {
             return Err(consensus::ConsensusError::InvalidTransition.into());
         }
         self.check_rotation_committee(committee.root())?;
+        if let Some(proposal) = self.verified_production(committee.root()) {
+            return Ok(proposal);
+        }
         let mut proposal = self.produce_block()?;
         proposal.block.header.committee_root = committee.root();
         Ok(proposal)
@@ -681,7 +691,11 @@ impl BlockProducer {
             state_root,
             resources_used,
         };
-        let diffs = proposal.outputs.iter().map(|output| output.diff.clone()).collect();
+        let diffs = proposal
+            .outputs
+            .iter()
+            .map(|output| output.diff.clone())
+            .collect();
         self.remember_execution(&proposal, &staged, diffs);
         Ok(proposal)
     }

@@ -1,7 +1,11 @@
 # Copyright (c) 2026 Ankerin
 # SPDX-License-Identifier: MIT
 
-"""Deterministically package native binaries; no signing or publication occurs."""
+"""Deterministically package native binaries and emit a signable release manifest.
+
+No signing, key handling or publication occurs here. Signing is a separate
+operator step over ``MANIFEST.json`` using an operator-supplied authority key.
+"""
 
 import argparse
 import gzip
@@ -16,6 +20,7 @@ import tempfile
 
 TARGETS = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
 BINARIES = ("cargo-contract", "cli", "daemon", "dns")
+SIGNATURE_NAME = "MANIFEST.json.sig"
 
 
 def package(
@@ -27,6 +32,7 @@ def package(
     compiler,
     epoch=0,
     qualification=None,
+    release=False,
 ):
     """Equal file bytes and explicit build identity produce equal archive bytes."""
     if target not in TARGETS:
@@ -69,7 +75,7 @@ def package(
         "rustc": compiler.strip(),
         "profile": "release",
         "features": "all",
-        "release": False,
+        "release": bool(release),
         "source_date_epoch": epoch,
         "files": {
             name: hashlib.sha256(data).hexdigest()
@@ -109,6 +115,16 @@ def package(
     (output / "SHA256SUMS").write_text(
         f"{digest}  {archive.name}\n", encoding="utf-8", newline="\n"
     )
+    # The signable manifest repeats the in-archive provenance record and adds the
+    # archive digest, so one detached signature commits to the archive bytes and,
+    # through "files", to every packaged file. Its bytes are a function of the
+    # inputs alone; equal inputs produce an equal manifest and an equal signature.
+    manifest = dict(metadata, archive=archive.name, archive_sha256=digest)
+    (output / "MANIFEST.json").write_text(
+        json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     return archive
 
 
@@ -123,6 +139,11 @@ def main():
         type=Path,
         default=Path("target/native-reproducibility.json"),
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="record a release-intent manifest; publication stays a separate step",
+    )
     options = parser.parse_args()
     if options.revision is None:
         parser.error("pass --revision or set GITHUB_SHA")
@@ -136,7 +157,9 @@ def main():
         qualification["rustc"],
         int(os.environ.get("SOURCE_DATE_EPOCH", "0")),
         qualification,
+        options.release,
     )
+    print(f"sign {options.output / 'MANIFEST.json'} -> {options.output / SIGNATURE_NAME}")
 
 
 if __name__ == "__main__":

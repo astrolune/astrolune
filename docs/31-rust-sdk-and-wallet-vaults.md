@@ -50,7 +50,7 @@ The exact 144-byte file is:
 | Bytes | Meaning |
 | --- | --- |
 | 0..8 | ASCII `ALVAULT1` |
-| 8..12 | wallet purpose 1, algorithm profile 1, two zero reserved bytes |
+| 8..12 | purpose (wallet 1, consensus 2), algorithm profile 1, two zero reserved bytes |
 | 12..24 | memory KiB, passes, lanes as three little-endian u32 values |
 | 24..40 | salt |
 | 40..64 | extended nonce |
@@ -80,9 +80,35 @@ identity, payment and contract-signing commands accept either a raw 32-byte seed
 or a vault; vault input triggers password reading from stdin. There is no plaintext
 export command. Files are created with mode 0600 on Unix; Windows uses the parent
 directory's ACL. Keep backups of vault and password separately. This protects keys
-at rest; it does not provide hardware isolation or prevent rollback of consensus
-journals. Consensus/VRF provisioning continues to use its separate raw-key workflow.
+at rest; it does not provide hardware isolation.
+
+## Consensus vault v1
+
+Consensus and VRF seeds use the identical layout, fixed Argon2id/XChaCha20-Poly1305
+profile, parameter validation, public-key check and zeroization, distinguished only
+by purpose byte 2. The purpose byte is authenticated and checked before key
+derivation, so `decrypt_wallet_seed` rejects a consensus vault and
+`decrypt_consensus_seed` rejects a wallet vault without performing any work.
+`vault_purpose` reports the declared purpose without a password. `WALLET_VAULT_BYTES`
+and the wallet functions stay byte-compatible with vault v1, and the frozen
+`wallet-v1.bin` fixture still decrypts.
+
+```text
+cli consensus-vault-create <new-vault>
+cli consensus-vault-encrypt <raw-seed-file> <new-vault>
+```
+
+`init-validator`, `admission-approve`, `governance-approve` and `vrf-prove` accept
+either a raw 32-byte seed or a consensus vault, so consensus provisioning no longer
+requires a plaintext seed file on disk. Journal rollback is a separate concern
+addressed by the opt-in
+[independent signing anchor](53-key-custody-and-release-authority.md); an encrypted
+seed alone does not stop its holder from provisioning a second journal. Hardware
+isolation, a non-exporting signing device, threshold or multi-party custody, key
+rotation and protection for a seed already in process memory remain open.
 
 Tests cover random salts/nonces, valid unlock, all header parameter bytes, wrong
 passwords, authenticated-field changes, all truncated lengths, oversized input,
-real CLI unlock/signing equivalence, non-overwrite behavior and secret-free output.
+both cross-purpose rejections, real CLI unlock/signing equivalence, consensus
+provisioning that matches the raw-seed journal byte for byte, non-overwrite
+behavior and secret-free output.

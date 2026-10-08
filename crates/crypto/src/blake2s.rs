@@ -89,6 +89,18 @@ impl Blake2sProvider {
         self.keys.insert(id, key);
         Ok(id)
     }
+
+    /// Returns the canonical registered public key of a validator, if registered.
+    ///
+    /// Registration already rejected malformed, weak and non-canonically encoded
+    /// keys, so for a registered identity
+    /// `ed25519_verify(&registered_key(id).unwrap(), message, signature)` decides
+    /// exactly as [`CryptoProvider::verify_signature`] does. Callers that batch
+    /// independent verifications use this to obtain the key bytes.
+    #[must_use]
+    pub fn registered_key(&self, validator: ValidatorId) -> Option<[u8; 32]> {
+        self.keys.get(&validator).map(VerifyingKey::to_bytes)
+    }
 }
 
 impl crate::CryptoProvider for Blake2sProvider {
@@ -209,5 +221,26 @@ mod tests {
         let sig1 = ed25519_sign(&[1u8; 32], msg);
         let sig2 = ed25519_sign(&[2u8; 32], msg);
         assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn registered_key_round_trips_and_decides_like_the_provider() {
+        use crate::CryptoProvider;
+        let mut provider = Blake2sProvider::new();
+        let public = ed25519_public_key(&[9u8; 32]);
+        let id = provider.register_validator(public).expect("strong key");
+        assert_eq!(provider.registered_key(id), Some(public));
+        assert_eq!(provider.registered_key(ValidatorId::ZERO), None);
+        let signature = ed25519_sign(&[9u8; 32], b"vote");
+        for (message, candidate) in [
+            (&b"vote"[..], signature),
+            (&b"vote"[..], [0xFF; 64]),
+            (&b"other"[..], signature),
+        ] {
+            assert_eq!(
+                ed25519_verify(&public, message, &candidate),
+                provider.verify_signature(id, message, &candidate)
+            );
+        }
     }
 }

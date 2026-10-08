@@ -155,6 +155,65 @@ class PackageTests(unittest.TestCase):
                         )
                     self.assertFalse((root / "output").exists())
 
+    def test_signable_manifest_commits_to_the_archive_and_every_packaged_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binaries = root / "bin"
+            binaries.mkdir()
+            for name in PACKAGER.BINARIES:
+                (binaries / name).write_bytes(b"native-test-input:" + name.encode())
+            for name in ("LICENSE", "README.md", "Cargo.lock", "rust-toolchain.toml"):
+                (root / name).write_bytes(name.encode())
+            identity = (PACKAGER.TARGETS[0], "b" * 40, "rustc fixture\n")
+            archive = PACKAGER.package(root, binaries, root / "first", *identity)
+            output = archive.parent
+            manifest = json.loads((output / "MANIFEST.json").read_bytes())
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertEqual(manifest["archive"], archive.name)
+            self.assertEqual(manifest["archive_sha256"], digest)
+            self.assertFalse(manifest["release"])
+            self.assertEqual((output / "SHA256SUMS").read_text(), f"{digest}  {archive.name}\n")
+            with tarfile.open(archive) as bundle:
+                build = json.load(bundle.extractfile("BUILD.json"))
+                for member in bundle.getmembers():
+                    if member.name != "BUILD.json":
+                        self.assertEqual(
+                            hashlib.sha256(bundle.extractfile(member).read()).hexdigest(),
+                            manifest["files"][member.name],
+                        )
+            # The manifest adds exactly the archive binding to the in-archive record.
+            self.assertEqual(
+                {k: v for k, v in manifest.items() if k not in ("archive", "archive_sha256")},
+                build,
+            )
+            # Manifest bytes are a deterministic function of the inputs alone, so a
+            # reproduced build yields an identical manifest and an identical signature.
+            repeated = PACKAGER.package(root, binaries, root / "second", *identity)
+            self.assertEqual(
+                (output / "MANIFEST.json").read_bytes(),
+                (repeated.parent / "MANIFEST.json").read_bytes(),
+            )
+            # Only the explicit flag records release intent; nothing is published.
+            flagged = PACKAGER.package(
+                root, binaries, root / "third", *identity, release=True
+            )
+            marked = json.loads((flagged.parent / "MANIFEST.json").read_bytes())
+            self.assertTrue(marked["release"])
+            self.assertNotEqual(
+                (output / "MANIFEST.json").read_bytes(),
+                (flagged.parent / "MANIFEST.json").read_bytes(),
+            )
+            # The flag is inside the archive too, so it changes the archive digest.
+            self.assertNotEqual(archive.read_bytes(), flagged.read_bytes())
+            self.assertNotEqual(marked["archive_sha256"], manifest["archive_sha256"])
+            # No signature is produced, and no authority key exists in this repository.
+            for produced in (output, flagged.parent):
+                self.assertFalse((produced / PACKAGER.SIGNATURE_NAME).exists())
+                self.assertEqual(
+                    sorted(p.name for p in produced.iterdir()),
+                    ["MANIFEST.json", "SHA256SUMS", archive.name],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

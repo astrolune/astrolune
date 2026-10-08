@@ -82,7 +82,7 @@ impl BlockProducer {
             return Err(invalid("PoTB system envelope exceeds transaction limit"));
         }
         self.potb_batch = Some((batch, next));
-        self.clear_execution();
+        self.discard_stale_execution();
         Ok(())
     }
 

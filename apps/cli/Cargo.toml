@@ -28,7 +28,7 @@ rpc = { version = "0.1.0", path = "../../crates/rpc" }
 state = { version = "0.1.0", path = "../../crates/state" }
 transaction = { version = "0.1.0", path = "../../crates/transaction" }
 types = { version = "0.1.0", path = "../../crates/types" }
-zeroize = "1.9.0"
+zeroize = "=1.9.0"
 
 [lints]
 workspace = true

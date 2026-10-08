@@ -58,6 +58,17 @@ impl Rollover {
         }
     }
 
+    /// Watermark one sequence behind the latest, absent while both slots repeat
+    /// the activation baseline.
+    pub(super) fn older(&self) -> Option<Watermark> {
+        let [a, b] = self.slots;
+        match a.sequence.cmp(&b.sequence) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some(a),
+            std::cmp::Ordering::Greater => Some(b),
+        }
+    }
+
     fn binding(&self, slot: u8) -> Hash256 {
         let mut bytes = self.anchor.0.to_vec();
         bytes.push(slot);

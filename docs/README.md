@@ -60,6 +60,8 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Quorum parameter governance](48-parameter-governance.md)
 - [Pinned history retention](49-pinned-history-retention.md)
 - [Public interface naming and compatibility](50-public-interfaces.md)
+- [Key custody and release authority](53-key-custody-and-release-authority.md)
+- [Dependency and security review](51-dependency-and-security-review.md)
 
 Legacy-shaped filenames such as `03-vm-and-gas.md`, `05-contract-languages.md`, and `06-deferred-services.md` are retained temporarily to preserve links. Their contents describe the current Rust architecture.
 

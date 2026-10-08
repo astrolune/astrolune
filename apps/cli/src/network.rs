@@ -207,11 +207,51 @@ pub(crate) fn init_validator() -> Result<(), CliError> {
     let args: Vec<_> = std::env::args_os().skip(2).collect();
     if args.len() != 3 {
         return Err(error(
-            "usage: cli init-validator <genesis> <raw-32-byte-seed> <directory>",
+            "usage: cli init-validator <genesis> <raw-seed-or-consensus-vault> <directory>",
         ));
     }
+    let (genesis, context) = load_signing_context(Path::new(&args[0]))?;
+    let seed = crate::vault::read_consensus_seed(Path::new(&args[1]))?;
+    let id = ValidatorId(blake2s(&ed25519_public_key(&seed)).0);
+    if genesis.is_some()
+        && !genesis.as_ref().is_some_and(|genesis| {
+            genesis
+                .validators
+                .iter()
+                .any(|validator| validator.id == id)
+        })
+    {
+        return Err(error("key is absent from genesis"));
+    }
+    let directory = Path::new(&args[2]);
+    std::fs::create_dir_all(directory).map_err(error)?;
+    if directory.join("chain.bin").exists() || directory.join("consensus-cache.bin").exists() {
+        return Err(error(
+            "refusing to provision a journal over existing chain/voting state; restore the original journal",
+        ));
+    }
+    drop(DurableSigner::create_protected(
+        directory.join("signing.journal"),
+        context,
+        *seed,
+    )?);
+    println!(
+        "Protected journal created for {id:?} in {}",
+        directory.display()
+    );
+    println!("Rollback-resistant custody: provision an independent anchor on separate storage");
+    Ok(())
+}
+
+/// Loads a genesis or explicit `PoTB` configuration and its immutable signing namespace.
+///
+/// The returned genesis is absent for a `PoTB` configuration, whose eligible identities
+/// come from finalized state rather than the genesis validator list.
+pub(crate) fn load_signing_context(
+    path: &Path,
+) -> Result<(Option<Genesis>, SigningContext), CliError> {
     let mut bytes = Vec::new();
-    std::fs::File::open(&args[0])
+    std::fs::File::open(path)
         .map_err(error)?
         .take(consensus::potb_transition::PotbConfiguration::MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -225,48 +265,14 @@ pub(crate) fn init_validator() -> Result<(), CliError> {
         || Genesis::decode(&bytes).map_err(error),
         |profile| Ok(profile.genesis().clone()),
     )?;
-    let mut seed = zeroize::Zeroizing::new(Vec::new());
-    std::fs::File::open(&args[1])
-        .map_err(error)?
-        .take(33)
-        .read_to_end(&mut seed)
-        .map_err(error)?;
-    let seed = zeroize::Zeroizing::new(
-        <[u8; 32]>::try_from(seed.as_slice())
-            .map_err(|_| error("seed must be exactly 32 bytes"))?,
-    );
-    let id = ValidatorId(blake2s(&ed25519_public_key(&seed)).0);
-    if profile.is_none()
-        && !genesis
-            .validators
-            .iter()
-            .any(|validator| validator.id == id)
-    {
-        return Err(error("key is absent from genesis"));
-    }
-    let directory = Path::new(&args[2]);
-    std::fs::create_dir_all(directory).map_err(error)?;
-    if directory.join("chain.bin").exists() || directory.join("consensus-cache.bin").exists() {
-        return Err(error(
-            "refusing to provision a journal over existing chain/voting state; restore the original journal",
-        ));
-    }
-    drop(DurableSigner::create_protected(
-        directory.join("signing.journal"),
-        SigningContext {
-            chain_id: genesis.chain_id,
-            genesis: profile.as_ref().map_or_else(
-                || genesis.commitment().map_err(error),
-                |profile| Ok(profile.commitment()),
-            )?,
-        },
-        *seed,
-    )?);
-    println!(
-        "Protected journal created for {id:?} in {}",
-        directory.display()
-    );
-    Ok(())
+    let context = SigningContext {
+        chain_id: genesis.chain_id,
+        genesis: profile.as_ref().map_or_else(
+            || genesis.commitment().map_err(error),
+            |profile| Ok(profile.commitment()),
+        )?,
+    };
+    Ok((profile.map_or(Some(genesis), |_| None), context))
 }
 
 struct DevnetOptions {

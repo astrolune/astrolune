@@ -9,6 +9,8 @@
 //! - `sign-payment` / `inspect-payment` / `submit` - signed native payments
 //! - `verify` — validate a node configuration
 //! - `genesis <file>` — verify canonical genesis and derive the initial state root
+//! - `signing-anchor-create` / `verify-signing-anchor` — independent rollback anchors
+//! - `release-sign` / `verify-release` — detached release-manifest authority
 
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
@@ -19,6 +21,7 @@ use config::{NetworkConfig, NodeConfig, SecretRef};
 
 mod admission;
 mod contracts;
+mod custody;
 mod evidence;
 mod governance;
 mod handoffs;
@@ -27,6 +30,7 @@ mod potb;
 mod proofs;
 mod receipts;
 mod recovery;
+mod release;
 mod vault;
 mod vrf;
 mod wallet;
@@ -85,6 +89,9 @@ Commands:
   wallet-address <seed-file>  Derive public wallet identity (alias: keys)
   wallet-create <new-vault>  Create a random encrypted wallet; password from stdin
   wallet-encrypt <raw-seed> <new-vault>  Encrypt an existing wallet; password from stdin
+  consensus-vault-create <new-vault>  Create a random encrypted consensus key; password from stdin
+  consensus-vault-encrypt <raw-seed> <new-vault>  Encrypt an existing consensus seed
+           Consensus vaults are never accepted by wallet commands, or the reverse
   sign-payment <chain-id> <seed-file> <recipient> <amount> <nonce> <expires-at> <output>
            Sign a payment offline and save it without overwriting any file
   reprice-transaction <file> <seed-or-vault> <prices> <output>  Sign with explicit resource prices
@@ -139,7 +146,15 @@ Commands:
   verify   Validate a node configuration
   genesis <file>  Verify binary genesis and derive its initial state root
   devnet <directory> [validators] [--observer] [--contracts] [--vrf|--potb]  Create a local test network (default: 4)
-  init-validator <genesis> <seed> <directory>  Provision a protected signing journal
+  init-validator <genesis> <seed-or-vault> <directory>  Provision a protected signing journal
+  signing-anchor-create <genesis> <seed-or-vault> <journal> <new-anchor>
+           Provision an independent rollback anchor; keep it on separate storage
+  verify-signing-anchor <genesis> <seed-or-vault> <journal> <anchor>
+           Check offline that a journal is not behind its independent anchor
+  release-sign <manifest> <seed-or-vault> <new-signature>
+           Sign a release manifest; the operator supplies the release authority key
+  verify-release <manifest> <authority-public-key> <signature>
+           Verify a detached release signature against an explicitly supplied key
   init-network-tls <directory> [peers]  Create independent TLS identities (default: 4)
   help     Show this message
   version  Show version
@@ -148,6 +163,8 @@ RPC defaults to ASTROLUNE_RPC_ADDR or 127.0.0.1:17331 (numeric IP:port).
 Proof, receipt, admission and history commands accept explicit PoTB configurations as genesis.
 Amounts are integer smallest units; expires-at is the last valid block height.
 Seed files contain exactly 32 raw bytes. Never pass seed bytes on the command line.
+Anchor and release commands acquire exclusive file locks; stop the validator first.
+This repository defines no release authority identity or key.
 ";
 
 fn main() {
@@ -192,8 +209,17 @@ fn run() -> Result<(), CliError> {
             command @ ("verify-history" | "export-history" | "verify-retained" | "export-retained"),
         ) => recovery::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
         Some("verify") => cmd_verify(),
-        Some(command @ ("wallet-create" | "wallet-encrypt")) => {
-            vault::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
+        Some(
+            command @ ("wallet-create"
+            | "wallet-encrypt"
+            | "consensus-vault-create"
+            | "consensus-vault-encrypt"),
+        ) => vault::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
+        Some(command @ ("signing-anchor-create" | "verify-signing-anchor")) => {
+            custody::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
+        }
+        Some(command @ ("release-sign" | "verify-release")) => {
+            release::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }
         Some(command @ ("sign-deploy" | "sign-call")) => {
             contracts::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())

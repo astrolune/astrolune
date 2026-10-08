@@ -75,7 +75,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
                     chain_id: request.chain_id,
                     genesis: request.genesis,
                 },
-                *wallet::read_raw_seed(Path::new(seed))?,
+                *crate::vault::read_consensus_seed(Path::new(seed))?,
             )
             .map_err(error)?;
             let approval = GovernanceApproval::sign(

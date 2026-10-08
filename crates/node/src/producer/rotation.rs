@@ -151,7 +151,7 @@ impl BlockProducer {
             .ok_or(ConsensusError::InvalidTransition)?
             .transition(&batch)?;
         self.contributions = Some(VerifiedTransition { batch, next });
-        self.clear_execution();
+        self.discard_stale_execution();
         Ok(())
     }
 
