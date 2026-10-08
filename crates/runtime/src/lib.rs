@@ -5,12 +5,14 @@
 
 #![forbid(unsafe_code)]
 
+mod alternate;
 mod backend;
 mod error;
 mod validator;
 mod version;
 mod wasm;
 
+pub use alternate::*;
 pub use backend::*;
 pub use error::*;
 pub use validator::*;

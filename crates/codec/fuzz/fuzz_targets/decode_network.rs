@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ankerin
+// SPDX-License-Identifier: MIT
+
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use node::network_wire::{decode_exchange, encode_exchange, SyncRequest};

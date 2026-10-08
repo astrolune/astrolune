@@ -173,6 +173,113 @@ fuel is part of the pinned metering version, not measured elapsed time.
 Changing engine version, fuel schedule or allowed features requires an explicit
 runtime-version change. Alternate native backends are not yet qualified.
 
+## Qualified alternate engine configurations
+
+`RuntimeBackend::execute` documents that an optimized backend must match the
+interpreter. `WasmBackend` is the alternate implementation that claim is now
+tested against: it executes real ABI-v2 WebAssembly behind that seam over a
+`WasmRuntime` built by `WasmRuntime::with_profile`. `EngineProfile` enumerates
+the engine tuning axes a backend may move, and `WasmRuntime::new` is exactly
+`EngineProfile::Reference`. Every profile is the same pinned Wasmi 2.0.0
+interpreter with the same rejected proposals, the same fuel schedule, the same
+128-frame recursion cap and the same 16,384-byte value stack cap, so `kind`
+reports `BackendKind::Interpreter` for all of them.
+
+Two axes are qualified as consensus-neutral and are varied.
+`EngineProfile::PreallocatedStack` raises the initial value-stack height from the
+Wasmi default of 1,000 bytes to the configured maximum of 16,384 bytes, so the
+stack is allocated once instead of growing. `EngineProfile::UnpooledStack`
+reduces the engine stacks kept for reuse from 2 to 0.
+`EngineProfile::Alternate` moves both at once. Those three are
+`EngineProfile::ALTERNATES`; `EngineProfile::QUALIFIED` adds the reference.
+
+Compilation strategy was expected to be a third neutral axis and measurably is
+not. On 2026-10-08, Windows with Rust 1.99.0 and pinned Wasmi 2.0.0, the minimal
+returning module charges 2 compute units under `CompilationMode::Eager`, 30
+under `CompilationMode::LazyTranslation` and 38 under `CompilationMode::Lazy`,
+because Wasmi charges deferred translation, and under `Lazy` deferred validation
+as well, to the executing call's own fuel. The gap grows with the size of the
+translated body. Return data, events, staged writes and accessed keys remain
+identical across all ten structured modules, so the disagreement is confined to
+charged compute, which alone is enough to split consensus.
+`EngineProfile::LazyTranslation` and `EngineProfile::Lazy` are therefore
+retained as `EngineProfile::DISQUALIFIED`, reported as not neutral by
+`is_consensus_neutral`, and asserted to keep disagreeing so a later engine
+bump cannot silently admit them.
+
+Four further axis classes are excluded by construction rather than by
+measurement, because each is part of the runtime version. `set_max_recursion_depth`
+and `set_max_stack_height` decide where a `StackOverflow` trap occurs, which a
+call observes directly. `fuel_cost` and `operator_cost` define charged compute.
+`enforced_limits` and `ignore_custom_sections` decide which modules validate.
+The `wasm_*` proposal toggles define the accepted instruction set. A backend may
+not move any of them.
+
+`RuntimeOutput` and `WasmOutput` are different types, so the comparison is
+explicit. `wasm_difference` compares two complete ABI-v2 results and returns the
+first disagreeing field as an `OutputDifference`: acceptance, error variant,
+return data, events in order, staged writes, actually accessed keys, then
+compute, memory, I/O and bandwidth. Consumed resources are compared exactly and
+no tolerance is applied. `RuntimeOutput` has exactly two fields, `return_data`
+and `resources`, and has no field able to carry `WasmOutput::events`,
+`WasmOutput::writes` or `WasmOutput::accessed`; `project_wasm_output` drops
+precisely those three, and `runtime_difference` compares only what remains. The
+seam comparison is therefore strictly weaker than the complete one and never
+substitutes for it, so every seam result is additionally pinned to
+`project_wasm_output` of the interpreter result for the same context. Widening
+`RuntimeOutput` would change the legacy ABI-v1 interface and is not done here.
+
+The consensus-visibility of the two excluded stack bounds is itself measured
+through the public interface. On 2026-10-08, Windows with Rust 1.99.0, a
+self-recursive module whose frames hold only an `i32` parameter succeeds at
+depth 126 and returns `RuntimeError::LimitExceeded` at depth 127, where the
+128-frame cap retires it. The same recursion with thirty-two additional `i64`
+locals per frame succeeds at depth 60 and fails at depth 61, where the
+16,384-byte value stack cap retires it first. All four qualified profiles agree
+on both thresholds, which is what makes the allocation axes neutral and the
+bounds themselves consensus-visible.
+
+The qualification campaign reuses the contract corpus and the deterministic
+xorshift64 mutator of the contract fuzz campaign. It validates and executes each
+candidate under the reference interpreter and under all three alternate
+profiles, compares complete outputs with `wasm_difference`, compares the seam
+with `runtime_difference`, and requires rejected candidates to be rejected with
+the same `RuntimeError` variant by every profile, because a backend that accepts
+what the interpreter rejects is a consensus split.
+
+```text
+cargo test -p runtime --test backends
+cargo test -p integration --test backends
+cargo test -p integration --test backends -- --ignored
+```
+
+On 2026-10-08, Windows with Rust 1.99.0 and the unoptimized dev profile,
+`backend_qualification_smoke` compared 3,012 candidates, 72 accepted modules,
+8,511 validation results, 216 complete executions, of which 126 were accepted
+and 90 rejected, and 216 seam executions, finding 0 disagreements.
+`extended_backend_qualification` compared 100,012 candidates, 2,514 accepted
+modules, 284,016 validation results, 7,542 complete executions, of which 4,716
+were accepted and 2,826 rejected, and 7,542 seam executions in 23.93 seconds,
+finding 0 disagreements. `million_backend_qualification` compared 1,000,012
+candidates, 24,681 accepted modules, 2,838,960 validation results, 74,043
+complete executions, of which 47,466 were accepted and 26,577 rejected, and
+74,043 seam executions in 238.45 seconds, finding 0 disagreements. The runtime
+crate additionally pins the ten structured modules, ten rejected candidates, the
+measured lazy-compilation gap, the seam projection, the fields the seam cannot
+express, and the two stack thresholds.
+
+This qualifies configuration independence across the `RuntimeBackend` seam for
+two allocation axes, and it records one measured configuration axis that is not
+independent. It is not an ahead-of-time, just-in-time, SIMD or independently
+implemented backend; no such backend exists in this workspace, and
+`BackendKind::Aot` and `BackendKind::Jit` remain reserved declarations. The
+compared profiles share one interpreter, one translator and one fuel schedule,
+so agreement between them does not establish agreement with a hypothetical
+native backend. Nothing here changes the runtime version, enables an alternate
+backend for live execution, or establishes any throughput, compile-time or
+memory-footprint claim; the reported seconds are campaign durations, not
+benchmarks.
+
 ## Contract tooling
 
 ```text

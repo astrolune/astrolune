@@ -2,8 +2,18 @@
 # SPDX-License-Identifier: MIT
 
 [graph]
+# An empty target list is the widest setting cargo-deny offers: no cfg filtering
+# is applied, so Windows, wasi, UEFI and unix crates are all evaluated. Naming
+# explicit triples measurably narrows the graph (121 crates here, 100 for
+# x86_64-pc-windows-msvc alone on 2026-10-08), so it is deliberately left empty.
 targets = []
 all-features = true
+# cargo-deny resolves only what cargo would compile, and prunes every
+# dev-dependency edge regardless of `exclude-dev`. Its graph is therefore 121 of
+# the 158 packages in Cargo.lock. The omitted 37 are enumerated, licence-checked
+# and bounded by .github/scripts/check-license-coverage.py against
+# .github/scripts/deny-coverage-baseline.json; see
+# docs/51-dependency-and-security-review.md.
 
 [advisories]
 version = 2
@@ -28,7 +38,10 @@ allow = [
 ]
 
 [bans]
-# Deny new duplicates and name the two that upstream crates force today.
+# Deny new duplicates and name the two that upstream crates force today. Two
+# further lockfile duplicates, hashbrown and wasmparser, sit outside this graph
+# and are bounded by the coverage baseline instead; adding them here would only
+# raise `unmatched skip` warnings.
 multiple-versions = "deny"
 wildcards = "deny"
 skip = [

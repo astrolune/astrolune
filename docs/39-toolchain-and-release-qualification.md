@@ -119,3 +119,36 @@ All 28 desktop/mobile browser scenarios also passed against a new four-validator
 TLS devnet, an observer and a real finalized payment. The local test build sets
 `NEXT_PUBLIC_*_URL` origins before compilation, as required by Next.js; runtime-only
 URL overrides do not rewrite prerendered cross-app links.
+
+## 2026-10-08 first observed hosted run
+
+Earlier platform claims in this document rest on local Windows checks. On
+2026-10-08 the `CI` workflow ran on GitHub-hosted runners for the first time, so
+some of that evidence is now observed rather than configured.
+
+Passed: formatting; strict Clippy on `ubuntu-latest` and `windows-latest`; and the
+workspace suite on `ubuntu-latest` in both the debug and release profiles, which is
+the first observed Linux suite result. The `windows-latest` debug suite also passed.
+
+Failed, with causes recorded here rather than summarised away. The documentation job
+rejected a public doc comment in `crates/crypto/src/blake2s.rs` that linked an item
+outside its module scope, under `rustdoc::broken-intra-doc-links`. The fuzz
+compile-check and both release-build jobs failed on one shared cause: the
+workspace-excluded fuzz package's lockfile was ignored by `.gitignore`, so
+`cargo check --locked` could not resolve it and the advisory review's
+both-lockfile test raised `missing lockfile`. That lockfile is now committed,
+because the advisory scope recorded in
+[document 51](51-dependency-and-security-review.md) is only reproducible when it is.
+
+The `windows-latest` release suite failed one test,
+`tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles`, where a
+restarted late-joining observer reported no retained state at height 2. The same
+test passed on the three other matrix legs and passes locally in release. Retention
+eviction is excluded, since the window is 64 blocks, and log replay rebuilds the
+index. The trigger is not reproduced, so the assertion was left intact and made
+diagnostic instead of relaxed; the next occurrence reports the node's head.
+
+One observed hosted run is not cross-platform qualification. Linux reproducibility
+is still unobserved because the release-build jobs did not reach their archive
+step, and independent-machine reproducibility needs a second machine rather than a
+second run on the same hosted image.

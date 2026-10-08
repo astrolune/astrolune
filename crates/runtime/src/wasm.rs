@@ -27,6 +27,125 @@ pub const MAX_WASM_MEMORY: usize = 16 * 1024 * 1024;
 pub const MAX_HOST_VALUE: usize = 64 * 1024;
 /// Maximum combined state I/O per call, in bytes.
 pub const MAX_HOST_IO: u64 = 1024 * 1024;
+/// Maximum call frames. Part of the runtime identity: the frame at which a
+/// `StackOverflow` trap is raised is consensus-visible.
+const MAX_RECURSION_DEPTH: usize = 128;
+/// Maximum value stack height in bytes. Part of the runtime identity for the
+/// same reason as [`MAX_RECURSION_DEPTH`].
+const MAX_STACK_HEIGHT: usize = 16_384;
+/// Cached engine stacks kept for reuse by the reference profile.
+const REFERENCE_CACHED_STACKS: usize = 2;
+
+/// Engine tuning axes an alternate backend may vary.
+///
+/// Every profile pins one runtime identity: the same rejected WebAssembly
+/// proposals, the same fuel schedule, the same 128-frame recursion cap and the
+/// same 16,384-byte value stack cap. [`Self::QUALIFIED`] lists the profiles
+/// that are measurably indistinguishable from [`Self::Reference`];
+/// [`Self::DISQUALIFIED`] lists configurations that are retained only so the
+/// qualification campaign can keep asserting that they do differ.
+///
+/// Two axes are consensus-neutral and are varied: the initial value-stack
+/// height and the number of engine stacks kept for reuse. Both are allocation
+/// strategies that a contract cannot observe.
+///
+/// Four axis classes are excluded. The recursion cap and the maximum value
+/// stack height decide where a `StackOverflow` trap occurs, which is directly
+/// observable in a call's result. The fuel and operator cost schedules define
+/// charged compute. The enforced parsing limits and custom-section handling
+/// decide which modules validate. The WebAssembly proposal toggles define the
+/// accepted instruction set. Varying any of them would be a runtime-version
+/// change rather than a backend choice.
+///
+/// Compilation strategy was expected to be neutral and measurably is not; see
+/// [`Self::LazyTranslation`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineProfile {
+    /// Reference configuration built by [`WasmRuntime::new`]: eager
+    /// compilation, a value stack that grows from the Wasmi default initial
+    /// height, and two cached engine stacks.
+    Reference,
+    /// Eager compilation with the value stack preallocated to its 16,384-byte
+    /// maximum instead of growing from the Wasmi default initial height.
+    PreallocatedStack,
+    /// Eager compilation with engine stack pooling disabled.
+    UnpooledStack,
+    /// Both neutral axes moved at once: a preallocated value stack and no
+    /// engine stack pooling.
+    Alternate,
+    /// Eager validation with per-function translation deferred to first call.
+    ///
+    /// Not consensus-neutral. Wasmi 2.0.0 charges the deferred translation to
+    /// the executing call's fuel, so `Resources::compute` grows with the size
+    /// of the translated body. Selecting this profile for execution would fork
+    /// the chain. It is public only so the campaign can pin the measurement.
+    LazyTranslation,
+    /// Validation and translation both deferred to first call.
+    ///
+    /// Not consensus-neutral, for the same reason as [`Self::LazyTranslation`]
+    /// and by a larger margin, because the deferred validation is charged too.
+    Lazy,
+}
+
+impl EngineProfile {
+    /// Profiles measurably indistinguishable from [`Self::Reference`], which is
+    /// listed first.
+    pub const QUALIFIED: [Self; 4] = [
+        Self::Reference,
+        Self::PreallocatedStack,
+        Self::UnpooledStack,
+        Self::Alternate,
+    ];
+    /// The qualified profiles other than [`Self::Reference`].
+    pub const ALTERNATES: [Self; 3] = [
+        Self::PreallocatedStack,
+        Self::UnpooledStack,
+        Self::Alternate,
+    ];
+    /// Configurations measured to change consensus-visible charged compute.
+    pub const DISQUALIFIED: [Self; 2] = [Self::LazyTranslation, Self::Lazy];
+
+    /// Returns whether this profile may be selected for live execution.
+    #[must_use]
+    pub fn is_consensus_neutral(self) -> bool {
+        match self {
+            Self::Reference | Self::PreallocatedStack | Self::UnpooledStack | Self::Alternate => {
+                true
+            }
+            Self::LazyTranslation | Self::Lazy => false,
+        }
+    }
+
+    /// Returns the Wasmi compilation strategy this profile selects.
+    #[must_use]
+    pub fn compilation_mode(self) -> CompilationMode {
+        match self {
+            Self::Reference | Self::PreallocatedStack | Self::UnpooledStack | Self::Alternate => {
+                CompilationMode::Eager
+            }
+            Self::LazyTranslation => CompilationMode::LazyTranslation,
+            Self::Lazy => CompilationMode::Lazy,
+        }
+    }
+
+    /// Returns whether the value stack starts at its 16,384-byte maximum
+    /// instead of growing from the Wasmi default initial height.
+    #[must_use]
+    pub fn preallocates_stack(self) -> bool {
+        matches!(self, Self::PreallocatedStack | Self::Alternate)
+    }
+
+    /// Returns how many engine stacks this profile keeps for reuse.
+    #[must_use]
+    pub fn cached_stacks(self) -> usize {
+        match self {
+            Self::Reference | Self::PreallocatedStack | Self::LazyTranslation | Self::Lazy => {
+                REFERENCE_CACHED_STACKS
+            }
+            Self::UnpooledStack | Self::Alternate => 0,
+        }
+    }
+}
 
 /// Finalized call context and explicit contract-local access authorization.
 #[derive(Clone, Copy)]
@@ -63,6 +182,7 @@ pub struct WasmOutput {
 /// Portable interpreter and validator for the versioned contract profile.
 pub struct WasmRuntime {
     engine: Engine,
+    profile: EngineProfile,
 }
 
 impl Default for WasmRuntime {
@@ -75,6 +195,19 @@ impl WasmRuntime {
     /// Creates the fixed, integer-only engine with eager validation and fuel.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_profile(EngineProfile::Reference)
+    }
+
+    /// Creates the same integer-only engine under an alternate tuning profile.
+    ///
+    /// For every profile in [`EngineProfile::QUALIFIED`] the returned runtime
+    /// accepts and rejects the same modules as [`WasmRuntime::new`] and charges
+    /// the same resources; `crates/runtime/tests/backends.rs` and the workspace
+    /// backend qualification campaign check that on the shared corpus and its
+    /// mutations. The profiles in [`EngineProfile::DISQUALIFIED`] are measured
+    /// to charge more compute and must never execute live calls.
+    #[must_use]
+    pub fn with_profile(profile: EngineProfile) -> Self {
         let mut config = Config::default();
         config
             .consume_fuel(true)
@@ -86,12 +219,24 @@ impl WasmRuntime {
             .wasm_extended_const(false)
             .wasm_saturating_float_to_int(false)
             .wasm_multi_value(false)
-            .set_max_recursion_depth(128)
-            .set_max_stack_height(16_384)
-            .compilation_mode(CompilationMode::Eager);
+            .set_max_recursion_depth(MAX_RECURSION_DEPTH)
+            .set_max_stack_height(MAX_STACK_HEIGHT)
+            .set_max_cached_stacks(profile.cached_stacks())
+            .compilation_mode(profile.compilation_mode());
+        if profile.preallocates_stack() {
+            // The maximum is already set above, so the minimum cannot exceed it.
+            config.set_min_stack_height(MAX_STACK_HEIGHT);
+        }
         Self {
             engine: Engine::new(&config),
+            profile,
         }
+    }
+
+    /// Returns the engine tuning profile this runtime was built with.
+    #[must_use]
+    pub fn profile(&self) -> EngineProfile {
+        self.profile
     }
 
     fn compile(&self, bytes: &[u8]) -> Result<Module, RuntimeError> {

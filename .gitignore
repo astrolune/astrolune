@@ -6,7 +6,8 @@
 /crates/codec/fuzz/target/
 /crates/codec/fuzz/artifacts/
 /crates/codec/fuzz/corpus/
-/crates/codec/fuzz/Cargo.lock
+# The fuzz lockfile is committed: CI compile-checks that package with --locked and
+# the advisory review covers both lockfiles, so its resolution must be reproducible.
 *.log
 .env
 .env.*

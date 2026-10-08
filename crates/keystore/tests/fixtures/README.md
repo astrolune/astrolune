@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
+
 # Wallet v1 compatibility vector
 
 `wallet-v1.bin` is a 144-byte public test fixture generated with the original

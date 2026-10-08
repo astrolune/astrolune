@@ -114,14 +114,16 @@ The ordinary suite runs the six bounds in the table and the conformance walks. T
 extended campaign raises the round bound to three and adds a five-seat and a
 three-value bound at two rounds, asserting the same threshold condition on each.
 
-State counts grow sharply with the round bound. On 2026-10-08 in release, the
-three-round uniform bound reached 63,066,629 states over 177,717,618 transitions
-with 7,565,405 terminal states in 126 seconds and no violation, and the three-round
-weighted bound reached 29,386,445 states over 82,948,690 transitions in 60 seconds
-with no violation. A four-round asynchronous bound did not complete on that
-machine, because the visited set for an exhaustive traversal at that depth exceeds
-available memory; four-round exploration therefore remains outside the recorded
-evidence rather than being claimed.
+State counts grow sharply with the round bound. On 2026-10-08 in release, the whole
+extended campaign explored 100,633,716 states over 289,364,073 transitions across
+eight bounds in 205.58 seconds. The three-round uniform bound alone reached
+63,066,629 states over 177,717,618 transitions with 7,565,405 terminal states in
+132 seconds and no violation; the three-round weighted bound reached 29,386,445
+states over 82,948,690 transitions in 59 seconds with no violation; the five-seat
+two-round bound reached 7,202,460 states in 13 seconds. A four-round asynchronous
+bound did not complete on that machine, because the visited set for an exhaustive
+traversal at that depth exceeds available memory; four-round exploration therefore
+remains outside the recorded evidence rather than being claimed.
 
 ## Limits
 

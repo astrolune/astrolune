@@ -62,11 +62,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.profile }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
       - name: Unit, integration, and documentation tests
-        run: cargo test --locked --workspace --all-features --profile ${{ matrix.profile }}
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/suite
+          cargo test --locked --workspace --all-features --profile ${{ matrix.profile }} 2>&1 \
+            | tee target/suite/tests.log
       - name: Pinned Rust wasm32 builds and SDK integration
         if: matrix.profile == 'release'
-        run: cargo test --locked -p cargo-contract --release -- --ignored
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -p cargo-contract --release -- --ignored 2>&1 \
+            | tee -a target/suite/tests.log
+      - name: Record the per-platform suite result
+        if: ${{ always() }}
+        run: >-
+          python -B .github/scripts/suite-report.py
+          --log target/suite/tests.log
+          --os ${{ matrix.os }}
+          --profile ${{ matrix.profile }}
+          --exit-status ${{ job.status == 'success' && '0' || '101' }}
+          --output target/suite/SUITE.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: suite-${{ matrix.os }}-${{ matrix.profile }}
+          path: target/suite/SUITE.json
+          if-no-files-found: error
+          retention-days: 90
 
   docs:
     name: Documentation
@@ -123,12 +151,26 @@ jobs:
         run: python -B -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Package binaries with checksums and build metadata
         run: python .github/scripts/package-build.py ${{ matrix.target }}
+      - name: Compose the platform qualification report
+        env:
+          ASTROLUNE_MACHINE: ${{ runner.name }}#${{ github.run_id }}.${{ github.run_attempt }}
+        run: >-
+          python -B .github/scripts/qualification-report.py
+          --output target/ci-artifacts/QUALIFICATION.json
       - uses: actions/upload-artifact@v7
         with:
           name: astrolune-${{ matrix.target }}
           path: target/ci-artifacts/*
           if-no-files-found: error
           retention-days: 14
+      # Kept far longer than the archive: comparing two machines means holding
+      # one run's evidence until a second machine produces its own.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qualification-${{ matrix.target }}
+          path: target/ci-artifacts/QUALIFICATION.json
+          if-no-files-found: error
+          retention-days: 90
 
   fuzz:
     name: Fuzz target compilation

@@ -5,14 +5,18 @@
 This document records a measured review of the third-party dependency surface and
 replaces the unreproducible manual advisory query previously cited by
 [toolchain and release qualification](39-toolchain-and-release-qualification.md).
-The committed tooling is `.github/scripts/audit-dependencies.py`, its regression
-tests are `.github/scripts/test_audit_dependencies.py`, and the pinned advisory
-data is `.github/scripts/advisory-snapshot.json`. Policy lives in `deny.toml` and
+The committed tooling is `.github/scripts/audit-dependencies.py` for advisories
+and `.github/scripts/check-license-coverage.py` for licence and duplicate
+policy; their regression tests are `.github/scripts/test_audit_dependencies.py`
+and `.github/scripts/test_check_license_coverage.py`, and the pinned data is
+`.github/scripts/advisory-snapshot.json` and
+`.github/scripts/deny-coverage-baseline.json`. Policy lives in `deny.toml` and
 `.github/workflows/security.yml`.
 
 All numbers below are measured, not asserted. Every measurement in this document
 comes from one host: Windows 11 on `x86_64-pc-windows-msvc`, `cargo 1.99.0
-(5f94df478 2026-08-27)`, `rustc 1.99.0 (b940084d7 2026-09-28)` and Python 3.11.9.
+(5f94df478 2026-08-27)`, `rustc 1.99.0 (b940084d7 2026-09-28)`, `cargo-deny
+0.18.6` and Python 3.11.9, on 2026-10-07 and 2026-10-08 as dated per claim.
 Nothing here establishes behaviour on Linux, on hosted CI runners, or on any
 independent machine, and nothing here is an implementation audit of any
 dependency.
@@ -86,33 +90,104 @@ membership is the scope, and it is a superset of what any single build compiles.
 
 ## Policy state and the gap it does not cover
 
-`cargo deny 0.18.6` reports `advisories ok, bans ok, licenses ok, sources ok` on
-2026-10-07 after the changes below. `cargo audit 0.22.2` loads 1293 RustSec
-advisories and reports no findings, scanning 158 crate dependencies in
-`Cargo.lock` and 114 in `crates/codec/fuzz/Cargo.lock`; both exit zero.
+`cargo deny 0.18.6` reports `advisories ok, bans ok, licenses ok, sources ok`
+and exits zero on 2026-10-07 and again on 2026-10-08 after the changes below.
+`cargo audit 0.22.2` loads 1293 RustSec advisories and reports no findings,
+scanning 158 crate dependencies in `Cargo.lock` and 114 in
+`crates/codec/fuzz/Cargo.lock`; both exit zero.
 
-A measured coverage gap qualifies the `cargo deny` result. Probing with an empty
-`allow` list produces exactly 121 `error[rejected]` diagnostics, so `cargo deny
-check licenses` evaluates 121 crates while `Cargo.lock` lists 158 and `cargo
-metadata --all-features --locked` resolves all 158. Thirty-seven registry
-packages, among them `x509-parser 0.18.1`, `der-parser 10.0.0`, `asn1-rs 0.7.2`,
-`nom 7.1.3`, `serde 1.0.229`, `password-hash 0.6.1`, `wat 1.261.0` and
-`wasmparser 0.261.0`, are absent from that evaluation. Setting `exclude-dev`
-explicitly to either value leaves the count at 121, so dev-dependency pruning is
-not the cause. The precise pruning rule was not determined. Because
-`audit-dependencies.py` and `cargo audit` both read lockfiles directly, advisory
-coverage of all 135 packages is unaffected; the gap is in licence and ban policy.
+A measured coverage gap qualifies the `cargo deny` result, and on 2026-10-08 its
+cause was determined. The gap reproduces exactly: probing with an empty `allow`
+list produces 121 `error[rejected]` diagnostics over 121 distinct crates,
+`cargo deny check -s` independently reports `licenses ok: 0 errors, 2 warnings,
+121 notes`, and `cargo deny list --format tsv` emits a header plus 121 crate
+rows, while `Cargo.lock` holds 158 `[[package]]` entries and `cargo metadata
+--all-features --locked` resolves all 158. Licence and ban policy therefore
+evaluated 121 of 158 packages: all 26 workspace members and 95 of the 132
+registry packages.
+
+The cause is that cargo-deny resolves what cargo would compile, not what the
+lockfile records, and the 37 omitted packages divide three ways with nothing left
+over. `cargo tree --locked --workspace --all-features --target all -e
+normal,build,dev` resolves 128 packages and `-e normal,build` resolves 122.
+
+- **30 packages that no target and feature combination compiles.** They are the
+  transitive closure of twelve packages whose every non-dev edge is an optional
+  dependency of a third-party crate: `bit-vec 0.9.1`, `foldhash 0.1.5`,
+  `indexmap 2.14.2`, `num-bigint 0.4.8`, `password-hash 0.6.1`, `phc 0.6.1`,
+  `serde 1.0.229`, `string-interner 0.19.0`, `time-macros 0.2.32`,
+  `toml_writer 1.1.2+spec-1.1.0`, `wasmparser 0.261.0` and `x509-parser 0.18.1`.
+  `all-features` activates the features of workspace members only and never a
+  third-party crate's own optional features, so `rcgen` never enables
+  `x509-parser` and with it `der-parser`, `asn1-rs`, `oid-registry`,
+  `rusticata-macros`, `nom 7.1.3`, `minimal-lexical`, `data-encoding`,
+  `lazy_static`, `displaydoc`, `synstructure` and the `num-*` chain.
+  `Cargo.lock` lists them because a lockfile records the feature-independent
+  union of the resolve.
+- **1 package gated behind a cfg that is false everywhere.** `serde_derive
+  1.0.229` is reachable only through `serde_core`'s `[target.'cfg(any())']`
+  edge. `cargo tree --target all` keeps it because that flag disables cfg
+  evaluation; cargo-deny evaluates the cfg and correctly drops it. It is the
+  only difference between the cargo-deny graph and the 122 packages
+  `cargo tree -e normal,build` resolves.
+- **6 packages reachable only through a workspace member's dev-dependency.**
+  `wat 1.261.0`, `wast 261.0.0`, `wasm-encoder 0.261.0`, `leb128fmt 0.1.0`,
+  `unicode-width 0.2.2` and `memchr 2.8.3`. `wat` is declared under
+  `[dev-dependencies]` by seven members. These are compiled by `cargo test` and
+  are the only genuinely unexamined code in the 37.
+
+cargo-deny 0.18.6 cannot be configured to reach that last group. A throwaway
+four-package workspace, one member with one normal dependency, one optional
+dependency and `memchr` as a dev-dependency, evaluates the member, the normal
+dependency and the optional dependency, proving `all-features` works, and never
+evaluates `memchr`, under `[graph] exclude-dev` unset, `false` and `true`, under
+the `--exclude-dev` flag, under `--workspace`, and under resolver 1, 2 and 3.
+The `--exclude-dev` help text states it "excludes all dev-dependencies, not just
+ones for non-workspace crates", so workspace dev-dependencies ought to be in the
+graph by default; measurably they are not. The alternative explanations were
+tested and rejected. Explicit `targets` narrows rather than widens coverage:
+`-t x86_64-pc-windows-msvc` evaluates 100 crates, `-t
+x86_64-unknown-linux-gnu` 101 and both triples together 101, so the empty
+`targets = []` is the widest setting available and is kept. `--exclude-dev`
+leaves the count at 121 and `--exclude-unpublished` lowers it to 110. Feeding
+cargo-deny a self-generated `cargo metadata --all-features --locked` through
+`--metadata-path` leaves it at 121 with either default or all features, so the
+pruning is in cargo-deny's graph builder and not in how it invokes cargo.
+
+Licence coverage is now 158 of 158 by committed tooling, with the cargo-deny
+gap bounded exactly rather than merely disclosed.
+`.github/scripts/check-license-coverage.py` parses the SPDX expression of every
+package `cargo metadata --all-features --locked` resolves, including the legacy
+`MIT/Apache-2.0` slash form that eleven packages still use, and evaluates it
+against the `licenses.allow` list in `deny.toml`. On 2026-10-08 it reports
+`locked_packages` 158, `cargo_deny_graph_packages` 121, `uncovered_packages` 37,
+no rejected licence and no failure. That it reaches past the graph is measured,
+not asserted: removing `MIT` from the allow list makes it reject 33 of the 158,
+of which `data-encoding 2.11.1`, `memchr 2.8.3`, `nom 7.1.3` and `synstructure
+0.13.2` are packages cargo-deny never sees. The bound lives in
+`.github/scripts/deny-coverage-baseline.json`, which names all 37 with the
+licence its manifest declares and the reason measured for each. The checker
+fails if the uncovered set gains a member, loses one, or if a recorded licence
+stops matching the manifest, and it refuses to run at all when the baseline is
+absent. Its regression tests are
+`.github/scripts/test_check_license_coverage.py`, which also assert, with no
+toolchain present, that the committed allow list satisfies every licence the
+baseline records.
 
 `cargo deny check bans` reports two duplicated crates: `getrandom` at `0.2.17`
 and `0.4.3`, and `syn` at `2.0.119` and `3.0.6`. `getrandom 0.2.17` is a
 transitive requirement of `ring 0.17.14` while first-party code uses `0.4.3`;
 `syn 2.0.119` is required by the `curve25519-dalek-derive` and `zeroize_derive`
 proc-macros while `thiserror-impl 2.0.21` uses `3.0.6`. Neither is fixable from
-this repository. `Cargo.lock` additionally holds `hashbrown` at `0.15.5` and
-`0.17.1` and `wasmparser` at `0.228.0` and `0.261.0`, which `cargo deny` does not
-report because those versions fall in the 37-package gap.
+this repository. Across all 158 packages there are four duplicates rather than
+two: `hashbrown` at `0.15.5` and `0.17.1` and `wasmparser` at `0.228.0` and
+`0.261.0` also appear, both inside the 37. The coverage baseline records all
+four and the checker fails on a fifth, which is the ban half of the bound.
+Adding them to `bans.skip` instead would only raise `unmatched skip` warnings,
+because cargo-deny cannot see the versions they refer to.
 
-Four policy changes were made, each verified to keep `cargo deny check` green:
+Four policy changes were made on 2026-10-07, each verified to keep `cargo deny
+check` green:
 
 - `bans.multiple-versions` moves from `warn` to `deny` with explicit `skip`
   entries carrying a `reason` for `getrandom@0.2.17` and `syn@2.0.119`, so the two
@@ -127,28 +202,54 @@ Four policy changes were made, each verified to keep `cargo deny check` green:
   `.github/workflows/security.yml`, which previously audited only the workspace
   lockfile.
 
+The 2026-10-08 change adds no policy rule. `deny.toml` gains only comments
+recording the measured graph size, why `targets` stays empty and where the bound
+lives, so the file's behaviour is unchanged and `cargo deny check` still reports
+`licenses ok: 0 errors, 2 warnings, 121 notes`.
+
 Adding `advisories.unsound` or `advisories.notice` is not possible. Configuration
 version 2 removed both keys, and `cargo deny` rejects them with
 `error[deprecated]: this key has been removed`. Both classes are unconditional
-errors that cannot be configured. `BSD-2-Clause` and `Zlib` remain allowed though
-unused; both are permissive, so removing them would create churn without reducing
-risk, and they are the only two remaining `license-not-encountered` warnings.
+errors that cannot be configured. The two remaining `license-not-encountered`
+warnings, `BSD-2-Clause` and `Zlib`, are not equivalent, which corrects an
+earlier claim here that both were unused. Measured over all 158 packages,
+`BSD-2-Clause` is offered by nothing, while `Zlib` is the sole licence of
+`foldhash 0.1.5`, one of the 37; cargo-deny calls it unencountered only because
+`foldhash` is outside its graph, and removing `Zlib` from `licenses.allow` would
+make the full-lockfile check reject that package.
 
-The new `registry-advisories` job in `.github/workflows/security.yml` runs the
-live query, the offline snapshot verification and the regression tests, and
-uploads the report. It uses `actions/checkout@v7.0.1`, `actions/setup-python@v7`
-and `actions/upload-artifact@v7` under the file's existing `permissions: contents:
-read`, `concurrency` block and 15-minute timeouts.
+The `registry-advisories` job in `.github/workflows/security.yml` runs the live
+query, the offline snapshot verification and the regression tests, and uploads
+the report. A `license-coverage` job added on 2026-10-08 installs `cargo-deny
+0.18.6` pinned, records `cargo deny list --format tsv` as `target/deny-graph.tsv`,
+runs the coverage checker against it and uploads both the graph listing and
+`target/dependency-license-coverage.json`. Both use `actions/checkout@v7.0.1`,
+`actions/setup-python@v7` and `actions/upload-artifact@v7` under the file's
+existing `permissions: contents: read` and `concurrency` block.
 
-This section establishes a green policy run and names its boundaries precisely.
-`cargo deny` and `cargo audit` query RustSec for the Rust workspace only.
-Licence and ban policy demonstrably does not reach 37 of 132 locked registry
-packages, and the cause is unresolved. No committed automation covers the
-companion npm workspace, whose `npm audit` result in
-[toolchain and release qualification](39-toolchain-and-release-qualification.md)
-remains a manual claim. `actionlint 1.7.12` could not be run: Go is unavailable on
-this host and the GitHub release download timed out, so the edited workflow was
-validated only by YAML parse and structural comparison against the existing jobs.
+This section establishes a green policy run, the cause of the 121-of-158 gap and
+an exact bound on it. It does not establish that cargo-deny will ever cover the
+six compiled dev-dependencies; that remains an upstream limitation, and the
+committed checker is the compensating control rather than a fix to the tool. The
+licence read is the `license` expression each `Cargo.toml` declares as
+`cargo metadata` reports it. No licence text was compared against its SPDX
+identifier, cargo-deny's `confidence-threshold` text scoring is not
+reimplemented, and a package declaring no expression at all would be refused
+rather than scored; none of the 158 does. The three reasons recorded per package
+are measurements from this host on 2026-10-08, derived with `cargo tree` and the
+resolve graph by hand; the committed checker enforces the uncovered set, its
+licences and the duplicate set, not the reasons, and nothing prevents a future
+feature change from compiling one of the 31 packages that no build reaches
+today, which is what the growing-set guard exists to catch. Because
+`audit-dependencies.py` and `cargo audit` both read lockfiles directly, advisory
+coverage of all 135 packages was never affected by this gap and is unchanged. No
+committed automation covers the companion npm workspace, whose `npm audit` result
+in [toolchain and release qualification](39-toolchain-and-release-qualification.md)
+remains a manual claim. `actionlint 1.7.12` could not be run for either the
+2026-10-07 or the 2026-10-08 workflow edits: Go is unavailable on this host and
+the GitHub release download timed out, so `security.yml` and `ci.yml` were
+validated only by YAML parse and structural comparison against the existing
+jobs.
 
 ## Cryptographic and parsing surface
 

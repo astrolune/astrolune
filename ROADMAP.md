@@ -31,7 +31,8 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 - [x] Shared extension fuzz oracle, 99 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
 - [x] Long deterministic and coverage-guided fuzz campaigns over the protocol and contract surfaces; [scope and measurements](docs/37-protocol-qualification.md).
 - [x] Committed bounded registry advisory lookup and a recorded dependency/security review; [evidence](docs/51-dependency-and-security-review.md).
-- [ ] Cross-platform suite qualification.
+- [x] Full-lockfile licence coverage over all 158 locked packages with a pinned baseline, closing the 121-package limit of the dependency-policy tool's own graph; [cause and bound](docs/51-dependency-and-security-review.md).
+- [ ] Cross-platform suite qualification; per-leg suite reports are now recorded as artifacts and the Linux suite passed once, with one intermittent Windows release failure outstanding; [observed run](docs/39-toolchain-and-release-qualification.md).
 - [x] Upgrade qualification: current stable dependencies, legacy vault compatibility,
   strict Rust 1.99.0 checks and bounded registry advisory lookup; [evidence](docs/39-toolchain-and-release-qualification.md).
 
@@ -51,7 +52,8 @@ Pinned contract toolchain, canonical target selection, validator, interpreter, h
 - [x] Allocation-free Rust SDK bindings, bundled builds and real wasm32 host-call tests.
 - [x] Restricted Cargo package/source manifests and offline published-source verification.
 - [x] Dedicated contract fuzz target with a differential validate/execute oracle and gated mutation campaigns; [scope](docs/37-protocol-qualification.md).
-- [ ] Qualified alternate backends.
+- [x] Qualified alternate engine configurations across the backend seam, with a measured prohibition on lazy compilation whose deferred work is charged to the call's fuel; [scope](docs/29-parallel-payments-and-wasm.md#qualified-alternate-engine-configurations).
+- [ ] Qualified AOT, JIT or SIMD backends; no native backend is implemented.
 
 Implemented behavior and the remaining activation boundary are specified in [document 29](docs/29-parallel-payments-and-wasm.md).
 
@@ -155,7 +157,7 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Complete fixed/rotating protocol compatibility fixtures and deterministic mutation qualification.
 - [x] Complete coverage-guided fuzzing of the protocol and contract surfaces on the local platform; [measurements](docs/37-protocol-qualification.md).
 - [x] Add an independent monotonic anchor and encrypted consensus-key custody with daemon activation; [threat boundary](docs/53-key-custody-and-release-authority.md).
-- [ ] Complete remaining platform and reproducible-release qualification.
+- [ ] Complete remaining platform and reproducible-release qualification; the independent-machine comparator is committed and refuses same-machine reports, so what remains is a second physical machine rather than a second hosted run.
 
 ## Remaining work by scope
 

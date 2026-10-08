@@ -95,7 +95,7 @@ impl Blake2sProvider {
     /// Registration already rejected malformed, weak and non-canonically encoded
     /// keys, so for a registered identity
     /// `ed25519_verify(&registered_key(id).unwrap(), message, signature)` decides
-    /// exactly as [`CryptoProvider::verify_signature`] does. Callers that batch
+    /// exactly as [`crate::CryptoProvider::verify_signature`] does. Callers that batch
     /// independent verifications use this to obtain the key bytes.
     #[must_use]
     pub fn registered_key(&self, validator: ValidatorId) -> Option<[u8; 32]> {

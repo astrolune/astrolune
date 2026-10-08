@@ -888,7 +888,15 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     let historical = client
         .state_proof_at(&genesis::genesis_key(), 2)
         .unwrap()
-        .unwrap();
+        .unwrap_or_else(|| {
+            // A restarted late-joining observer must retain height 2: the window is 64
+            // blocks and log replay rebuilds the index. Report its head so an
+            // intermittent absence shows whether catch-up had progressed.
+            panic!(
+                "restarted observer retained no state at height 2; status: {:?}",
+                call(&restarted[4].1, "status", "{}").get("result")
+            )
+        });
     historical
         .verify_with_handoffs(&fresh, &genesis::genesis_key(), 2)
         .unwrap();

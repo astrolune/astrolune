@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
+
 # Explorer integration
 
 The Rust daemon exposes length-prefixed JSON-RPC over TCP, not HTTP. A browser
