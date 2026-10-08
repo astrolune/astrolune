@@ -20,7 +20,7 @@ consensus = { version = "0.1.0", path = "../../crates/consensus" }
 crypto = { version = "0.1.0", path = "../../crates/crypto" }
 genesis = { version = "0.1.0", path = "../../crates/genesis" }
 keystore = { version = "0.1.0", path = "../../crates/keystore" }
-zeroize = "1.9.0"
+zeroize = "=1.9.0"
 node = { version = "0.1.0", path = "../../crates/node" }
 p2p = { version = "0.1.0", path = "../../crates/p2p" }
 rpc = { version = "0.1.0", path = "../../crates/rpc" }

@@ -112,7 +112,11 @@ pub fn potb_configuration(
             epoch_blocks: 2,
             initial_weight: weight,
             age_increment,
-            maximum_weight: if age_increment == 0 { weight } else { weight * 2 },
+            maximum_weight: if age_increment == 0 {
+                weight
+            } else {
+                weight * 2
+            },
         },
     )
     .unwrap()

@@ -463,7 +463,14 @@ mod tests {
         ] {
             assert!(parse(arguments.iter().map(OsString::from)).is_err());
         }
-        assert!(parse(base.iter().chain(["--signing-anchor"].iter()).map(OsString::from)).is_err());
+        assert!(
+            parse(
+                base.iter()
+                    .chain(["--signing-anchor"].iter())
+                    .map(OsString::from)
+            )
+            .is_err()
+        );
     }
     #[test]
     fn discovery_and_metrics_need_explicit_scoped_network_configuration() {

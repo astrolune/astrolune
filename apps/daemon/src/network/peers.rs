@@ -276,7 +276,7 @@ impl PeerRuntime {
             48
         };
         let payload = dictionary.as_ref().map_or_else(
-            || request.encode().to_vec(),
+            || request.encode(),
             |known| CompactRequest::new(request, known).encode(),
         );
         let framed = self.frame(&payload, maximum)?;

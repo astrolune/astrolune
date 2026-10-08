@@ -14,17 +14,17 @@ repository.workspace = true
 [dependencies]
 codec = { version = "0.1.0", path = "../codec" }
 types = { version = "0.1.0", path = "../types" }
-rustls = { version = "0.23.45", default-features = false, features = ["std", "ring"] }
-zeroize = "1.9.0"
-rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"], optional = true }
-time = { version = "0.3.55", optional = true }
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring"] }
+zeroize = "=1.9.0"
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring"], optional = true }
+time = { version = "=0.3.55", optional = true }
 
 [features]
 provisioning = ["dep:rcgen", "dep:time"]
 
 [dev-dependencies]
-rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"] }
-time = "0.3.55"
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring"] }
+time = "=0.3.55"
 
 [lints]
 workspace = true

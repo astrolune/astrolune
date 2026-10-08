@@ -10,14 +10,14 @@
 //! modelled transition relation is conformance-tested against the real
 //! `consensus::LocalBft` with protected `keystore::DurableSigner` journals. This
 //! is bounded exploration, never a proof; the stated bounds and the open items are
-//! recorded in `docs/52-formal-consensus-model.md`.
+//! recorded in `docs/55-formal-consensus-model.md`.
 
 use consensus::{
-    AuthenticatedCommittee, BftFinalityEngine, Committee, CommitteeMember, ConsensusError,
-    FinalityCertificate, FinalityEngine, LocalBft, LocalBftError, PotbWeight, PrevoteCertificate,
-    Proposal, Vote, VotePhase, VotingStep, quorum_power,
+    AuthenticatedCommittee, BftFinalityEngine, Committee, CommitteeMember, FinalityCertificate,
+    FinalityEngine, LocalBft, PotbWeight, PrevoteCertificate, Proposal, Vote, VotePhase,
+    VotingStep, quorum_power,
 };
-use keystore::{DurableSigner, KeystoreError, SigningContext, SigningLock};
+use keystore::{DurableSigner, SigningContext, SigningLock};
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::Write as _,
@@ -334,7 +334,8 @@ impl Model {
     fn slot_power(&self, state: &State, round: usize, slot: usize, value: usize) -> u128 {
         let honest: u128 = (0..self.bound.validators)
             .filter(|index| {
-                !self.bound.byzantine[*index] && state.votes[*index][round][slot] == value_slot(value)
+                !self.bound.byzantine[*index]
+                    && state.votes[*index][round][slot] == value_slot(value)
             })
             .map(|index| self.bound.weights[index])
             .sum();
@@ -364,19 +365,6 @@ impl Model {
         found
     }
 
-    /// Every round and value carrying a prevote certificate.
-    fn prevote_quorums(&self, state: &State) -> Vec<(usize, usize)> {
-        let mut found = Vec::new();
-        for round in 0..self.bound.rounds {
-            for value in 0..self.bound.values {
-                if self.prevote_quorum(state, round, value) {
-                    found.push((round, value));
-                }
-            }
-        }
-        found
-    }
-
     /// No designated proposal has been signed for this round yet.
     fn proposal_absent(&self, state: &State, round: usize) -> bool {
         (0..self.bound.values).all(|value| state.proposals[round][value] == 0)
@@ -386,6 +374,12 @@ impl Model {
     ///
     /// A reproposal is usable only when the claimed earlier-round prevote quorum
     /// really exists, because `verify_valid_round` requires the certificate itself.
+    ///
+    /// The three cases are distinct and all reachable: `None` means no justified
+    /// prevote exists, `Some(None)` means a fresh proposal justifies it, and
+    /// `Some(Some(round))` names the reproposed valid round. The inner option is
+    /// exactly the shape `LocalBft::prevote_proposal` takes for its proof.
+    #[allow(clippy::option_option)]
     fn justifying_form(
         &self,
         state: &State,
@@ -608,6 +602,11 @@ impl Model {
     }
 
     /// Successor state of one enabled transition.
+    ///
+    /// The successor depends only on the action, because `actions` already decided
+    /// enablement against the bound. Kept as a method for symmetry with `actions`
+    /// and `check` so a caller never mixes the two call forms.
+    #[allow(clippy::unused_self)]
     fn apply(&self, state: &State, action: Action) -> State {
         let mut next = *state;
         match action {
@@ -617,8 +616,7 @@ impl Model {
                 valid_round,
             } => {
                 let round = usize::from(state.round[validator]);
-                next.proposals[round][value] |=
-                    valid_round.map_or_else(fresh_form, repropose_form);
+                next.proposals[round][value] |= valid_round.map_or_else(fresh_form, repropose_form);
             }
             Action::Prevote { validator, value } => {
                 let round = usize::from(state.round[validator]);
@@ -880,7 +878,11 @@ fn explore(model: &Model, properties: &[Property]) -> Report {
         }
         let decisions = model.decisions(&state);
         for (round, _) in &decisions {
-            report.decision_round = Some(report.decision_round.map_or(*round, |best| best.max(*round)));
+            report.decision_round = Some(
+                report
+                    .decision_round
+                    .map_or(*round, |best| best.max(*round)),
+            );
         }
         let actions = model.actions(&state);
         if actions.is_empty() {
@@ -992,6 +994,7 @@ struct Harness<'a> {
     /// Signed proposals keyed by round, value and evidence form.
     proposals: BTreeMap<(usize, usize, Option<usize>), Proposal>,
     /// Journals for this walk; dropped with the harness.
+    #[allow(dead_code)] // Held only so its Drop removes the walk's journal directory.
     journals: Fixture,
 }
 
@@ -1064,7 +1067,8 @@ impl<'a> Harness<'a> {
             voter: identity(validator),
             signature: [0; 64],
         };
-        vote.signature = crypto::blake2s::ed25519_sign(&[seed(validator); 32], &vote.signing_hash().0);
+        vote.signature =
+            crypto::blake2s::ed25519_sign(&[seed(validator); 32], &vote.signing_hash().0);
         vote
     }
 
@@ -1141,7 +1145,8 @@ impl<'a> Harness<'a> {
         };
         proposal.signature =
             crypto::blake2s::ed25519_sign(&[seed(leader); 32], &proposal.signing_hash().0);
-        self.proposals.insert((round, value, form), proposal.clone());
+        self.proposals
+            .insert((round, value, form), proposal.clone());
         proposal
     }
 
@@ -1228,8 +1233,7 @@ impl Harness<'_> {
             .local(validator)
             .propose(expected, &header, proof.as_ref(), |_| true)
             .unwrap();
-        self.proposals
-            .insert((round, value, valid_round), proposal);
+        self.proposals.insert((round, value, valid_round), proposal);
     }
 
     /// Prevotes an authenticated proposal and asserts the non-nil decision.
@@ -1328,6 +1332,9 @@ impl Harness<'_> {
         );
     }
 }
+
+/// Uniform weights with one equivocating seat, the baseline safety bound.
+const UNIFORM_SAFETY: Bound = Bound {
     name: "uniform-async-v4-f1-k2-r3",
     validators: 4,
     weights: [1, 1, 1, 1, 0],
@@ -1398,55 +1405,158 @@ const LIVE_WEIGHTED: Bound = Bound {
     adversary: Adversary::Silent,
 };
 
-/// Deeper round bound for the extended campaign.
-const DEEP_UNIFORM: Bound = Bound {
-    name: "uniform-async-v4-f1-k2-r4",
-    validators: 4,
-    weights: [1, 1, 1, 1, 0],
-    byzantine: [false, false, true, false, false],
-    values: 2,
-    rounds: 4,
-    regime: Regime::Asynchronous,
-    adversary: Adversary::MaximalEquivocation,
-};
+/// Equivocating weight at which two disjoint quorums can both form.
+///
+/// A quorum is strictly more than two thirds of the total, so `2 * quorum`
+/// always exceeds the total and this subtraction cannot wrap.
+fn accountability_threshold(model: &Model) -> u128 {
+    model.quorum * 2 - model.total
+}
 
-/// Deeper non-uniform bound for the extended campaign.
-const DEEP_WEIGHTED: Bound = Bound {
-    name: "weighted-async-v4-f1-k2-r4",
-    validators: 4,
-    weights: [3, 2, 1, 1, 0],
-    byzantine: [false, false, true, false, false],
-    values: 2,
-    rounds: 4,
-    regime: Regime::Asynchronous,
-    adversary: Adversary::MaximalEquivocation,
-};
+/// Explores one bound and returns its report, recording the measured counts.
+fn survey(bound: Bound) -> (Model, Report) {
+    let model = Model::new(bound);
+    let started = Instant::now();
+    let report = explore(&model, &ALL_PROPERTIES);
+    record(&model, &report, started.elapsed());
+    (model, report)
+}
 
-/// Five seats and three candidate values for the extended campaign.
-const DEEP_FIVE: Bound = Bound {
-    name: "uniform-async-v5-f1-k3-r3",
-    validators: 5,
-    weights: [1, 1, 1, 1, 1],
-    byzantine: [false, false, true, false, false],
-    values: 3,
-    rounds: 3,
-    regime: Regime::Asynchronous,
-    adversary: Adversary::MaximalEquivocation,
-};
+/// Shortens a bound to two rounds for the ordinary suite.
+fn shallow(name: &'static str, bound: Bound) -> Bound {
+    Bound {
+        name,
+        rounds: 2,
+        ..bound
+    }
+}
 
 #[test]
-fn measure() {
+fn asynchronous_exploration_preserves_safety_below_the_accountability_threshold() {
     for bound in [
-        Bound {
-            name: "uniform-async-v4-f1-k2-r2",
-            rounds: 2,
-            ..UNIFORM_SAFETY
-        },
-        Bound {
-            name: "weighted-async-v4-f1-k2-r2",
-            rounds: 2,
-            ..WEIGHTED_SAFETY
-        },
+        shallow("uniform-async-v4-f1-k2-r2", UNIFORM_SAFETY),
+        shallow("weighted-async-v4-f1-k2-r2", WEIGHTED_SAFETY),
+    ] {
+        let (model, report) = survey(bound);
+        assert!(
+            model.equivocating < accountability_threshold(&model),
+            "{}: equivocating {} must stay below the threshold {}",
+            model.bound.name,
+            model.equivocating,
+            accountability_threshold(&model)
+        );
+        assert_holds(&model, &report);
+        // Asynchrony admits undecided terminal states; that is the regime, not a defect.
+        assert!(
+            report.states > 1 && report.terminal > 0,
+            "empty exploration"
+        );
+    }
+}
+
+#[test]
+fn conflicting_finality_requires_at_least_the_accountability_threshold() {
+    let (model, report) = survey(shallow("accountable-async-v4-f2-k2-r2", ACCOUNTABLE));
+    assert_eq!(
+        model.equivocating,
+        accountability_threshold(&model),
+        "{}: this bound must sit exactly at the threshold",
+        model.bound.name
+    );
+    // At the threshold two disjoint quorums can both form, so a conflicting
+    // certificate must become reachable. Its existence is what makes the offence
+    // attributable: every signature in both quorums is authenticated.
+    let (property, trace) = report
+        .violation
+        .as_ref()
+        .expect("equivocating weight at the threshold must expose a conflicting certificate");
+    assert!(
+        property.starts_with("quorum lock safety"),
+        "unexpected first violation at the threshold: {property}"
+    );
+    assert!(!trace.is_empty(), "counterexample trace is empty");
+    println!("  attributable counterexample:\n{}", describe(trace));
+}
+
+#[test]
+fn eventual_synchrony_decides_at_every_terminal_state_within_the_round_bound() {
+    for bound in [
+        shallow("live-sync-v4-f1-k2-r2-silent", LIVE_SILENT),
+        shallow("live-sync-v4-f1-k2-r2-equivocating", LIVE_BYZANTINE),
+        shallow("live-sync-weighted-v4-f1-k2-r2", LIVE_WEIGHTED),
+    ] {
+        let (model, report) = survey(bound);
+        assert_holds(&model, &report);
+        assert!(
+            report.undecided.is_none(),
+            "{}: terminal state without a certificate:\n{}",
+            model.bound.name,
+            describe(report.undecided.as_deref().unwrap_or_default())
+        );
+        let round = report
+            .decision_round
+            .expect("eventual synchrony must reach a certificate");
+        assert!(
+            round < model.bound.rounds,
+            "{}: decided at round {round} outside the bound {}",
+            model.bound.name,
+            model.bound.rounds
+        );
+    }
+}
+
+#[test]
+fn modelled_transitions_agree_with_the_production_local_bft() {
+    // Walks drive the real LocalBft over protected journals, so each one costs a
+    // temporary directory and real Ed25519 signatures; the walk count is bounded.
+    for bound in [
+        shallow("uniform-async-v4-f1-k2-r2", UNIFORM_SAFETY),
+        shallow("weighted-async-v4-f1-k2-r2", WEIGHTED_SAFETY),
+        shallow("live-sync-v4-f1-k2-r2-equivocating", LIVE_BYZANTINE),
+    ] {
+        let model = Model::new(bound);
+        let mut checked = 0usize;
+        for walk in 0..16u64 {
+            let mut random = Random(0x5eed_0000 ^ walk);
+            let mut harness = Harness::new(&model);
+            let mut state = model.initial();
+            harness.assert_agrees(&state);
+            loop {
+                let actions = model.actions(&state);
+                if actions.is_empty() {
+                    break;
+                }
+                let action = actions[random.choose(actions.len())];
+                let next = model.apply(&state, action);
+                // The production call sees the same pre-state the model transitioned from.
+                harness.apply(&state, action);
+                state = next;
+                harness.assert_agrees(&state);
+                checked += 1;
+            }
+        }
+        println!(
+            "{}: {checked} production transitions agreed with the model",
+            model.bound.name
+        );
+        assert!(
+            checked > 0,
+            "{}: no transition was driven",
+            model.bound.name
+        );
+    }
+}
+
+#[test]
+#[ignore = "deeper bounded exploration; run with --release --ignored. Bounded model checking, never a proof"]
+fn extended_formal_model_campaign() {
+    for bound in [
+        UNIFORM_SAFETY,
+        WEIGHTED_SAFETY,
+        ACCOUNTABLE,
+        LIVE_SILENT,
+        LIVE_BYZANTINE,
+        LIVE_WEIGHTED,
         Bound {
             name: "uniform-async-v5-f1-k2-r2",
             validators: 5,
@@ -1461,14 +1571,26 @@ fn measure() {
             ..UNIFORM_SAFETY
         },
     ] {
-        let model = Model::new(bound);
-        let started = Instant::now();
-        let report = explore(&model);
-        record(&model, &report, started.elapsed());
+        let threshold_reached = {
+            let model = Model::new(bound);
+            model.equivocating >= accountability_threshold(&model)
+        };
+        let (model, report) = survey(bound);
         println!(
-            "  violation {:?}  undecided-terminal {}",
+            "  threshold {}  equivocating {}  violation {:?}  undecided-terminal {}",
+            accountability_threshold(&model),
+            model.equivocating,
             report.violation.as_ref().map(|(name, _)| name.clone()),
             report.undecided.is_some()
         );
+        if threshold_reached {
+            assert!(
+                report.violation.is_some(),
+                "{}: at or above the threshold a conflicting certificate must be reachable",
+                model.bound.name
+            );
+        } else {
+            assert_holds(&model, &report);
+        }
     }
 }

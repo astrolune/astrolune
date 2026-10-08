@@ -30,9 +30,9 @@ The repository now runs a **certified reference network** for native payments an
 | Canonical codec | primitive, version-1 transaction, block-header, and receipt codecs implemented; strict lengths/flags, version/lane rejection, and transaction preflight validation tested; version-1 consensus vote/certificate and bounded reference-network envelopes implemented/tested; production compatibility qualification remains open |
 | Shared protocol types | interface baseline |
 | Genesis | bounded version-1 decoding, validated BLAKE2s commitment, account/validator state materialization, CLI verification, atomic daemon activation and restart identity checks implemented; exact genesis-key registry and explicit protected signer provisioning implemented |
-| Cryptography and VRF | standard BLAKE2s-256 and strict Ed25519 implemented/tested; registered validator-key verification; strict registered-key RFC 9381 VRF verification/generation and RFC/malleability/context tests implemented |
-| PoTB and BFT | checked committee commitments, registered Ed25519 vote authentication, bounded round-specific quorum collection, and independently verified version-1 certificates implemented/tested; protected local prevote/precommit locks, verified valid-round proofs, and timeout transitions implemented/tested; signed proposals and explicit reference round-robin designation implemented/tested; reference monotonic timers and fixed-committee daemon networking implemented/tested; verified VRF selection, complete contribution collection, certified handoff and rotating execution/history replay APIs and explicit PoTB daemon/client activation implemented; formal distributed liveness remains open |
-| Keystore | single-key Ed25519 signer, bounded decision journal with protected watermark rollover, chain/genesis/key binding, monotonic watermark, atomic version-2 vote/lock records, process locking, restart and uncertain-write recovery implemented/tested; daemon open-only journal recovery and explicit CLI provisioning implemented/tested; encrypted wallet vaults and OS-generated keys implemented/tested; consensus key custody and anti-rollback anchors remain open |
+| Cryptography and VRF | standard BLAKE2s-256 and strict Ed25519 implemented/tested; registered validator-key verification; strict registered-key RFC 9381 VRF verification/generation and RFC/malleability/context tests implemented; bounded parallel strict verification with deterministic failing-index reporting and serial-equivalence tests implemented/tested; independent cryptographic review remains open |
+| PoTB and BFT | checked committee commitments, registered Ed25519 vote authentication, bounded round-specific quorum collection, and independently verified version-1 certificates implemented/tested; protected local prevote/precommit locks, verified valid-round proofs, and timeout transitions implemented/tested; signed proposals and explicit reference round-robin designation implemented/tested; reference monotonic timers and fixed-committee daemon networking implemented/tested; verified VRF selection, complete contribution collection, certified handoff and rotating execution/history replay APIs and explicit PoTB daemon/client activation implemented; bounded exhaustive modelling of agreement, lock safety, weighted accountability and bounded-round decision, conformance-tested against the production voter, implemented/tested; unbounded formal distributed liveness remains open |
+| Keystore | single-key Ed25519 signer, bounded decision journal with protected watermark rollover, chain/genesis/key binding, monotonic watermark, atomic version-2 vote/lock records, process locking, restart and uncertain-write recovery implemented/tested; daemon open-only journal recovery and explicit CLI provisioning implemented/tested; encrypted wallet vaults and OS-generated keys implemented/tested; encrypted consensus-key custody, an independent monotonic signing anchor rejecting a restored older journal, and explicit daemon activation implemented/tested; hardware isolation and a coordinated rewrite of both stores remain out of scope |
 | Transactions | canonical signing/ID commitments and state-aware signed validator implemented/tested; native signed payment transitions and fixed reference fees implemented/tested; version-1 envelope, inclusive expiry, signed lane/prices, and expiry eviction implemented/tested |
 | Mempool | bounded in-memory reference admission and deterministic selection implemented/tested |
 | State and storage | bounded Merkle state, membership and absence proofs, immutable snapshots, atomic transitions, file-backed state and whole-chain archive recovery, and authenticated snapshot exchange implemented/tested; daemon block/state restart recovery implemented/tested; native payment account transitions implemented/tested; append-only block/delta logs with disk history reads, atomic head publication and replay recovery are implemented/tested for new network directories; bounded recent transaction indexing and certified receipt recovery are implemented/tested; bounded historical state indexing is implemented; explicit pinned physical retention is implemented; automatic retention remains open |
@@ -90,9 +90,12 @@ checks; [scope](29-parallel-payments-and-wasm.md#per-block-worker-reuse).
 Consecutive singleton-wave fusion, bounded declared-key prefetch and reusable
 worker result buffers are implemented with serial-equivalence checks;
 [behavior and limits](29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
-These complete the reference execution optimization scope. Signature batching
-remains open and is deferred with cryptographic verification work. End-to-end
-throughput is not established by these functional checks.
+These complete the reference execution optimization scope. Bounded parallel strict
+signature verification is implemented across every quorum path with deterministic
+failing-index reporting and serial-equivalence tests;
+[scope and limits](09-cryptographic-foundations.md#bounded-parallel-verification).
+It splits independent verifications across workers rather than reducing the work
+per signature. End-to-end throughput is not established by these functional checks.
 
 ### M5 — consensus
 
@@ -145,13 +148,13 @@ local Windows checks and configured CI jobs do not satisfy those external gates.
 
 Every protocol change must pass formatting, Clippy with warnings denied, unit/integration/doc tests, canonical serialization compatibility, cross-platform deterministic fixtures, and documentation-link checks. Relevant changes additionally require property testing, fuzzing, recovery tests, and optimized/reference differential checks.
 
-Unsafe Rust remains forbidden except in the dedicated wasm32 FFI module; [documented binding review](../crates/contract-abi/SAFETY.md). CI currently covers Linux and Windows quality checks; dependency policy and advisory workflows are configured separately.
+Unsafe Rust remains forbidden except in the dedicated wasm32 FFI module; [documented binding review](../crates/contract-abi/SAFETY.md). CI currently covers Linux and Windows quality checks. Dependency policy, registry advisory lookup and the workspace-excluded fuzz package are checked by separate configured workflows; [review and its coverage gaps](51-dependency-and-security-review.md).
 
 ## 8.6 Open decisions
 
 Before production implementation, resolve:
 
-1. Adversarial contribution/evidence availability and formal safety/liveness. Capacity/fee governance uses more than two thirds of incumbent weight with next-epoch activation; [implementation](48-parameter-governance.md). The [live PoTB profile](45-live-potb-network.md), candidate provisioning and incumbent-quorum admission CLI are implemented. [Bounded delivery simulations](46-rotating-network-simulations.md) cover both rotating profiles; broader Byzantine/churn schedules remain open.
+1. Adversarial contribution/evidence availability and formal safety/liveness. Capacity/fee governance uses more than two thirds of incumbent weight with next-epoch activation; [implementation](48-parameter-governance.md). The [live PoTB profile](45-live-potb-network.md), candidate provisioning and incumbent-quorum admission CLI are implemented. [Bounded delivery simulations](46-rotating-network-simulations.md) cover both rotating profiles, validly signed Byzantine coalitions below the accountability threshold, membership churn crossed with delivery faults and adverse weight concentration. A [bounded formal model](55-formal-consensus-model.md) checks agreement, lock safety, weighted accountability and bounded-round decision at one height. Unbounded safety/liveness and independent provider review remain open.
 2. Alternative availability policies beyond the implemented complete-roster private-network profile.
 3. Rotating weighted BFT lock, unlock, timeout, and handoff rules.
 4. Versioned activation of future protocol changes; current encoding/hash compatibility is fixed by the [literal corpus](41-protocol-compatibility.md).
@@ -161,7 +164,7 @@ Before production implementation, resolve:
 8. Adaptive-capacity observation, manipulation resistance, and activation.
 9. P2P transport, discovery, topology, identities, and denial-of-service bounds.
 10. Deployment-specific DNS lease pricing; deterministic naming, ownership and lease rules are implemented.
-11. Supported platforms, compatibility lifecycle, release signing, and maintainer authority.
+11. Supported platforms, compatibility lifecycle, and maintainer authority. Detached release-manifest signing and offline verification are implemented; the release authority identity and its key ceremony are deliberately not invented here; [workflow](53-key-custody-and-release-authority.md).
 
 ## 8.7 Non-negotiable correctness properties
 

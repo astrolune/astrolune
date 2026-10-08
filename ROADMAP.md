@@ -29,7 +29,9 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 - [x] Freeze eight separate PoTB producer-profile fixtures, with authenticated replay and independent framing/commitment checks; [details](docs/44-potb-state-transitions.md).
 - [x] Qualify explicit governance envelopes, daemon activation and preserved legacy compatibility; [rules and tests](docs/48-parameter-governance.md).
 - [x] Shared extension fuzz oracle, 99 structured seeds and deterministic one-million-input mutation campaign; [qualification details](docs/37-protocol-qualification.md).
-- [ ] Long fuzz campaigns, dependency/security review, and cross-platform suite qualification.
+- [x] Long deterministic and coverage-guided fuzz campaigns over the protocol and contract surfaces; [scope and measurements](docs/37-protocol-qualification.md).
+- [x] Committed bounded registry advisory lookup and a recorded dependency/security review; [evidence](docs/51-dependency-and-security-review.md).
+- [ ] Cross-platform suite qualification.
 - [x] Upgrade qualification: current stable dependencies, legacy vault compatibility,
   strict Rust 1.99.0 checks and bounded registry advisory lookup; [evidence](docs/39-toolchain-and-release-qualification.md).
 
@@ -37,7 +39,7 @@ Canonical encodings, protocol domains, hashes, addresses, signatures, checked re
 
 Signed envelopes, validation order, account/state commitments, immutable snapshots, proofs, state diffs, atomic commit, recovery, pruning, and snapshot exchange.
 
-Current progress: signed admission validates existing transaction fields against an account view. Merkle state commitments, membership and absence proofs, immutable snapshots, bounded transitions, atomic state/whole-chain archive recovery, and verified snapshot exchange are implemented with rollback tests. Proposal execution stays private until successful commit. Sequential signed payment overlays, balance/nonce transitions, fixed reference fees, execution revalidation, and daemon account/submission RPC are implemented. The [versioned transaction envelope](docs/14-versioned-transactions.md), expiry enforcement, and post-commit expiry eviction are implemented. [Append-only block/delta logs](docs/22-append-only-chain-storage.md) now provide durable publication, disk history reads, linear replay and legacy compatibility for new network directories. [Protected signing-journal rollover](docs/23-signing-journal-rollover.md) now continues after the former decision cap with constant file size and lock-preserving recovery. Bounded recent transaction indexing and certified receipt recovery are implemented. Quorum fee/capacity governance and bounded historical state indexing are implemented. Explicit bounded history export and pinned recovery are implemented; automated retention and rollback-resistant key custody remain open. Local daemon block/state restart integration is implemented; daemon signing-state integration and independent authentication of recovered history are implemented in the certified reference-network profile. See [state and recovery](docs/10-state-and-recovery.md) and [chain archives](docs/11-chain-archives.md).
+Current progress: signed admission validates existing transaction fields against an account view. Merkle state commitments, membership and absence proofs, immutable snapshots, bounded transitions, atomic state/whole-chain archive recovery, and verified snapshot exchange are implemented with rollback tests. Proposal execution stays private until successful commit. Sequential signed payment overlays, balance/nonce transitions, fixed reference fees, execution revalidation, and daemon account/submission RPC are implemented. The [versioned transaction envelope](docs/14-versioned-transactions.md), expiry enforcement, and post-commit expiry eviction are implemented. [Append-only block/delta logs](docs/22-append-only-chain-storage.md) now provide durable publication, disk history reads, linear replay and legacy compatibility for new network directories. [Protected signing-journal rollover](docs/23-signing-journal-rollover.md) now continues after the former decision cap with constant file size and lock-preserving recovery. Bounded recent transaction indexing and certified receipt recovery are implemented. Quorum fee/capacity governance and bounded historical state indexing are implemented. Explicit bounded history export and pinned recovery are implemented; automated retention remains open. Encrypted consensus-key custody and an independent monotonic signing anchor are implemented with explicit daemon activation; hardware isolation and a coordinated two-store rewrite remain out of scope. Local daemon block/state restart integration is implemented; daemon signing-state integration and independent authentication of recovered history are implemented in the certified reference-network profile. See [state and recovery](docs/10-state-and-recovery.md) and [chain archives](docs/11-chain-archives.md).
 
 ## M3 — deterministic Rust contracts
 
@@ -48,7 +50,8 @@ Pinned contract toolchain, canonical target selection, validator, interpreter, h
 - [x] Signed deployment/call transactions, nonce/fee transitions, explicit genesis activation and certified restart/catch-up tests.
 - [x] Allocation-free Rust SDK bindings, bundled builds and real wasm32 host-call tests.
 - [x] Restricted Cargo package/source manifests and offline published-source verification.
-- [ ] Qualified alternate backends and contract fuzz campaigns.
+- [x] Dedicated contract fuzz target with a differential validate/execute oracle and gated mutation campaigns; [scope](docs/37-protocol-qualification.md).
+- [ ] Qualified alternate backends.
 
 Implemented behavior and the remaining activation boundary are specified in [document 29](docs/29-parallel-payments-and-wasm.md).
 
@@ -66,7 +69,7 @@ Access leasing, execution waves, multiple lanes, optimistic validation, determin
 - [x] Bounded execution-parent read cache and borrowed-key wave planning, with uncached/serial equivalence and deterministic read-count checks; [scope](docs/29-parallel-payments-and-wasm.md#execution-parent-cache-and-planner-allocation).
 - [x] Reuse a bounded worker pool across each block's parallel waves, with thread-count and serial-equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#per-block-worker-reuse).
 - [x] Reference execution locality through borrowed-key planning and parent caching, consecutive singleton-wave fusion, bounded declared-key prefetch and reusable worker result buffers, with serial-equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
-- [ ] Signature batching with equivalence tests; deferred with cryptographic verification work.
+- [x] Bounded parallel strict signature verification with deterministic failing-index reporting, routed through every quorum path, with serial-equivalence tests; [scope](docs/09-cryptographic-foundations.md#bounded-parallel-verification).
 
 ## M5 — PoTB and finality
 
@@ -81,7 +84,9 @@ PoTB state transitions and evidence, audited VRF provider, weighted sampler, par
 - [x] Canonical evidence inclusion, active PoTB weights and quorum-authorized admission in an explicit producer profile, with atomic application execution and authenticated recovery; [details](docs/44-potb-state-transitions.md).
 - [x] Activate the PoTB profile in daemon provisioning, gossip, persisted handoff serving and RPC/CLI/DNS catch-up; [workflow and limits](docs/45-live-potb-network.md).
 - [x] Deterministic rotating-network delivery simulations with partitions, loss, delay, duplicates, invalid messages, durable restart and authenticated catch-up; [scope](docs/46-rotating-network-simulations.md).
-- [ ] Broader Byzantine/churn simulations, formal safety/liveness and independent provider review.
+- [x] Validly signed Byzantine coalitions below the accountability threshold, membership churn crossed with delivery faults, and adverse weight concentration; [scope](docs/46-rotating-network-simulations.md#byzantine-coalitions-churn-and-weight-concentration).
+- [x] Bounded exhaustive model of agreement, lock safety, weighted accountability and bounded-round decision, conformance-tested against the production voter; [bounds and limits](docs/55-formal-consensus-model.md).
+- [ ] Unbounded formal safety/liveness and independent provider review.
 
 The [VRF and sampler specification](docs/28-vrf-and-weighted-selection.md) distinguishes implemented selection from daemon activation.
 
@@ -123,7 +128,8 @@ Distributed calibration, interoperability, long fuzz campaigns, reproducible rel
 - [x] Two independent native builds with byte-identity checks; Windows verified locally, Linux/Windows gates configured in CI.
 - [x] Run pinned Rust-to-WASM SDK and source-package tests in the release CI matrix.
 - [x] Provide routine operations and a bounded read-only calibration sampler with raw reports; [runbook and measurement limits](docs/52-network-operations.md).
-- [ ] Observe Linux and independent-machine reproducibility and finish release authority/signing qualification.
+- [x] Detached release-manifest signing over every packaged file hash, with offline verification and no invented signing identity; [workflow](docs/53-key-custody-and-release-authority.md).
+- [ ] Observe Linux and independent-machine reproducibility, and complete the release authority identity and key ceremony.
 
 Detailed status and unresolved decisions are tracked in [`docs/08-implementation-status.md`](docs/08-implementation-status.md).
 
@@ -138,7 +144,7 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Complete the Rust SDK host adapter.
 - [x] Complete bounded source-package tooling and exact artifact reconstruction.
 - [x] Complete mixed-lane execution, capacity/fee governance and reference execution optimizations with deterministic equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
-- [ ] Qualify signature batching; deferred with cryptographic verification work.
+- [x] Qualify bounded parallel strict signature verification across every quorum path; [scope](docs/09-cryptographic-foundations.md#bounded-parallel-verification).
 - [x] Add bounded state/transaction indexes and exact-height certified state proofs; [details](docs/47-historical-state-index.md).
 - [x] Add explicit bounded history export and independently pinned recovery; [operator workflow and limits](docs/49-pinned-history-retention.md).
 - [x] Add encrypted wallet custody, OS-generated wallet keys and direct vault signing.
@@ -147,13 +153,15 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Implement the authenticated on-chain DNS registry and operational resolver.
 - [x] Complete scoped private-network peer discovery, bounded sessions, operational telemetry and authenticated observer recovery tooling.
 - [x] Complete fixed/rotating protocol compatibility fixtures and deterministic mutation qualification.
-- [ ] Complete coverage-guided fuzzing, remaining platform and reproducible-release qualification.
+- [x] Complete coverage-guided fuzzing of the protocol and contract surfaces on the local platform; [measurements](docs/37-protocol-qualification.md).
+- [x] Add an independent monotonic anchor and encrypted consensus-key custody with daemon activation; [threat boundary](docs/53-key-custody-and-release-authority.md).
+- [ ] Complete remaining platform and reproducible-release qualification.
 
 ## Remaining work by scope
 
 The reference execution optimizations above do not complete the whole roadmap.
 
-- Security-related work is deferred: signature batching, long coverage-guided and contract fuzz campaigns, Byzantine/churn simulations, formal safety/liveness, provider/dependency review, key custody, release signing and external audits. Alternate runtime backends and automated history retention also remain unimplemented; they require runtime/metering qualification and checkpoint/signing-state recovery design respectively.
+- Security-related work now has local evidence: bounded parallel strict signature verification, long deterministic and coverage-guided protocol/contract fuzz campaigns, validly signed Byzantine and churn simulations, a bounded formal model of fixed-height voting, a committed dependency/security review, anchored consensus key custody and detached release-manifest signing. What remains is work this repository cannot perform for itself: external cryptography, consensus, runtime and security audits, independent provider review of the VRF and signature backends, an unbounded formal safety/liveness argument, a release authority identity and key ceremony, and reproducibility observed on independent machines. Alternate runtime backends and automated history retention also remain unimplemented; they require runtime/metering qualification and checkpoint/signing-state recovery design respectively.
 - Platform and release evidence remains external to the local Windows checks: Linux suite execution, cross-platform contract artifacts and reproducibility on independent machines. Configured CI gates do not establish observed results.
 - M6 reference compact propagation and bounded stage overlap are implemented: peer fetch/decode, detached execution, node-thread voting and sequential commit. Speculation covers local candidate preparation and bounded next-height fetch; execution/voting on uncommitted descendant state is outside this reference profile. [Exact behavior and bounds](docs/54-compact-blocks-and-execution-pipeline.md).
 - Routine operations and calibration tooling are implemented. Actual distributed calibration, deployment-specific production acceptance and independent-machine reproducibility remain release activities. Functional equivalence and deterministic read/thread/allocation checks do not establish end-to-end throughput.

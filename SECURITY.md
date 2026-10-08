@@ -46,7 +46,8 @@ Reports are especially valuable for:
 - consensus safety, liveness, committee selection, rotation, or quorum errors;
 - PoTB manipulation and weight/evidence inconsistencies;
 - signature, hash, VRF, key derivation, or domain-separation failures;
-- double-sign prevention and keystore isolation;
+- double-sign prevention, signing-anchor rollback detection, and keystore isolation;
+- release manifest signing and artifact verification bypasses;
 - non-deterministic contract or parallel execution;
 - state commitment, snapshot, recovery, or sync verification bypasses;
 - canonical decoder confusion, memory exhaustion, and P2P denial of service;
@@ -55,5 +56,7 @@ Reports are especially valuable for:
 ## Out of scope for security guarantees
 
 Placeholder binaries, unimplemented traits, documented future mechanisms, benchmark targets, and privacy/anonymity ideas are not claims of deployed protection. Findings that improve these designs are welcome, but no bounty or reward program is promised.
+
+Several mechanisms are implemented and locally tested but deliberately bounded, and their limits are not defects. Bounded parallel signature verification splits independent verifications and is not the cofactored batch equation; [scope](docs/09-cryptographic-foundations.md#bounded-parallel-verification). The signing anchor detects a restored older journal through an independently provisioned store and does not provide hardware isolation or survive a coordinated rewrite of both stores; [threat boundary](docs/53-key-custody-and-release-authority.md). The consensus model is bounded exhaustive exploration at one height, never a proof; [bounds](docs/55-formal-consensus-model.md). Adversarial simulations hold Byzantine coalitions below the accountability threshold; [scope](docs/46-rotating-network-simulations.md). Release signing ships the mechanism only: this repository invents no signing identity or key. Advisory scanning is a database check over the Rust workspace, not an implementation audit, and its licence/ban coverage gap is recorded; [review](docs/51-dependency-and-security-review.md). No external cryptography, consensus, runtime or security audit has been performed.
 
 Testing must be authorized, targeted, non-destructive, and must not disrupt third-party systems or access data without permission.

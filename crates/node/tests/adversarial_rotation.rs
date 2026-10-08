@@ -135,8 +135,9 @@ impl Profile {
     fn churn(&self) -> Churn {
         let mut churn = Churn::default();
         if self.authority != Authority::Rotating {
-            churn.trusted =
-                Some(PotbVerifier::new(&self.potb_profile(), &hostile::keys(self.members)).unwrap());
+            churn.trusted = Some(
+                PotbVerifier::new(&self.potb_profile(), &hostile::keys(self.members)).unwrap(),
+            );
         }
         churn
     }
@@ -310,7 +311,8 @@ impl std::fmt::Debug for Churn {
             .field("excluded_at", &self.excluded)
             .field("exclusions", &self.exclusions)
             .field("exclusion_attempts", &self.exclusion_attempts)
-            .finish()
+            // Replayed handoff state is not a counter and is omitted deliberately.
+            .finish_non_exhaustive()
     }
 }
 
@@ -449,7 +451,8 @@ impl std::fmt::Debug for Schedule {
             .field("blackout_commits", &self.blackout_commits)
             .field("rounds", &self.rounds)
             .field("churn", &self.churn)
-            .finish()
+            // Queued packets and retained proofs are reported by count, not by body.
+            .finish_non_exhaustive()
     }
 }
 
@@ -558,7 +561,11 @@ impl Schedule {
     }
 
     /// Signs additional conflicting values for every observed coalition vote.
-    fn equivocate(&mut self, messages: &[NetworkMessage], profile: &Profile) -> Vec<NetworkMessage> {
+    fn equivocate(
+        &mut self,
+        messages: &[NetworkMessage],
+        profile: &Profile,
+    ) -> Vec<NetworkMessage> {
         let mut conflicts = Vec::new();
         for message in messages {
             let NetworkMessage::Vote(honest) = message else {
@@ -738,7 +745,8 @@ fn run(profile: &Profile, seed: u64) -> Schedule {
                             profile.name
                         );
                         assert_eq!(
-                            nodes[isolated].request().height, window.isolated,
+                            nodes[isolated].request().height,
+                            window.isolated,
                             "{}, seed={seed}: a blind node cannot publish",
                             profile.name
                         );
@@ -988,11 +996,7 @@ fn extended_rotating_schedule_campaign() {
 #[ignore = "explicit multi-seed Byzantine equivocation campaign; bounded coalitions only, no formal safety proof"]
 fn extended_byzantine_equivocation_campaign() {
     for seed in 1..=8 {
-        for profile in [
-            equivocating_rotating(),
-            equivocating_potb(),
-            concentrated(),
-        ] {
+        for profile in [equivocating_rotating(), equivocating_potb(), concentrated()] {
             let result = run(&profile, seed);
             eprintln!("{}, seed={seed}: {result:?}", profile.name);
         }

@@ -15,7 +15,7 @@ repository.workspace = true
 blake2 = "=0.11.0"
 ed25519-dalek = "=3.0.0"
 vrf-rfc9381 = { version = "=0.0.7", default-features = false, features = ["edwards25519"] }
-zeroize = "1.9.0"
+zeroize = "=1.9.0"
 types = { version = "0.1.0", path = "../types" }
 
 [lints]

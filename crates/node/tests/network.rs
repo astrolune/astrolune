@@ -428,7 +428,7 @@ fn background_production_keeps_captured_candidate_and_recovers_after_three_heigh
         serial.storage().state().root()
     );
     let (first, _) = background.storage().read_finalized(1).unwrap().unwrap();
-    assert!(first.transactions.is_empty());
+    assert_eq!(first.transactions, []);
     let (second, _) = background.storage().read_finalized(2).unwrap().unwrap();
     assert_eq!(second.transactions, vec![transfer()]);
     let checkpoint = background.storage().checkpoint().copied();
@@ -483,7 +483,7 @@ fn background_production_progresses_during_continuous_admission() {
         node.tick(Instant::now()).unwrap();
         if node.request().height > 1 {
             let (first, _) = node.storage().read_finalized(1).unwrap().unwrap();
-            assert!(first.transactions.is_empty());
+            assert_eq!(first.transactions, []);
             return;
         }
         std::thread::sleep(Duration::from_millis(2));

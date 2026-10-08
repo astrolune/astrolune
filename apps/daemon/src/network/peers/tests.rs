@@ -239,7 +239,7 @@ fn server_accepts_raw_and_discovery_compact_requests_alongside_legacy() {
                 );
                 let request = SyncRequest { genesis, height: 1 };
                 let request = known_count.map_or_else(
-                    || request.encode().to_vec(),
+                    || request.encode(),
                     |_| CompactRequest::new(request, &dictionary).encode(),
                 );
                 let request = if wrapped {
@@ -320,13 +320,13 @@ fn outgoing_packets_advertise_owned_dictionary_and_reconstruct_after_pool_change
                     .unwrap()
                     .receive_prepared(PreparedExchange::decode(genesis, &full).unwrap())
                     .unwrap();
-                assert!(
+                assert_eq!(
                     CompactRequest::new(
                         request.sync(),
                         &server.node.lock().unwrap().compact_dictionary()
                     )
-                    .known()
-                    .is_empty()
+                    .known(),
+                    []
                 );
                 let response = server.frame(&response, MAX_EXCHANGE_BYTES).unwrap();
                 write_packet(

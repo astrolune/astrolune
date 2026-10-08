@@ -16,7 +16,7 @@ cargo-fuzz = true
 windows-coverage = []
 
 [build-dependencies]
-cc = "1"
+cc = "=1.5.1"
 
 [dependencies]
 crypto = { path = "../../crypto" }
