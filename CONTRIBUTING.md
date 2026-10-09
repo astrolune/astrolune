@@ -71,6 +71,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 Report checks that could not be run. Never bypass hooks or remove assertions merely to make CI green.
 
+Benchmarks are not part of the gate above and never fail CI, but `--all-targets`
+compiles and lints them, so a stale benchmark breaks clippy. Run one with
+`cargo bench --locked -p <crate>`, or shorten an exploratory run with
+`ASTROLUNE_BENCH_ROUNDS=5 ASTROLUNE_BENCH_TARGET_US=500`. A measurement is not a
+correctness check: see [local performance measurement](docs/56-performance-measurement.md)
+for the method and its limits.
+
 ## Documentation
 
 Update documentation in the same change as an interface or architecture modification. Keep implementation status factual: distinguish `planned`, `interface baseline`, `implemented`, `tested`, `benchmarked`, `audited`, and `production-ready`.

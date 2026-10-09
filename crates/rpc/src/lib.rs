@@ -91,7 +91,8 @@ pub enum RpcResponse {
     Receipt(Option<Vec<u8>>),
     /// Serialized `CertifiedStateProof`, assembled from one immutable snapshot.
     StateProof(Vec<u8>),
-    /// Historical proof; None means unavailable history, not an absent state key.
+    /// Historical proof; None means an already finalized height left the retained
+    /// index. A height above the served head is `Unavailable`, not an absent key.
     StateProofAt(Option<Vec<u8>>),
     /// Accepted transaction identifier.
     TransactionAccepted(Hash256),

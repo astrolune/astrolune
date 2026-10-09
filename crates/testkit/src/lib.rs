@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bench;
+
 use types::{Address, Hash256, Resources, Transaction, ValidatorId};
 
 /// Creates a digest filled with one byte for readable fixtures.

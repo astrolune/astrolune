@@ -66,9 +66,11 @@ Stop the node before backing up or restoring the directory. Keep `chain.bin` and
 | Deltas | 1,048,576 diffs and total operations per batch; existing key/value bounds apply |
 | Transaction/certificate | Existing archive structural bounds; network applies its stricter wire limits |
 | Height index | Memory grows with retained block count |
-| Recovery | Linear replay and certificate verification from genesis |
+| Recovery | Streaming and certificate verification are linear in records; the state replay layered on top recomputes a whole-state root per transition, so startup cost grows with blocks times accounts, not with blocks alone |
 | Historical snapshots | Replayed on demand; latest snapshot reads current committed state |
 | Pruning / replacing history | Explicitly unsupported by the log; snapshot import requires an empty store |
 | Signing journal | [Protected journals roll over](23-signing-journal-rollover.md) after 100,000 decisions at fixed size; raw version-1 journals retain their bound |
 
 Tests cover differential replay against the reference store, ordered duplicate writes/deletes, historical snapshots, all byte truncations/mutations of a committed fixture, every unpublished tail cut, corrupt/missing heads, live read corruption, writer exclusion, abrupt child-process exit, uncertain publication, legacy compatibility, and actual TLS daemon shutdown after a corrupted history read. Production state indexing, bounded startup, retention/compaction, rollback-resistant key custody, sustained load and power-loss testing remain open.
+
+Recovery cost is measured on one host by `crates/storage/benches/storage.rs`. With a constant key set, reopening a 16, 64 and 256 block log costs 1.50, 1.77 and 3.67 ms, which fits a fixed cost of roughly 1.3 ms plus about 9 us per record. With one new key added per block the same sweep costs 1.36, 2.88 and 18.56 ms, so quadrupling the records multiplies the work by 9.1 and then 10.2 once the fixed cost is subtracted. That is the blocks-times-accounts growth recorded above, and it is why bounded startup remains open rather than a tuning question. These are single-host figures that establish no bound; [measurement limits](56-performance-measurement.md).

@@ -96,6 +96,9 @@ failing-index reporting and serial-equivalence tests;
 [scope and limits](09-cryptographic-foundations.md#bounded-parallel-verification).
 It splits independent verifications across workers rather than reducing the work
 per signature. End-to-end throughput is not established by these functional checks.
+Per-operation cost is measured separately on one host, where 512 requests verify
+5.7x faster at eight workers than at one; [measurement method and
+limits](56-performance-measurement.md).
 
 ### M5 — consensus
 
@@ -143,6 +146,13 @@ The concise checklist and remaining-work split are maintained in
 including alternate-runtime qualification and automated retention recovery design,
 is deferred. Linux and independent-machine release evidence remains outstanding;
 local Windows checks and configured CI jobs do not satisfy those external gates.
+
+A dependency-free benchmark harness and per-crate micro-benchmarks now measure
+per-operation cost locally, covering part of the
+[preliminary benchmark suite](07-validator-requirements.md). Distributed
+calibration, latency percentiles and the confidence intervals a calibration report
+must state are not covered and stay release activities;
+[method and limits](56-performance-measurement.md).
 
 ## 8.5 Required continuous gates
 

@@ -14,5 +14,12 @@ repository.workspace = true
 [dependencies]
 types = { version = "0.1.0", path = "../types" }
 
+[dev-dependencies]
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "codec"
+harness = false
+
 [lints]
 workspace = true

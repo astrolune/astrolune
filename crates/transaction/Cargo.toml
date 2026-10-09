@@ -16,5 +16,12 @@ codec = { version = "0.1.0", path = "../codec" }
 crypto = { version = "0.1.0", path = "../crypto" }
 types = { version = "0.1.0", path = "../types" }
 
+[dev-dependencies]
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "transaction"
+harness = false
+
 [lints]
 workspace = true

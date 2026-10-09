@@ -17,8 +17,11 @@ is published only after durable commit and rebuilt during authenticated structur
 log replay. A storage instance with uncertain durability refuses reads.
 
 `state_proof_at` accepts `key` and an exact `height`, including zero. A null result
-means unavailable history; an encoded absence proof means the key was absent in
-that authenticated state. The existing `state_proof` method retains latest-state
+means an already finalized height left the retained index; an encoded absence proof
+means the key was absent in that authenticated state. A height the answering node
+has not finalized is reported unavailable instead, so a lagging peer is never
+mistaken for missing history. Neither answer establishes that any other node still
+retains that height. The existing `state_proof` method retains latest-state
 semantics. The typed client rejects a proof returned for a different height.
 
 ```text

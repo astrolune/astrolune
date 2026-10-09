@@ -17,6 +17,11 @@ wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "s
 
 [dev-dependencies]
 wat = "=1.261.0"
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "runtime"
+harness = false
 
 [lints]
 workspace = true

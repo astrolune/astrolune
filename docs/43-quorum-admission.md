@@ -106,3 +106,18 @@ The shared mutation oracle includes the intent and all three envelopes. The
 71-seed, one-million-input deterministic campaign passed with 299,954 accepted
 decoder paths. This historical count is not coverage-guided fuzz coverage.
 The later live PoTB qualification is recorded in [document 45](45-live-potb-network.md).
+
+`AdmissionCertificate::verify` is measured linear in roster size: over a 7.75x
+roster increase the time grows 4.19x, where the earlier quadratic behaviour would
+have grown it roughly 60x. Per-approval cost falls with roster size, because
+approvals above the first serial rejection are decided as one bounded batch.
+
+One residual cost is recorded rather than changed. `CommitteeState::context`
+builds a fresh `AuthenticatedCommittee` on every call and caches nothing, and
+certificate verification calls it twice: once inside `AdmissionRequest::verify`
+and once again for the approval credentials. Rebuilding a 31-key context measures
+227,825 ns against a 1,063,400 ns certificate verification, so about 43 percent of
+the maximum-roster cost registers the same keys twice. Removing it means passing a
+pre-resolved context into the request check, which changes a public signature and
+belongs in its own change. These are single-host figures that establish no bound;
+[measurement limits](56-performance-measurement.md).

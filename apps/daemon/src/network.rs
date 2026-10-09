@@ -376,9 +376,18 @@ impl NetworkStatus {
         key: &types::StateKey,
         requested: Option<u64>,
     ) -> Result<RpcResponse, RpcError> {
-        let height = requested
-            .or_else(|| node.storage().checkpoint().map(|cp| cp.height))
+        let head = node
+            .storage()
+            .checkpoint()
+            .map(|cp| cp.height)
             .ok_or(RpcError::Unavailable)?;
+        // A height this node has not finalized yet is a catch-up position, not
+        // retained history. Keeping it out of the null result leaves that result
+        // meaning only that the bounded index no longer covers a finalized height.
+        if requested.is_some_and(|height| height > head) {
+            return Err(RpcError::Unavailable);
+        }
+        let height = requested.unwrap_or(head);
         let Some((_, state)) = node.storage().read_state_at(height).map_err(|error| {
             self.storage_failed.store(true, Ordering::Release);
             self.metrics.add(NodeMetric::LocalFailures, 1);

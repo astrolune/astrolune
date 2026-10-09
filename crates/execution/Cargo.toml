@@ -21,6 +21,11 @@ types = { version = "0.1.0", path = "../types" }
 [dev-dependencies]
 wat = "=1.261.0"
 crypto = { version = "0.1.0", path = "../crypto" }
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "execution"
+harness = false
 
 [lints]
 workspace = true

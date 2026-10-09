@@ -238,8 +238,11 @@ impl TcpRpcClient {
             .ok_or(ClientError::Protocol("missing proof response"))
     }
 
-    /// Fetches a proof for exactly this height. None means unavailable retained history.
-    /// Callers must still authenticate the certificate and state witnesses independently.
+    /// Fetches a proof for exactly this height. None means an already finalized
+    /// height left the server's retained index; a height the server has not
+    /// finalized yet is reported as a remote error, so catch-up stays distinct
+    /// from absent history. Callers must still authenticate the certificate and
+    /// state witnesses independently.
     pub fn state_proof_at(
         &self,
         key: &types::StateKey,

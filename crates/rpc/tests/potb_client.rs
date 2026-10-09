@@ -42,6 +42,9 @@ fn peer(replies: Vec<(u64, String)>) -> (TcpRpcClient, thread::JoinHandle<()>) {
                     Err(error) => panic!("accept failed: {error}"),
                 }
             };
+            // Windows accepts inherit the nonblocking listener's mode, which the
+            // timeouts below do not clear. Reads and writes here are blocking.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();

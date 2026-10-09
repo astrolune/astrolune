@@ -108,9 +108,15 @@ fn state_proof(
     key: &types::StateKey,
     requested: Option<u64>,
 ) -> Result<RpcResponse, RpcError> {
-    let height = requested
-        .or_else(|| storage.checkpoint().map(|cp| cp.height))
+    let head = storage
+        .checkpoint()
+        .map(|cp| cp.height)
         .ok_or(RpcError::Unavailable)?;
+    // Same separation as the networked service: an un-finalized height is catch-up.
+    if requested.is_some_and(|height| height > head) {
+        return Err(RpcError::Unavailable);
+    }
+    let height = requested.unwrap_or(head);
     let Some((_, state)) = storage
         .read_state_at(height)
         .map_err(|_| RpcError::Unavailable)?

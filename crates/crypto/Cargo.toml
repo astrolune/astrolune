@@ -18,5 +18,12 @@ vrf-rfc9381 = { version = "=0.0.7", default-features = false, features = ["edwar
 zeroize = "=1.9.0"
 types = { version = "0.1.0", path = "../types" }
 
+[dev-dependencies]
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "crypto"
+harness = false
+
 [lints]
 workspace = true

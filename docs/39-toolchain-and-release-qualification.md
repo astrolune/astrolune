@@ -145,10 +145,53 @@ The `windows-latest` release suite failed one test,
 restarted late-joining observer reported no retained state at height 2. The same
 test passed on the three other matrix legs and passes locally in release. Retention
 eviction is excluded, since the window is 64 blocks, and log replay rebuilds the
-index. The trigger is not reproduced, so the assertion was left intact and made
-diagnostic instead of relaxed; the next occurrence reports the node's head.
+index. The trigger was not reproduced in that run, so the assertion was left intact
+and made diagnostic instead of relaxed.
 
-One observed hosted run is not cross-platform qualification. Linux reproducibility
-is still unobserved because the release-build jobs did not reach their archive
-step, and independent-machine reproducibility needs a second machine rather than a
+## Second hosted run, 2026-10-09
+
+The second run narrowed the matrix to two failures, both since reproduced locally
+and root-caused. Formatting, strict Clippy on both platforms, documentation, the
+fuzz compile-check, both release builds and workflow validation passed, and both
+release test legs passed with 1 188 and 1 189 tests. Only the two debug legs failed,
+one test each.
+
+`ubuntu-latest` debug failed
+`tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles` on the same
+assertion as the previous run's Windows failure, which identified the cause the
+earlier single sighting could not. The payment the test waits for lands in block
+one, so `await_payment` returns as soon as a restarted late-joining observer has
+block one, while that observer may still sit below height 2. The historical query
+at height 2 then legitimately found nothing. Two separate defects combined: the
+test used a finalized payment as the precondition for a historical query, which it
+is not, and the RPC collapsed "this height is not finalized here yet" and "this
+finalized height left the retained index" into the same null result, so no caller
+could tell catch-up from absent history. Both are fixed. `state_proof_at` now
+reports a height above the served head as `Unavailable` and reserves null for an
+evicted finalized height, and both profile tests wait on the answering node's own
+finalized head. A regression test drives an observer that cannot leave its genesis
+anchor and asserts the distinction directly.
+
+`windows-latest` debug failed
+`malformed_forked_incomplete_or_wrong_height_handoffs_never_advance_authority` with
+`WSAEWOULDBLOCK` while reading a request length. The test peer deliberately makes
+its listener non-blocking so an accept deadline can be enforced, and on Windows an
+accepted socket inherits that mode while `set_read_timeout` does not clear it. The
+hazard was already known here: `DeadlineSocket::new` carries the same fix and
+[document 20](20-authenticated-transport.md) documents it. The sweep for the pattern
+found four affected sites and one of them was production code, not a test: the
+daemon metrics listener is non-blocking and its accepted stream was read a byte at
+a time, so on Windows a Prometheus request whose next byte had not arrived was
+dropped, silently, because the caller discards the error. Its own unit test missed
+this by binding a blocking listener. All four now clear the mode explicitly.
+
+Neither failure is platform-specific in cause: the state-proof race was observed on
+Windows release first and Linux debug second, and the socket-mode defect is dormant
+on Linux only because `accept` there does not inherit the flag.
+
+Two hosted runs with failures are not cross-platform qualification. The causes are
+fixed, but a clean run across all four legs has not been observed yet, so that
+roadmap item stays open. Linux reproducibility is still unobserved because the
+release-build jobs did not reach their archive step in the first run, and
+independent-machine reproducibility needs a second machine rather than a
 second run on the same hosted image.

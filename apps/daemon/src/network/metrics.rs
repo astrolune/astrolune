@@ -59,6 +59,9 @@ impl Drop for MetricsServer {
     }
 }
 fn serve(mut stream: TcpStream, metrics: &NodeMetrics) -> io::Result<()> {
+    // Windows accepts can inherit a nonblocking listener's mode, which the request
+    // and response deadlines below do not clear. This socket's I/O is blocking.
+    stream.set_nonblocking(false)?;
     let deadline = Instant::now() + Duration::from_millis(500);
     let mut request = Vec::new();
     while !request.ends_with(b"\r\n\r\n") {

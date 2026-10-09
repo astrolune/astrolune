@@ -22,7 +22,28 @@ nonce, balance or capacity. Worker count never changes block bytes.
 Differential tests compare outputs, roots, retained snapshots and errors for
 independent transfers, dependent account creation, self-transfers, multiple
 nonces, forged signatures, missing access declarations, capacity exhaustion and
-stale parents. Local execution performance has not been benchmarked.
+stale parents.
+
+Local execution performance is now measured by `crates/execution/benches/execution.rs`
+on one eight-core host, and the measurement qualifies the parallel path more
+narrowly than equivalence testing alone suggested. Against the serial path on
+fully independent transfers in one wide wave, the best observed speedup is 2.56x
+at 128 transactions and four workers, roughly a third of linear. Below about
+eight transactions per worker the parallel path loses: at eight transactions it
+is slower at every worker count, and 35 percent slower at eight workers. Scaling
+saturates at four workers on this host, and sixteen workers are both slower and
+unstable run to run.
+
+A `pool_floor` group that holds exactly one transaction per worker isolates the
+cause. The per-attempt scoped pool costs on the order of 50 us per worker
+thread, and a single payment transaction executes in about 41 us, so one worker
+thread costs about as much as one transaction. The pool is created per block
+attempt, so that charge is paid whether or not the plan is wide enough to repay
+it. A rejected batch costs the parallel path 1.4x to 1.6x the serial path,
+because the discarded speculative pass precedes the full serial replay by
+design. Planning itself is not a factor at 26.6 us for 128 transactions.
+Figures describe one host and establish no bound;
+[measurement limits](56-performance-measurement.md).
 
 ## Execution-parent cache and planner allocation
 
@@ -57,6 +78,17 @@ contract; the next block performs a fresh read. Cache tests cover absence,
 entry/byte limits, errors, shared worker hits and overlay write/delete visibility.
 These are read-count and equivalence checks, not wall-clock throughput claims.
 
+The distinction matters, because the read-count reduction buys no measurable wall
+clock against an in-memory parent. On 16 calls to one shared contract,
+`execute_signed` with the cache and a direct uncached `SignedSession` loop both
+measure 1 202 us; on 16 independent contracts the cached path measured 4 to 9
+percent slower across runs. Against `InMemoryState` the cache replaces a map
+lookup and value clone with a mutex-guarded map lookup and the same clone, so
+there is nothing to recover. A disk-backed parent is where the saved reads could
+pay and was not measured, so the cache is retained on the read-count grounds
+above rather than on a measured speedup;
+[measurement limits](56-performance-measurement.md).
+
 ## Per-block worker reuse
 
 Parallel execution creates one scoped worker pool per block attempt and reuses
@@ -85,7 +117,12 @@ six four-wide waves use four worker threads at a requested count of four or
 more, instead of creating 24 threads. Separate pool tests cover ordered results,
 reuse, smaller/empty batches, task errors, worker panics and joining idle workers.
 This qualifies thread reuse and functional equivalence; end-to-end throughput
-has not been benchmarked.
+has not been benchmarked. Reuse is visible in the per-operation figures: a
+44-transaction batch spanning 16 waves reaches 1.51x serial, which a pool created
+per wave could not do, since 16 pool creations alone would exceed the whole
+measured block. The pool's cost is still charged once per attempt and is the
+dominant reason parallel execution needs about eight transactions per worker to
+win; [measured scaling](56-performance-measurement.md).
 
 ## Fusion, prefetch and result-buffer reuse
 
@@ -120,6 +157,24 @@ cleanup. Alongside parent caching and borrowed-key planning, these implement the
 reference execution locality, fusion, prefetch and buffer-pool scope. Signature
 batching remains unimplemented and deferred with cryptographic verification work.
 End-to-end throughput has not been benchmarked.
+
+Per-operation measurement narrows what fusion and prefetch achieve. Fusion
+prevents a loss rather than producing a gain: a plan of only singleton waves
+creates no workers, so an all-singleton dependent chain of 128 transactions costs
+5 458 us at eight workers against 5 329 us serial, avoiding the pool charge
+instead of beating the serial path. Shapes with and without runs of consecutive
+singletons reach the same 1.5x, so fusion is not separately visible as a speedup.
+Bounded declared-key prefetch has no measurable effect at any batch size, and the
+sign of the difference changed between runs, because `InMemoryState::prefetch` is
+a no-op and only the key-set construction is left to measure.
+
+One planner consequence is worth stating plainly: repeated calls to a single
+contract do not parallelize at all. Sixteen calls to one contract plan as sixteen
+singleton waves, because the shared contract code key is declared and the planner
+treats every declared key as a write, giving 1 237 us at eight workers against
+1 202 us serial. Sixteen calls to sixteen distinct contracts plan as one wave and
+reach 1.72x. This is a consequence of conservative access declaration, not a
+tuning parameter; [measurement limits](56-performance-measurement.md).
 
 ## WebAssembly ABI v2
 

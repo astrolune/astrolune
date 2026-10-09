@@ -211,6 +211,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 name = "codec"
 version = "0.1.0"
 dependencies = [
+ "testkit",
  "types",
 ]
 
@@ -227,6 +228,7 @@ dependencies = [
  "genesis",
  "keystore",
  "state",
+ "testkit",
  "types",
 ]
 
@@ -262,6 +264,7 @@ version = "0.1.0"
 dependencies = [
  "blake2",
  "ed25519-dalek",
+ "testkit",
  "types",
  "vrf-rfc9381",
  "zeroize",
@@ -439,6 +442,7 @@ dependencies = [
  "crypto",
  "runtime",
  "state",
+ "testkit",
  "transaction",
  "types",
  "wat",
@@ -853,6 +857,7 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "testkit",
  "types",
  "wasmi",
  "wat",
@@ -996,6 +1001,7 @@ version = "0.1.0"
 dependencies = [
  "codec",
  "crypto",
+ "testkit",
  "types",
 ]
 
@@ -1007,6 +1013,7 @@ dependencies = [
  "crypto",
  "genesis",
  "state",
+ "testkit",
  "transaction",
  "types",
 ]
@@ -1173,6 +1180,7 @@ version = "0.1.0"
 dependencies = [
  "codec",
  "crypto",
+ "testkit",
  "types",
 ]
 

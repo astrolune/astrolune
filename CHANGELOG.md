@@ -8,6 +8,18 @@ All notable changes to AstroLune will be documented in this file. The format fol
 
 ### Fixed
 
+- Clear the inherited non-blocking mode on accepted sockets, which Windows copies
+  from a non-blocking listener and read/write timeouts do not reset. The daemon
+  metrics endpoint read its request a byte at a time and discarded the resulting
+  `WouldBlock`, so a Prometheus scrape could be dropped silently on Windows; three
+  test peers raised the same error as a spurious failure.
+
+- Report an exact-height state proof above the answering node's finalized head as
+  unavailable rather than a null result, keeping catch-up distinguishable from an
+  already finalized height that left the bounded retained index. This changes no
+  retention bound and adds no new error surface. Restart tests now wait on the
+  queried height instead of a finalized payment, which only proves current state.
+
 - Activate the explicit PoTB configuration in daemon/observer networking, candidate
   provisioning, bounded admission/evidence gossip and atomic `ALEFF003` handoff storage.
   Add authenticated RPC/CLI/DNS catch-up, offline sidecars and operator submission.
@@ -104,6 +116,16 @@ All notable changes to AstroLune will be documented in this file. The format fol
 - Make the codec fuzz package independently resolvable and add exact-byte re-encoding checks for transactions, state keys, and execution receipts.
 
 ### Added
+
+- Add a standard-library benchmark harness and per-crate benchmarks for the
+  cryptographic, codec, transaction, state, storage, execution, runtime and
+  consensus paths. No dependency is added, so the pinned licence baseline is
+  unchanged. Benchmarks carry no assertions and cannot fail CI, which lints but
+  does not run them. Several documents asserted costs that had never been
+  measured and are now corrected: recovery replay is not linear when the account
+  set grows, the execution-parent cache and declared-key prefetch show no
+  wall-clock benefit against an in-memory parent, and parallel payment execution
+  peaks near 2.6x rather than scaling with worker count.
 
 - Add a separately committed PoTB configuration, canonical evidence/admission
   batches, active age weights, permanent exclusion records and old-quorum state

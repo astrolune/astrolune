@@ -65,6 +65,7 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Key custody and release authority](53-key-custody-and-release-authority.md)
 - [Compact blocks and the reference execution pipeline](54-compact-blocks-and-execution-pipeline.md)
 - [Bounded formal model of fixed-height voting](55-formal-consensus-model.md)
+- [Local performance measurement](56-performance-measurement.md)
 
 Legacy-shaped filenames such as `03-vm-and-gas.md`, `05-contract-languages.md`, and `06-deferred-services.md` are retained temporarily to preserve links. Their contents describe the current Rust architecture.
 

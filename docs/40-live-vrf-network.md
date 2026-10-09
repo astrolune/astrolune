@@ -128,6 +128,18 @@ revalidation and 9,437 microseconds with reuse; the debug run took 4,531,273 and
 not network throughput or a portable performance guarantee. All nine real mutual-TLS
 process tests then passed together in debug in 22.38 seconds.
 
+`crates/consensus/benches/potb.rs` isolates the two sides of the reuse decision
+rather than a 20-block fixture. The reuse guard, measured against an equal batch
+so it performs the full comparison, costs 24, 51, 102 and 185 nanoseconds at
+rosters of 4, 8, 16 and 31, while the cold `CommitteeState::transition` it avoids
+costs 1.08, 2.36, 4.41 and 8.85 milliseconds. The avoided work is therefore four
+to five orders of magnitude larger than the check, because a cold transition
+verifies two VRF proofs per roster member and one VRF verification is roughly
+four times an Ed25519 signature verification. Only the decision is timed; what a
+caller does with the retained committee after a hit is outside that crate. These
+are single-host figures and establish no bound;
+[measurement limits](56-performance-measurement.md).
+
 Stored double-vote proofs are sorted by height at recovery and authenticated through
 one shared historical handoff stream. At most 32 proofs are retained; the change
 avoids verifying the same prefix separately for each proof. Tests include different

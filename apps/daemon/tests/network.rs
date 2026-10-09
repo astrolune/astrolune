@@ -371,6 +371,24 @@ fn await_payment(processes: &[&Process]) {
     }
 }
 
+/// Waits for this node's own finalized head, the precondition for a historical query.
+/// A finalized payment only proves current account state: the payment lands in block
+/// one, so a restarted late joiner can serve it while still below height two.
+fn await_finalized_height(client: &rpc::TcpRpcClient, height: u64) {
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        let head = client.chain_status().unwrap().finalized_height;
+        if head >= height {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "node stalled at height {head} below {height}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
 fn tls_quorum_payment_restart_and_late_join() {
     let fixture = Fixture::new();
@@ -676,7 +694,11 @@ fn verify_account_proof(fixture: &Fixture, process: &Process) {
             .unwrap(),
         None
     );
-    assert!(client.state_proof_at(&key, u64::MAX).unwrap().is_none());
+    // A height beyond the served head is catch-up, never absent retained history.
+    assert!(matches!(
+        client.state_proof_at(&key, u64::MAX),
+        Err(rpc::ClientError::Remote { code: -32000, .. })
+    ));
     assert_eq!(
         proof
             .verify(&fixture.genesis, &fixture.keys, &key, 1)
@@ -880,6 +902,9 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     await_payment(&restarted.iter().collect::<Vec<_>>());
     let client =
         rpc::TcpRpcClient::new(restarted[4].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    // The finalized payment lands in block one, so it does not imply this observer
+    // has caught back up to the height queried below.
+    await_finalized_height(&client, 2);
     let first = client.committee_handoff(1).unwrap().unwrap();
     let mut fresh =
         consensus::rotation::HandoffVerifier::new(&fixture.genesis, &fixture.keys).unwrap();
@@ -894,7 +919,7 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
             // intermittent absence shows whether catch-up had progressed.
             panic!(
                 "restarted observer retained no state at height 2; status: {:?}",
-                call(&restarted[4].1, "status", "{}").get("result")
+                call(&restarted[4].1, "chain_status", "{}").get("result")
             )
         });
     historical
@@ -971,6 +996,9 @@ fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     await_payment(&restarted.iter().collect::<Vec<_>>());
     let client =
         rpc::TcpRpcClient::new(restarted[4].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    // The finalized payment lands in block one, so it does not imply this observer
+    // has caught back up to the height queried below.
+    await_finalized_height(&client, 2);
     let first = client.potb_handoff(1).unwrap().unwrap();
     let mut fresh = consensus::potb_transition::PotbVerifier::new(&profile, &fixture.keys).unwrap();
     fresh.apply(&first).unwrap();
@@ -991,6 +1019,42 @@ fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
             .count(),
         3
     );
+}
+
+/// A height the answering node never finalized is catch-up, not absent history.
+/// Collapsing both into a null result let a restarted late joiner that still sat
+/// below the queried height look exactly like one whose index had evicted it.
+#[test]
+fn unreached_heights_are_unavailable_rather_than_absent_retained_history() {
+    let fixture = Fixture::new();
+    let reservations: Vec<_> = (0..5)
+        .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
+        .collect();
+    let peers: Vec<_> = reservations
+        .iter()
+        .map(|listener| listener.local_addr().unwrap().to_string())
+        .collect();
+    drop(reservations);
+    // Without configured peers this observer cannot leave its genesis anchor.
+    let observer = fixture.start_with(5, &peers, &[], &[]);
+    let client =
+        rpc::TcpRpcClient::new(observer.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    assert_eq!(client.chain_status().unwrap().finalized_height, 0);
+    assert!(
+        client
+            .state_proof_at(&genesis::genesis_key(), 0)
+            .unwrap()
+            .is_some()
+    );
+    for height in [1, 2, u64::MAX] {
+        assert!(
+            matches!(
+                client.state_proof_at(&genesis::genesis_key(), height),
+                Err(rpc::ClientError::Remote { code: -32000, .. })
+            ),
+            "height {height} answered as retained history"
+        );
+    }
 }
 
 fn potb_profile(genesis: &Genesis) -> consensus::potb_transition::PotbConfiguration {

@@ -233,6 +233,9 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
                 std::thread::sleep(Duration::from_millis(10));
             };
 
+            // Windows accepts inherit the nonblocking listener's mode, which the
+            // timeout below does not clear. Reads and writes here are blocking.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();

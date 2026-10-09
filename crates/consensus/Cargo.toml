@@ -19,5 +19,16 @@ keystore = { version = "0.1.0", path = "../keystore" }
 state = { version = "0.1.0", path = "../state" }
 types = { version = "0.1.0", path = "../types" }
 
+[dev-dependencies]
+testkit = { version = "0.1.0", path = "../testkit" }
+
+[[bench]]
+name = "consensus"
+harness = false
+
+[[bench]]
+name = "potb"
+harness = false
+
 [lints]
 workspace = true
