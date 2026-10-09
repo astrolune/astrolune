@@ -5,8 +5,8 @@
 `crates/testkit/src/bench.rs` is a bounded measurement harness, and each
 benchmarked crate carries `benches/` targets that use it. A benchmark run
 records integer nanosecond statistics for one operation on one machine. The
-harness has no assertions and no pass/fail notion, so a benchmark can never
-fail CI and can never substitute for a test.
+harness has no assertions and no timing threshold anywhere, so no measured
+figure can fail CI, and a benchmark can never substitute for a test.
 
 Until this harness existed the workspace had no benchmarks at all, and several
 documents said so explicitly. Those statements are now narrowed rather than
@@ -82,10 +82,40 @@ ASTROLUNE_BENCH_ROUNDS=5 ASTROLUNE_BENCH_TARGET_US=500 cargo bench --locked -p c
 ```
 
 `cargo bench` builds with optimizations, so a debug-profile figure is not
-comparable. Benchmarks are not run in CI, because a shared hosted runner cannot
-produce a figure worth recording. They are compiled and linted there: the
-`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
-gate includes `benches/`, so a benchmark cannot rot without failing CI.
+comparable.
+
+## Hosted runs
+
+The `Benchmarks (ubuntu-latest)` and `Benchmarks (windows-latest)` CI jobs run
+every suite on both platforms and are part of the required checks. What they
+establish is narrow and deliberate: that every declared benchmark still
+compiles, executes and produces measurements on both platforms. What they do not
+establish is any figure worth comparing, because the runners are shared and
+their timings move between runs by more than the differences this document
+draws conclusions from.
+
+Nothing in the job thresholds a duration. It fails only when a benchmark panics,
+when the process exits non-zero, when a suite reports no measurement, or when a
+declared `[[bench]]` target produces no suite at all. That last check matters
+most: `.github/scripts/benchmark-report.py` counts `[[bench]]` targets across the
+workspace manifests and refuses a run with fewer suites than targets, so a
+benchmark cannot quietly stop running and still report success. Counting targets
+rather than matching names is deliberate, since a target may name its suite
+differently, as `crates/consensus/benches/potb.rs` reports `consensus-potb`.
+
+Each leg uploads a `benchmarks-<os>` artifact holding one
+`astrolune.benchmark-report/1` document, retained for 90 days. Unlike the
+`astrolune.suite-result/1` record, which excludes timings so two runs of one
+revision stay byte-identical, this record carries its measurements and is
+therefore reproducible by neither construction nor intent. It states both facts
+in a `comparability` field so a consumer cannot mistake it for a bound. Sampling
+is shortened to three rounds at a 300 us target round, since more sampling on a
+shared runner buys precision that the environment immediately spends.
+
+Benchmarks are also compiled and linted on every run independently of that job:
+the `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
+gate includes `benches/`, so a benchmark cannot rot without failing CI. The test
+gate does not run them, because a `[[bench]]` target defaults to `test = false`.
 
 ## Measured figures
 

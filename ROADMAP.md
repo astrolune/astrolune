@@ -131,7 +131,7 @@ Distributed calibration, interoperability, long fuzz campaigns, reproducible rel
 - [x] Run pinned Rust-to-WASM SDK and source-package tests in the release CI matrix.
 - [x] Provide routine operations and a bounded read-only calibration sampler with raw reports; [runbook and measurement limits](docs/52-network-operations.md).
 - [x] Detached release-manifest signing over every packaged file hash, with offline verification and no invented signing identity; [workflow](docs/53-key-custody-and-release-authority.md).
-- [x] Dependency-free bounded benchmark harness and per-crate micro-benchmarks, measuring the hash, signature, VRF, codec, state, storage, execution and consensus paths whose cost was previously asserted only functionally; [method, figures and limits](docs/56-performance-measurement.md).
+- [x] Dependency-free bounded benchmark harness and per-crate micro-benchmarks, measuring the hash, signature, VRF, codec, state, storage, execution and consensus paths whose cost was previously asserted only functionally, run on both platforms as a required CI check that verifies execution rather than any duration; [method, figures and limits](docs/56-performance-measurement.md).
 - [ ] Observe Linux and independent-machine reproducibility, and complete the release authority identity and key ceremony.
 
 Detailed status and unresolved decisions are tracked in [`docs/08-implementation-status.md`](docs/08-implementation-status.md).

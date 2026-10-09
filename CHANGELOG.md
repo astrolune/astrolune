@@ -120,12 +120,14 @@ All notable changes to AstroLune will be documented in this file. The format fol
 - Add a standard-library benchmark harness and per-crate benchmarks for the
   cryptographic, codec, transaction, state, storage, execution, runtime and
   consensus paths. No dependency is added, so the pinned licence baseline is
-  unchanged. Benchmarks carry no assertions and cannot fail CI, which lints but
-  does not run them. Several documents asserted costs that had never been
-  measured and are now corrected: recovery replay is not linear when the account
-  set grows, the execution-parent cache and declared-key prefetch show no
-  wall-clock benefit against an in-memory parent, and parallel payment execution
-  peaks near 2.6x rather than scaling with worker count.
+  unchanged. CI runs every suite on both platforms as a required check and
+  uploads the measurements, failing only when a benchmark panics or a declared
+  target stops producing a suite; no measured duration is ever a threshold.
+  Several documents asserted costs that had never been measured and are now
+  corrected: recovery replay is not linear when the account set grows, the
+  execution-parent cache and declared-key prefetch show no wall-clock benefit
+  against an in-memory parent, and parallel payment execution peaks near 2.6x
+  rather than scaling with worker count.
 
 - Add a separately committed PoTB configuration, canonical evidence/admission
   batches, active age weights, permanent exclusion records and old-quorum state

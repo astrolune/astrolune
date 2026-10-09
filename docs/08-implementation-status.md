@@ -156,7 +156,7 @@ must state are not covered and stay release activities;
 
 ## 8.5 Required continuous gates
 
-Every protocol change must pass formatting, Clippy with warnings denied, unit/integration/doc tests, canonical serialization compatibility, cross-platform deterministic fixtures, and documentation-link checks. Relevant changes additionally require property testing, fuzzing, recovery tests, and optimized/reference differential checks.
+Every protocol change must pass formatting, Clippy with warnings denied, unit/integration/doc tests, canonical serialization compatibility, cross-platform deterministic fixtures, documentation-link checks, and benchmark execution on both platforms. The benchmark gate establishes only that every declared benchmark still runs and none has silently stopped; it thresholds no duration and the hosted figures are not comparable; [limits](56-performance-measurement.md). Relevant changes additionally require property testing, fuzzing, recovery tests, and optimized/reference differential checks.
 
 Unsafe Rust remains forbidden except in the dedicated wasm32 FFI module; [documented binding review](../crates/contract-abi/SAFETY.md). CI currently covers Linux and Windows quality checks. Dependency policy, registry advisory lookup and the workspace-excluded fuzz package are checked by separate configured workflows; [review and its coverage gaps](51-dependency-and-security-review.md).
 

@@ -71,12 +71,17 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 Report checks that could not be run. Never bypass hooks or remove assertions merely to make CI green.
 
-Benchmarks are not part of the gate above and never fail CI, but `--all-targets`
-compiles and lints them, so a stale benchmark breaks clippy. Run one with
+Benchmarks are not part of the gate above, and no measured duration can fail
+anything: the harness carries no timing threshold. Run one with
 `cargo bench --locked -p <crate>`, or shorten an exploratory run with
-`ASTROLUNE_BENCH_ROUNDS=5 ASTROLUNE_BENCH_TARGET_US=500`. A measurement is not a
-correctness check: see [local performance measurement](docs/56-performance-measurement.md)
-for the method and its limits.
+`ASTROLUNE_BENCH_ROUNDS=5 ASTROLUNE_BENCH_TARGET_US=500`. CI does run every suite
+on both platforms as a required check, which verifies that each declared
+benchmark still executes and that none has silently stopped running; it is not a
+performance gate, and the figures from a shared runner are not comparable. Note
+that `--all-targets` also compiles and lints benchmarks, so a stale benchmark
+breaks clippy. A measurement is not a correctness check: see
+[local performance measurement](docs/56-performance-measurement.md) for the
+method and its limits.
 
 ## Documentation
 

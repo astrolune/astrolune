@@ -186,6 +186,53 @@ jobs:
       - name: Compile-check the workspace-excluded fuzz package
         run: cargo check --locked --manifest-path crates/codec/fuzz/Cargo.toml --all-targets
 
+  benchmarks:
+    name: Benchmarks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      # A shared runner cannot establish a comparable figure, so sampling stays
+      # short. This job proves every benchmark still executes and retains what
+      # it measured; it is not a performance gate and has no timing threshold.
+      ASTROLUNE_BENCH_ROUNDS: "3"
+      ASTROLUNE_BENCH_TARGET_US: "300"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          key: bench
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - name: Run every benchmark suite
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/bench
+          cargo bench --locked --workspace --all-features 2>&1 \
+            | tee target/bench/benchmarks.log
+      - name: Record the per-platform benchmark report
+        if: ${{ always() }}
+        run: >-
+          python -B .github/scripts/benchmark-report.py
+          --log target/bench/benchmarks.log
+          --os ${{ matrix.os }}
+          --exit-status ${{ job.status == 'success' && '0' || '101' }}
+          --output target/bench/BENCHMARKS.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: benchmarks-${{ matrix.os }}
+          path: target/bench/BENCHMARKS.json
+          if-no-files-found: error
+          retention-days: 90
+
   workflows:
     name: Workflow validation
     runs-on: ubuntu-latest
@@ -203,7 +250,7 @@ jobs:
   quality:
     name: CI required checks
     if: ${{ always() }}
-    needs: [formatting, clippy, tests, docs, build, fuzz, workflows]
+    needs: [formatting, clippy, tests, docs, build, fuzz, benchmarks, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
