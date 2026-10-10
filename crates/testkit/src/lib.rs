@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod fork_lock;
 
 use types::{Address, Hash256, Resources, Transaction, ValidatorId};
 

@@ -2,7 +2,7 @@
 
 # Contributing to AstroLune
 
-AstroLune is an early Rust blockchain project. Small, reviewable changes with explicit invariants are preferred over broad implementation claims.
+AstroLune is a Rust blockchain node. Small, reviewable changes with explicit invariants are preferred over broad implementation claims.
 
 ## Setup
 
@@ -36,7 +36,7 @@ cargo test --workspace
 
 ### Unsafe Rust
 
-Workspace crates forbid unsafe Rust. A future exception requires a dedicated crate, measured need, documented safety invariants, a safe API, portable reference implementation, focused tests, and explicit security review. Do not relax the workspace lint to make an exception convenient.
+Workspace crates forbid unsafe Rust. A narrowly scoped exception requires a dedicated crate, measured need, documented safety invariants, a safe API, portable reference implementation, focused tests, and explicit security review. Do not relax the workspace lint to make an exception convenient.
 
 ### Dependencies
 
@@ -85,7 +85,7 @@ method and its limits.
 
 ## Documentation
 
-Update documentation in the same change as an interface or architecture modification. Keep implementation status factual: distinguish `planned`, `interface baseline`, `implemented`, `tested`, `benchmarked`, `audited`, and `production-ready`.
+Update documentation in the same change as an interface or architecture modification. Keep implementation status factual, using the grades defined in [`ARCHITECTURE.md`](ARCHITECTURE.md): `planned`, `interface baseline`, `implemented`, `tested`, `benchmarked`, `audited`, and `production-ready`. A grade records how far an area has been carried; do not raise one ahead of the code and tests.
 
 ## Pull requests
 

@@ -50,6 +50,26 @@ pub enum NetworkNodeError {
     Local(String),
 }
 
+impl NetworkNodeError {
+    /// Classifies this failure for bounded local admission scoring.
+    ///
+    /// A local durability failure returns [`None`]: it is this node's problem and
+    /// never a peer offence. Use the result only at a call site where honest,
+    /// current input cannot fail. Ordinary stale, duplicate and out-of-order
+    /// gossip also reports [`NetworkNodeError::Input`], and scoring that would
+    /// penalise correct peers during normal catch-up.
+    ///
+    /// This classifies an observed local failure. It establishes no intent, adds
+    /// no evidence, and has no consensus consequence whatsoever.
+    #[must_use]
+    pub const fn offence(&self) -> Option<p2p::admission::Offence> {
+        match self {
+            Self::Input(_) => Some(p2p::admission::Offence::UnauthenticatedMessage),
+            Self::Local(_) => None,
+        }
+    }
+}
+
 /// An owned response snapshot that can be encoded after releasing the node lock.
 ///
 /// Preparation retains the selected messages independently of later node changes.
@@ -321,6 +341,11 @@ impl StaticNetwork {
             let producer = self.recover_checkpoint(&storage)?;
             return Ok(RecoveredNetwork { storage, producer });
         }
+        // A directory this node compacted itself resumes from its recorded anchor.
+        if let Some(network) = self.local_retention(&storage)? {
+            let producer = network.recover_checkpoint(&storage)?;
+            return Ok(RecoveredNetwork { storage, producer });
+        }
         if storage.checkpoint().is_none() {
             storage
                 .initialize_genesis(network.hash, initial.clone())
@@ -362,6 +387,9 @@ impl StaticNetwork {
                 .checkpoint()
                 .copied()
                 .ok_or_else(|| input("missing retained checkpoint"));
+        }
+        if let Some(network) = self.local_retention(storage)? {
+            return network.verify_storage(storage);
         }
         if let Some(profile) = &self.potb {
             BlockProducer::recover_potb(self.producer_config(), profile, &self.keys, storage)?;
@@ -531,6 +559,15 @@ impl NetworkNode {
     #[must_use]
     pub const fn storage(&self) -> &ChainStorage {
         &self.storage
+    }
+    /// Installs the automated retention policy evaluated after every commit.
+    /// The default disabled policy retains every finalized block. The bounded
+    /// legacy archive refuses automated retention.
+    pub fn set_retention_policy(
+        &mut self,
+        policy: storage::RetentionPolicy,
+    ) -> Result<(), NetworkNodeError> {
+        self.storage.set_retention_policy(policy).map_err(local)
     }
     /// Current next height and trusted genesis for synchronization.
     #[must_use]

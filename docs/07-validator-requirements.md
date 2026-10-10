@@ -6,7 +6,7 @@
 
 AstroLune targets a mainnet validator set running on powerful hardware, with a separate, lighter profile for testnet and local development. Participation is open to operators who meet the applicable hardware and protocol requirements; mainnet validation is not designed for arbitrary consumer machines.
 
-The following hardware baseline is a project design requirement, not a measured throughput or latency guarantee. The current daemon does not automatically enforce these hardware thresholds. Distributed benchmarks must validate performance and operating headroom before production capacity and timing parameters are finalized.
+These hardware profiles are design requirements, not measured throughput or latency figures, and the daemon does not enforce them. Distributed measurement on this class of machine is required before capacity and timing parameters are fixed for a public network; [local performance measurement](56-performance-measurement.md) covers single-machine operation cost only.
 
 ### Mainnet validators
 
@@ -61,7 +61,7 @@ Validators may publish quantized capacity observations defined by protocol. Raw 
 
 The network activates only bounded capacity values finalized under the protocol. Mainnet capacity is calibrated for the mainnet hardware baseline; testnet and development capacity is calibrated separately. A node cannot lower its network's consensus limits by selecting a lighter local hardware profile. Operators meeting the existing baseline need a documented upgrade and deprecation window before protocol floors rise.
 
-## 7.6 Preliminary benchmark suite
+## 7.6 Required benchmark suite
 
 Before a public testnet, measure:
 
@@ -82,4 +82,4 @@ Before mainnet, repeat calibration on both the minimum and recommended mainnet c
 
 ## 7.7 Security posture
 
-Until cryptographic suites, PoTB behavior, rotating weighted BFT, execution semantics, state recovery, P2P defenses, and key operations receive independent review, AstroLune validators are experimental and must not secure material value.
+Validator operators own key custody, host hardening, and their deployment's risk assessment. [Key custody and release authority](53-key-custody-and-release-authority.md) and [private-network operations](36-private-network-operations.md) specify the mechanisms this repository provides for those duties. Independent review of the cryptographic suite, PoTB behavior, rotating weighted BFT, execution semantics, state recovery, P2P defenses, and key operations has not been performed, so no external party has yet confirmed those properties.

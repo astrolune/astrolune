@@ -30,9 +30,10 @@ cli verify-state-proof genesis.bin validators.bin <key-hex> <minimum-height> pro
 
 The fetch command verifies before creating its output file and never overwrites
 an existing file. Validator files contain consecutive 32-byte Ed25519 public
-keys. Proofs from the uncertified local demonstration mode cannot authenticate
-post-genesis finality. A normal account query remains a convenience response;
-use its `state::account_key` with a certified proof for independent verification.
+keys. Proofs taken from local demonstration mode cannot authenticate
+post-genesis finality, because that mode publishes placeholder certificates. A
+normal account query remains a convenience response; use its
+`state::account_key` with a certified proof for independent verification.
 
 Tests cover hostile framing and context changes, CLI offline verification, and
 real certified daemon RPC queries before and after observer restart.

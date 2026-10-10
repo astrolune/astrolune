@@ -60,6 +60,26 @@ impl StateHistory {
         }
     }
 
+    /// Lowest height this index can still rebuild, given the current head height.
+    /// Eviction, not finality, decides this value; it authenticates nothing.
+    pub(crate) fn floor(&self, head: u64) -> u64 {
+        self.entries.front().map_or(head, |v| v.before.height)
+    }
+
+    /// Drops transitions that end at or below `floor` after a local compaction.
+    /// The surviving prefix stays connected to the head; no entry is rewritten.
+    pub(crate) fn truncate_below(&mut self, floor: u64) {
+        while self
+            .entries
+            .front()
+            .is_some_and(|undo| undo.before.height < floor)
+        {
+            let removed = self.entries.pop_front().expect("nonempty index");
+            self.bytes -= removed.bytes;
+            self.changes -= removed.diff.len();
+        }
+    }
+
     pub(crate) fn read(
         &self,
         height: u64,
@@ -69,13 +89,7 @@ impl StateHistory {
         let Some(mut checkpoint) = current else {
             return Ok(None);
         };
-        if height > checkpoint.height
-            || height
-                < self
-                    .entries
-                    .front()
-                    .map_or(checkpoint.height, |v| v.before.height)
-        {
+        if height > checkpoint.height || height < self.floor(checkpoint.height) {
             return Ok(None);
         }
         let mut state = state.clone();
@@ -218,6 +232,50 @@ mod tests {
         assert!(index.read(2, Some(third), &state).unwrap().is_some());
         assert_eq!(index.bytes, 0);
         assert_eq!(index.changes, 0);
+    }
+
+    #[test]
+    fn truncating_below_a_compaction_floor_keeps_the_index_connected_to_the_head() {
+        for floor in 0..=8u64 {
+            let mut state = InMemoryState::new();
+            let key = StateKey(vec![2]);
+            let mut index = StateHistory::default();
+            let mut current = checkpoint(0, &state);
+            for height in 1..=8 {
+                let mut diff = StateDiff::new();
+                diff.put(key.clone(), vec![u8::try_from(height).unwrap()]);
+                let next = state
+                    .prepare(state.root(), std::slice::from_ref(&diff))
+                    .unwrap();
+                let after = checkpoint(height, &next);
+                index.record(Some(current), after, &state, &[diff]);
+                current = after;
+                state = next;
+            }
+            index.truncate_below(floor);
+            assert_eq!(
+                index.floor(8),
+                floor,
+                "wrong floor after truncating {floor}"
+            );
+            assert_eq!(
+                index.bytes,
+                index.entries.iter().map(|undo| undo.bytes).sum::<usize>(),
+                "byte accounting drifted after truncating {floor}"
+            );
+            assert_eq!(
+                index.changes,
+                index.entries.iter().map(|undo| undo.diff.len()).sum(),
+                "change accounting drifted after truncating {floor}"
+            );
+            for height in 0..=8 {
+                assert_eq!(
+                    index.read(height, Some(current), &state).unwrap().is_some(),
+                    height >= floor,
+                    "height {height} availability disagrees with floor {floor}"
+                );
+            }
+        }
     }
 
     #[test]

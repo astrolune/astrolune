@@ -95,6 +95,36 @@ impl RecoveryCheckpoint {
 }
 
 impl StaticNetwork {
+    /// Adopts this writer's own durably recorded retention anchor, when present.
+    ///
+    /// Automated in-place compaction is authenticated by continuity: the same node
+    /// verified, published and then shortened its history while holding the
+    /// directory's exclusive writer lock, and recorded the anchor it kept. Restart
+    /// therefore resumes from that locally recorded anchor instead of demanding an
+    /// out-of-band pin. A shortened directory that carries no such record is
+    /// externally supplied and still requires an independently held pin; this never
+    /// reads, copies or resets a signing journal or its monotonic anchor.
+    pub(super) fn local_retention(
+        &self,
+        storage: &ChainStorage,
+    ) -> Result<Option<Self>, NetworkNodeError> {
+        let Some(anchor) = storage.local_retention_anchor() else {
+            return Ok(None);
+        };
+        if self.rotating() && !self.potb() {
+            return Err(input(
+                "rotating retention requires an independently pinned committee frontier",
+            ));
+        }
+        self.clone()
+            .with_checkpoint(RecoveryCheckpoint {
+                namespace: self.hash,
+                checkpoint: anchor,
+                history: None,
+            })
+            .map(Some)
+    }
+
     pub(super) fn pinned_authorities(
         &self,
         storage: &ChainStorage,

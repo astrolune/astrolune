@@ -8,7 +8,7 @@ The `crypto` crate uses unkeyed BLAKE2s-256 from [`blake2` 0.11.0](https://docs.
 
 Verification rejects non-canonical public-key encodings and uses `verify_strict`, including weak-key and signature-malleability checks. `Blake2sProvider` verifies signatures only for registered public keys. Registration derives the validator ID as raw BLAKE2s-256 of the public key. Unknown identities fail verification. Registered keys also verify strict RFC 9381 ECVRF proofs; generation, canonical encodings, RFC vectors and weighted sampling are specified in [document 28](28-vrf-and-weighted-selection.md).
 
-These implementations replace the former custom hash and forgeable signature placeholders. Standard backend selection is not an independent audit of the protocol or its integration.
+These implementations replaced the earlier custom hash and forgeable signature placeholders. Choosing standard, pinned backends does not by itself establish that the protocol's use of them is correct; that integration has not been independently reviewed.
 
 ## Domain framing
 
@@ -43,7 +43,7 @@ The node constructs transaction roots with the shared binary Merkle builder. Rec
 
 Validation does not mutate accounts or reserve balances. Callers must maintain a consistent overlay when admitting or executing multiple transactions from one sender. Fees and account state transitions are not implemented by this validator. Version, expiry, lane, and resource prices are signed fields in the [version-1 transaction envelope](14-versioned-transactions.md).
 
-`BasicValidator`, genesis-free producers, and `SimpleExecutor` remain demonstration components. Genesis-backed producers and the daemon now use `SignedValidator` over committed accounts and sequential execution overlays for [native payments](13-native-payments.md), including execution revalidation and durable balance/nonce updates. Authenticated consensus finality remains unfinished. The workspace integration test exercises signed decoding, validation, mempool selection, and planning explicitly.
+`BasicValidator`, genesis-free producers, and `SimpleExecutor` remain demonstration components. Genesis-backed producers and the daemon use `SignedValidator` over committed accounts and sequential execution overlays for [native payments](13-native-payments.md), including execution revalidation and durable balance/nonce updates. [Authenticated finality](15-authenticated-finality.md) verifies the votes and certificates that accompany those commits in the certified network profiles. The workspace integration test exercises signed decoding, validation, mempool selection, and planning explicitly.
 
 ## Bounded parallel verification
 
@@ -66,7 +66,7 @@ This is bounded parallel strict verification, not Ed25519 batch verification in 
 
 ## Compatibility
 
-The original cryptographic backend change preserved transaction bytes but changed cryptographic outputs: raw and domain hashes, derived keys, validator IDs, transaction IDs, signatures, and roots using those functions. Old experimental signatures and commitments are incompatible. Existing data cannot be silently treated as data from the new suite; no database migration or network upgrade is implied. The subsequent version-1 transaction envelope changes canonical transaction bytes and commitments again, and requires archive version 2.
+The original cryptographic backend change preserved transaction bytes but changed cryptographic outputs: raw and domain hashes, derived keys, validator IDs, transaction IDs, signatures, and roots using those functions. Signatures and commitments produced by the earlier placeholders are incompatible. Existing data cannot be silently treated as data from the new suite; no database migration or network upgrade is implied. The subsequent version-1 transaction envelope changes canonical transaction bytes and commitments again, and requires archive version 2.
 
 The original in-memory signing-position guard does not survive restarts. The separate [durable signer](16-durable-signing.md) now journals decisions before issuing signatures and restores its watermark on restart. [Finality certificate verification](15-authenticated-finality.md) is also implemented. Authenticated TLS networking, local BFT voting, durable daemon signing and VRF verification are implemented. Encrypted key custody, rollback-resistant journal anchoring, live VRF rotation and independent review remain open.
 

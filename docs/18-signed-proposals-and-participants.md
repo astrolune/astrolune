@@ -8,7 +8,7 @@
 
 The expected proposer is a trusted policy input, never an authority inferred from the message. `AuthenticatedCommittee::verify_proposal` checks that identity against the registered committee key. A valid signature from another member is insufficient. The low-level `LocalBft::prevote` retains its caller-authentication contract for custom integrations.
 
-`node::RoundRobinValidator` combines these APIs with a `BlockProducer`, protected local voter, and bounded finality collector. It implements one height under an explicitly selected reference designation policy. It returns outgoing messages to its caller; it does not open sockets, schedule wall-clock timers, provision keys, or replace the demonstration daemon.
+`node::RoundRobinValidator` combines these APIs with a `BlockProducer`, protected local voter, and bounded finality collector. It implements one height under an explicitly selected reference designation policy. It returns outgoing messages to its caller; it opens no sockets, schedules no wall-clock timers, and provisions no keys. The [network driver](19-reference-network.md) supplies transport, timers, and provisioning around it.
 
 ## Canonical proposal envelope
 

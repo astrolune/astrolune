@@ -37,6 +37,6 @@ A successful durable commit removes pending entries whose expiry precedes the ne
 
 ## Compatibility and verification
 
-Whole-chain archives now use version 2 with the same outer field layout and checksum domain. Version-1 archives, including empty archives, fail recovery without being rewritten. No automatic migration is provided. Operators must retain old experimental archives separately and initialize a new data directory to use this format. Genesis/account/state-snapshot bytes remain unchanged.
+Whole-chain archives now use version 2 with the same outer field layout and checksum domain. Version-1 archives, including empty archives, fail recovery without being rewritten. No automatic migration is provided. Operators must retain version-1 archives separately and initialize a new data directory to use this format. Genesis/account/state-snapshot bytes remain unchanged.
 
 Tests cover golden wire bytes and independent BLAKE2s vectors, every lane byte, unknown versions, byte mutations and truncations, signing-field mutation, inclusive expiry, policy mismatch, unsupported payloads, atomic block rejection, expiry eviction and failed-commit retry, live RPC rejection, restart, and storage publication/recovery. The transaction fuzz target retains its exact re-encoding invariant. Long fuzz campaigns and authenticated consensus remain open.

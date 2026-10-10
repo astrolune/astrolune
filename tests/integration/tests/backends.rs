@@ -4,11 +4,13 @@
 //! Deterministic seeded backend qualification on the pinned stable toolchain.
 //!
 //! The campaign replays the shared contract corpus and its mutations through
-//! the reference interpreter and every qualified alternate engine profile,
-//! asserting that acceptance, error variant, staged effects and charged
-//! resources agree exactly. The profiles differ in value-stack allocation and
-//! stack pooling only; none of them is an ahead-of-time, just-in-time or SIMD
-//! backend, and no such backend exists.
+//! the reference interpreter, every qualified alternate engine profile and the
+//! ahead-of-time artifact cache, asserting that acceptance, error variant,
+//! staged effects and charged resources agree exactly. The engine profiles
+//! differ in value-stack allocation and stack pooling only; the ahead-of-time
+//! path is the same interpreter with translation hoisted out of the metered
+//! call and cached. Neither emits native machine code, so no just-in-time or
+//! SIMD backend exists.
 
 #[path = "support/backends.rs"]
 mod backends;
@@ -76,7 +78,10 @@ fn campaign(rounds: usize) {
     println!(
         "{rounds} backend mutations; {} structured modules; {} candidates; \
          {} accepted modules; {} compared validations; {} compared executions \
-         ({} accepted, {} rejected); {} compared seam executions; 0 disagreements",
+         ({} accepted, {} rejected); {} compared seam executions; \
+         {} compared ahead-of-time validations; {} compared ahead-of-time \
+         executions ({} from a retained artifact); {} compared ahead-of-time \
+         seam executions; {} cache generations retired; 0 disagreements",
         seeds.len(),
         totals.candidates,
         totals.accepted_modules,
@@ -84,7 +89,12 @@ fn campaign(rounds: usize) {
         totals.executions,
         totals.accepted,
         totals.rejected,
-        totals.seams
+        totals.seams,
+        totals.aot_validations,
+        totals.aot_executions,
+        totals.aot_hits,
+        totals.aot_seams,
+        totals.aot_retirements
     );
     assert!(
         totals.accepted > 0,
@@ -98,6 +108,26 @@ fn campaign(rounds: usize) {
         totals.seams > 0,
         "the RuntimeBackend seam must also be compared"
     );
+    assert_eq!(
+        totals.aot_validations * 3,
+        totals.validations,
+        "every candidate compared against the three alternate validators must \
+         also be compared against the cache"
+    );
+    assert_eq!(
+        totals.aot_executions,
+        totals.accepted_modules * 3,
+        "every accepted module must be executed once on a cold cache and twice \
+         on the shared one"
+    );
+    assert!(
+        totals.aot_hits > 0,
+        "the ahead-of-time path must also be compared with a retained artifact"
+    );
+    assert!(
+        totals.aot_seams > 0,
+        "the ahead-of-time seam must also be compared"
+    );
 }
 
 #[test]
@@ -106,13 +136,13 @@ fn backend_qualification_smoke() {
 }
 
 #[test]
-#[ignore = "extended deterministic engine-configuration qualification; the compared profiles vary value-stack allocation only and are not AOT, JIT or SIMD backends"]
+#[ignore = "extended deterministic engine-configuration and ahead-of-time qualification; the compared engine profiles vary value-stack allocation only, the ahead-of-time path hoists translation out of the metered call on the same interpreter, and neither is a JIT or SIMD backend"]
 fn extended_backend_qualification() {
     campaign(100_000);
 }
 
 #[test]
-#[ignore = "million-input deterministic engine-configuration qualification; the compared profiles vary value-stack allocation only and are not AOT, JIT or SIMD backends"]
+#[ignore = "million-input deterministic engine-configuration and ahead-of-time qualification; the compared engine profiles vary value-stack allocation only, the ahead-of-time path hoists translation out of the metered call on the same interpreter, and neither is a JIT or SIMD backend"]
 fn million_backend_qualification() {
     campaign(1_000_000);
 }

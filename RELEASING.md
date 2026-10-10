@@ -2,7 +2,7 @@
 
 # Release Process
 
-No production release process is active. This document defines the minimum future baseline; it does not authorize publishing artifacts.
+This document defines AstroLune's release process. No release has been published yet, and the checklist below authorizes nothing by itself: publication requires the explicit maintainer authorization described under publication and rollback.
 
 ## Preconditions
 
@@ -39,7 +39,34 @@ cli verify-release target/ci-artifacts/MANIFEST.json <authority-public-key> targ
 
 Release artifacts must be built from a clean tagged revision, include source and license notices, identify the Rust toolchain and target, publish checksums and a software bill of materials, and be accompanied by a signed manifest verified from an independently obtained authority key.
 
-**This repository does not invent signing identities or keys.** No maintainer identity, no real or placeholder authority key, and no key ceremony exists here. Which key is authoritative, how it is generated, held, distributed, countersigned, rotated and revoked, and how verifiers obtain it out of band, must be decided and documented before any release is signed. There is no transparency log, no expiry, no revocation and no threshold policy.
+**This repository does not invent signing identities or keys.** No maintainer identity and no real or placeholder authority key exists here, and no ceremony has been performed. What does exist now is the ceremony itself: the ordered procedure below, a canonical identity-document and ceremony-transcript format, a revocation-statement format, and an offline verifier with tests. Deciding which key is authoritative is the maintainer's act of running that ceremony with their own key on their own hardware, not a decision this document can make. There is still no transparency log, no countersignature and no threshold policy.
+
+## Release authority key ceremony
+
+The authority key is generated once, on a machine disconnected from every network for the whole ceremony, with two witnesses present throughout. In order: generate the key; read the derived public key back and have both witnesses confirm it independently; compose the transcript recording the date, the entropy source, the hardware, every custody location, both witnesses, every step performed verbatim, and every pre-signing check with its observed result; compose the identity binding that transcript's digest to the validity window and the scope of targets, revisions and artifact names; sign the transcript and then the identity; verify both offline before the machine is reconnected; have both witnesses read the identity digest aloud and write it down independently; seal one vault copy per separately held container, each password held apart from the copy it opens; and only then distribute.
+
+```sh
+cli consensus-vault-create authority.vault
+python .github/scripts/release-authority.py transcript --authority-public-key <hex> --date <YYYY-MM-DD> --entropy <source> --hardware <machine> --custody <location> --witness <name and role> --step <action> --verified <check and result> --output release/TRANSCRIPT.json
+python .github/scripts/release-authority.py identity --authority-public-key <hex> --transcript release/TRANSCRIPT.json --not-before <instant> --not-after <instant> --serial 1 --target x86_64-unknown-linux-gnu --target x86_64-pc-windows-msvc --output release/AUTHORITY.json
+cli release-sign release/TRANSCRIPT.json authority.vault release/TRANSCRIPT.json.sig
+cli release-sign release/AUTHORITY.json authority.vault release/AUTHORITY.json.sig
+python .github/scripts/release-authority.py verify --authority-public-key <hex> --identity release/AUTHORITY.json --identity-signature release/AUTHORITY.json.sig --transcript release/TRANSCRIPT.json --transcript-signature release/TRANSCRIPT.json.sig --output release/VERIFICATION.json
+```
+
+`release/AUTHORITY.json` and its signature travel with the release artifacts. The 64-hex identity digest travels separately, published through at least two channels under different administrative control, so an attacker who controls the host serving the artifacts does not also control the value a verifier compares against. A verifier obtains the digest out of band, recomputes it over the identity document it received, compares, and only then checks a manifest against that identity rather than against a bare hex key, which is what binds a signature to a scope and a validity window instead of only to a holder.
+
+```sh
+python .github/scripts/release-authority.py verify --authority-public-key <hex> --identity release/AUTHORITY.json --identity-signature release/AUTHORITY.json.sig --transcript release/TRANSCRIPT.json --transcript-signature release/TRANSCRIPT.json.sig --manifest target/ci-artifacts/MANIFEST.json --manifest-signature target/ci-artifacts/MANIFEST.json.sig --at <instant>
+```
+
+Expiry is routine: an identity names a bounded window and is refused outside it without a verifier having to learn anything new. Rotation is a second full ceremony producing the next `serial`, whose `predecessor` is the digest of the identity it replaces and whose `not_before` is later; `--predecessor` checks that continuity but never authenticates the predecessor, because a chain that authenticated its own root would make the out-of-band digest pointless. Revocation is a signed statement naming the identity digest it withdraws, and it must be signed by the key it withdraws, so a verifier authenticates it under exactly the key whose authority it ends. On compromise: stop signing; treat every manifest signature whose distribution overlaps the exposure window as unverified; sign and distribute a revocation with reason `compromise` while the key is still available; run a new ceremony; publish the successor's digest beside the compromised one through both out-of-band channels; and re-sign anything that must remain verifiable, because rotation does not make an old signature valid again.
+
+```sh
+python .github/scripts/release-authority.py revoke --authority-public-key <hex> --identity release/AUTHORITY.json --date <YYYY-MM-DD> --reason compromise --output release/REVOCATION.json
+```
+
+A key that was lost rather than copied cannot be self-revoked at all; that case is handled only by publishing a successor and letting the predecessor's window expire. A verifier sees only a revocation it is given — there is no transparency log, no revocation list and no online status protocol — which is why the validity window is bounded rather than open-ended. The procedure establishes no hardware isolation, no non-exporting signing device, no threshold or multi-party custody, no attestation that the machine was genuinely offline, no monitoring, and no audit; two witnesses are a procedural control and not a cryptographic one, and nothing in the tooling can verify that the recorded custody locations are genuinely separate. The byte-exact document formats are tabulated in [docs/53](docs/53-key-custody-and-release-authority.md).
 
 ## Publication and rollback
 

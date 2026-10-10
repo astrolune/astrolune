@@ -43,7 +43,7 @@ Performance is a first-class requirement, but no optimization may weaken determi
 - Immutable state snapshots for parallel reads without global locks.
 - State diffs followed by a separate deferred commit stage.
 - Multi-level caches and state prefetching.
-- Optional future state sharding inside one execution domain; not part of the baseline.
+- Optional future state sharding inside one execution domain; outside the current scope.
 - Batch transaction processing and parallel signature verification.
 - SIMD acceleration where an audited library and deterministic fallback exist.
 - Execution-plan and compiled-contract caches.
@@ -68,7 +68,7 @@ Optimizations may alter latency, never accepted results. Every optimized path ne
 
 ## 0.4 Scope
 
-The first engineering phase provides compileable Rust interfaces and a coherent repository layout. It does not implement consensus cryptography, a production state database, a VM, networking, or services.
+The repository implements the node end to end: BLAKE2s-256 hashing with strict Ed25519 signatures and RFC 9381 ECVRF proofs, canonical bounded codecs, an append-only chain log with verified replay recovery, a bounded integer WebAssembly interpreter with a host ABI, mutually authenticated TLS 1.3 networking between independent daemon processes, and an on-chain DNS registry with a certified-proof resolver. [The implementation status](08-implementation-status.md) carries each area's grade. Independent review, distributed load qualification, and a published release remain open.
 
 AstroLune includes DNS for authenticated in-network names. It explicitly excludes a general-purpose distributed storage or file-sharing product. Validator state persistence remains necessary node infrastructure and is not the removed storage service.
 

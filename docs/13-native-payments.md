@@ -7,7 +7,7 @@ commands, see the [CLI wallet guide](24-wallet-and-rpc-client.md).
 
 ## Activation and compatibility
 
-Genesis-backed node services and `daemon --genesis genesis.bin` execute native payments against committed account state. The sender's public key travels inside the signed payment payload, and its derived address must match the transaction sender. No separate key registration is required for wallet accounts. Validator-key registration and authenticated consensus remain separate work.
+Genesis-backed node services and `daemon --genesis genesis.bin` execute native payments against committed account state. The sender's public key travels inside the signed payment payload, and its derived address must match the transaction sender. No separate key registration is required for wallet accounts. Validator-key registration and authenticated consensus are specified separately in [authenticated finality](15-authenticated-finality.md).
 
 Payments use the [version-1 transaction envelope](14-versioned-transactions.md), with signed expiry, an explicit payment lane, and prices equal to `PAYMENT_PRICES`. Account encoding and genesis commitments are unchanged. Native payment payloads have their own version tag. Genesis-backed proposals containing the previous arbitrary demonstration payloads are now rejected. Archive version 2 is required; version-1 archives are rejected without rewriting. Recovered history is not retroactively authenticated or re-executed. Genesis-free demonstration chains retain their previous behavior and expose no account or submission RPC.
 
@@ -69,4 +69,4 @@ The transport bounds JSON to 1 MiB, so hex transactions must fit within that fra
 
 Executable signing, TCP, and restart examples are exercised by [`payments_rpc.rs`](../apps/daemon/tests/payments_rpc.rs); sequential transitions and rejection cases by [`payments.rs`](../crates/execution/tests/payments.rs).
 
-Consensus certificates remain demonstrations. Network authentication, general contracts, dynamic fee governance, durable pending queues, and production-scale storage remain unfinished.
+Local demonstration mode still publishes placeholder certificates; the certified profiles authenticate finality instead. [Signed contracts](30-signed-contracts.md), [quorum capacity and fee governance](48-parameter-governance.md) and [mutually authenticated transport](20-authenticated-transport.md) are implemented. Durable pending-transaction queues and a storage engine qualified for public-network volumes remain open.

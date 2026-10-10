@@ -2,7 +2,7 @@
 
 # AstroLune Engineering Documentation
 
-These documents define the Rust-first engineering direction for AstroLune. They replace the earlier C/C++ and custom contract-language design. Unless a feature is explicitly marked **implemented**, it is a target or compileable interface baseline rather than an audited claim.
+These documents are the engineering specification for AstroLune. They replace the earlier C/C++ and custom contract-language design. Each document states what it implements, the bounds it enforces, and what it does not establish; [the implementation status](08-implementation-status.md) carries the current grade for every area.
 
 For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
@@ -17,8 +17,8 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 | [04-state-and-transactions.md](04-state-and-transactions.md) | transactions, leasing, parallel scheduling, snapshots, state commit |
 | [05-contract-languages.md](05-contract-languages.md) | Rust smart-contract model and SDK boundary |
 | [06-deferred-services.md](06-deferred-services.md) | AstroLune DNS |
-| [07-validator-requirements.md](07-validator-requirements.md) | validator behavior and preliminary requirements |
-| [08-implementation-status.md](08-implementation-status.md) | baseline, roadmap, gates, and open risks |
+| [07-validator-requirements.md](07-validator-requirements.md) | validator behavior, hardware profiles and operational requirements |
+| [08-implementation-status.md](08-implementation-status.md) | per-area status, roadmap, release gates and open risks |
 | [09-cryptographic-foundations.md](09-cryptographic-foundations.md) | implemented hash/signature suite, signed admission, and compatibility |
 | [10-state-and-recovery.md](10-state-and-recovery.md) | Merkle state commitments, proofs, atomic transitions, snapshots, and recovery |
 | [11-chain-archives.md](11-chain-archives.md) | atomic whole-chain archives, historical recovery, pruning, bounds, and compatibility |
@@ -35,7 +35,7 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 | [22-append-only-chain-storage.md](22-append-only-chain-storage.md) | append-only block/delta log, atomic publication, recovery, compatibility, and remaining limits |
 | [23-signing-journal-rollover.md](23-signing-journal-rollover.md) | bounded protected signing, alternating watermarks, recovery, and compatibility |
 | [24-wallet-and-rpc-client.md](24-wallet-and-rpc-client.md) | offline payment signing, real account/status queries, bounded RPC, submission and retry semantics |
-| [25-potb-evidence.md](25-potb-evidence.md) | authenticated double-vote evidence, durable outbox, experimental scoring and activation limits |
+| [25-potb-evidence.md](25-potb-evidence.md) | authenticated double-vote evidence, durable outbox, offline candidate scoring and activation limits |
 | [27-explorer-rpc.md](27-explorer-rpc.md) | finalized block history, TCP framing, browser gateway and explorer display limits |
 | [28-vrf-and-weighted-selection.md](28-vrf-and-weighted-selection.md) | RFC 9381 proofs, typed domains, canonical envelopes, weighted draws, rotation and activation boundaries |
 | [29-parallel-payments-and-wasm.md](29-parallel-payments-and-wasm.md) | parallel payment execution, deterministic WebAssembly sandbox, host ABI, metering and contract tools |
@@ -66,22 +66,28 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Compact blocks and the reference execution pipeline](54-compact-blocks-and-execution-pipeline.md)
 - [Bounded formal model of fixed-height voting](55-formal-consensus-model.md)
 - [Local performance measurement](56-performance-measurement.md)
+- [Public-network hardening and bounded admission control](57-public-network-hardening.md)
+- [Ahead-of-time contract backend](58-ahead-of-time-contract-backend.md)
+- [Unbounded consensus safety and liveness argument](59-unbounded-consensus-argument.md)
+- [Automated history retention](60-automated-history-retention.md)
 
 Legacy-shaped filenames such as `03-vm-and-gas.md`, `05-contract-languages.md`, and `06-deferred-services.md` are retained temporarily to preserve links. Their contents describe the current Rust architecture.
 
 ## Status vocabulary
 
-- **planned** — documented target without an interface;
-- **interface baseline** — compileable types and traits, no operational implementation;
+Every area in [the implementation status](08-implementation-status.md) carries one grade from this ladder, recording how far that area has been carried:
+
+- **planned** — specified in these documents, with no Rust interface yet;
+- **interface baseline** — compileable types and traits fix the boundary before behavior lands;
 - **implemented** — concrete behavior exists;
 - **tested** — positive and negative behavior is automated;
-- **benchmarked** — reproducible measurements exist;
-- **audited** — independent review completed and findings addressed;
-- **production-ready** — supported release and operational gates completed.
+- **benchmarked** — reproducible measurements exist for a stated machine and revision;
+- **audited** — an independent external review has completed and its findings are addressed;
+- **production-ready** — release gates, operations and a supported-version policy are complete.
 
 ## Normative language
 
-The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** express intended protocol requirements. Normative consensus behavior eventually belongs in versioned specifications and test vectors; these engineering documents establish initial boundaries.
+The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** express protocol requirements. These documents are the current normative source; wire-level behavior is additionally pinned by explicit profile versions and the frozen binary fixtures under `tests/integration/fixtures`.
 
 ## Explicit scope decisions
 

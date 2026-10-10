@@ -4,7 +4,7 @@
 
 ## Scope and use
 
-This document describes the legacy archive and local demonstration mode. New certified network directories use the [append-only chain log](22-append-only-chain-storage.md); existing archives remain supported without automatic migration.
+This document describes the legacy archive format and the local demonstration mode. New certified network directories use the [append-only chain log](22-append-only-chain-storage.md); existing archives remain supported without automatic migration.
 
 `storage::FileBackedStorage` implements `NodeStorage` with an atomic, single-writer file archive. It preserves retained block bodies, opaque finality certificate bytes, checkpoints, and state snapshots across restarts. `BlockProducer::commit_block` already accepts this backend through its generic storage boundary.
 
@@ -28,7 +28,7 @@ The daemon creates its data directory and opens `chain.bin` there. Each `--block
 
 RPC chain status is initialized from recovery and updated only after successful durable commits. Genesis-backed daemon account queries read committed account state, and transaction submission reaches signed native payment admission in the node mempool. Genesis-free chains keep these operations unavailable. The RPC service boundary requires `Send` so a bound server can move to its worker thread.
 
-This is demonstration block/state recovery. Certificates remain placeholders. Genesis-backed native payment balances and nonces recover from committed state. Consensus keys, signing journals, pending transactions, and adaptive-capacity observations are not recovered. The latter observation window is bounded and starts empty after restart; it does not change the producer's configured header capacity. The daemon uses the supplied genesis chain ID or defaults to 7 and does not implement network synchronization. Its listener workers currently terminate with the process. Archives stop accepting writes at the reference bounds below; automatic pruning is not enabled.
+In local demonstration mode this is block and state recovery only: certificates are placeholders. Genesis-backed native payment balances and nonces recover from committed state. Consensus keys, signing journals, pending transactions, and adaptive-capacity observations are not recovered. The latter observation window is bounded and starts empty after restart; it does not change the producer's configured header capacity. The daemon uses the supplied genesis chain ID or defaults to 7 and does not synchronize with peers in this mode. Its listener workers terminate with the process. Archives stop accepting writes at the reference bounds below; automatic pruning is not enabled.
 
 Process tests cover repeated daemon runs, recovery-only startup, argument errors, dry runs, writer exclusion, corrupt archives, and listener failures. Differential tests compare 20 service restarts with uninterrupted block production, including nonempty execution state and identical retained block bodies.
 

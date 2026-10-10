@@ -2,10 +2,11 @@
 
 # Native-payment wallet and RPC client
 
-The CLI now reads the contacted node's finalized status and accounts and signs
-real version-1 Ed25519 native payments. The previous offline status placeholder
-and mock-key demonstration have been removed. This is a reference command-line
-wallet, not a production custody product.
+The CLI reads the contacted node's finalized status and accounts and signs
+version-1 Ed25519 native payments. It is a command-line wallet for operators and
+developers: keys live in the encrypted vaults of
+[document 31](31-rust-sdk-and-wallet-vaults.md), and it provides no hardware
+custody, multi-signature policy, or key recovery.
 
 ## Commands
 
@@ -122,10 +123,9 @@ Remote error messages are escaped before printing to a terminal.
 RPC remains unauthenticated and unencrypted. Use a trusted local endpoint or a
 separately secured tunnel. P2P mutual TLS does not authenticate RPC. Status and
 account replies are claims of the contacted node, not light-client proofs.
-The existing RPC server still needs public-network concurrency, deadlines,
-authentication and rate-limit hardening. None of this change claims production
-readiness or completes PoTB/VRF, rotating committees, contracts or independent
-security review.
+The RPC server still needs public-network concurrency, deadlines, authentication
+and rate-limit hardening before it faces untrusted clients, and the wallet and
+RPC paths have not been independently reviewed.
 
 ## Verification
 

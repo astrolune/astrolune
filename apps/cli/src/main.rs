@@ -10,6 +10,7 @@
 //! - `verify` — validate a node configuration
 //! - `genesis <file>` — verify canonical genesis and derive the initial state root
 //! - `signing-anchor-create` / `verify-signing-anchor` — independent rollback anchors
+//! - `retention-status` / `retention-compact` — local automated history retention
 //! - `release-sign` / `verify-release` — detached release-manifest authority
 
 #![forbid(unsafe_code)]
@@ -141,6 +142,10 @@ Commands:
            Export a bounded suffix or verify history from an independently pinned checkpoint
   verify-history <genesis> <validators> <directory> <minimum-height>
            Exclusively recover and authenticate existing finalized history
+  retention-status <directory> [retained-blocks interval-blocks]
+           Report the retained floor, retention state and the next policy floor
+  retention-compact <genesis> <validators> <directory> <minimum-height> <retain-blocks>
+           Authenticate history, then compact this directory in place and reverify
   export-history <genesis> <validators> <directory> <minimum-height> <new-directory>
            Export verified history for an observer, without copying signing authority
   verify   Validate a node configuration
@@ -206,7 +211,8 @@ fn run() -> Result<(), CliError> {
             receipts::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }
         Some(
-            command @ ("verify-history" | "export-history" | "verify-retained" | "export-retained"),
+            command @ ("verify-history" | "export-history" | "verify-retained" | "export-retained"
+            | "retention-status" | "retention-compact"),
         ) => recovery::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
         Some("verify") => cmd_verify(),
         Some(

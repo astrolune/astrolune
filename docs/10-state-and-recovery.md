@@ -8,7 +8,7 @@
 
 The producer executes proposals against an isolated copy. Preparing or rejecting a proposal does not change canonical state, height, or pending transactions. Before committing, the producer re-executes the reference transition and checks outputs, resource totals, capacity, and commitments. Successful storage commit publishes the producer's state and removes included transactions. `FullNodeService` propagates commit failures and retains the pending proposal for retry.
 
-These are reference implementations. `InMemoryStorage` does not survive restart, and the daemon still demonstrates admission, execution, and finality. `FileBackedStorage` now persists retained blocks, certificates, checkpoints, and historical state together; see [chain archives](11-chain-archives.md). Finality authentication, finalized account/fee transitions, and production-scale state indexing remain open. `FileBackedState` persists state entries only, without block history or certificates.
+`InMemoryStorage` is an in-process backend and does not survive restart; `FileBackedState` persists state entries only, without block history or certificates. `FileBackedStorage` persists retained blocks, certificates, checkpoints, and historical state together; see [chain archives](11-chain-archives.md). New network directories instead use the [append-only chain log](22-append-only-chain-storage.md). [Authenticated finality](15-authenticated-finality.md) and [native payment](13-native-payments.md) account and fee transitions run over these backends, while the daemon's separate local demonstration mode still simulates finality. [Bounded historical state indexing](47-historical-state-index.md) is implemented; automatic physical retention is not.
 
 ## State commitment version 1
 
@@ -28,7 +28,7 @@ Each level combines adjacent left/right nodes. A last unpaired node is promoted 
 
 `StateProof` binds a zero-based leaf index, total entry count, and siblings from leaf to root. Verification derives orientation and unpaired levels from the index and count, requires exactly the necessary siblings, and checks the supplied key and value against the trusted root. `None` from `prove` is not an authenticated absence proof.
 
-`StateDiff::commitment()` is `H("astrolune.state.diff.v1", canonical_diff_bytes)`. Operation order, repeated writes, deletions, and field lengths are preserved. This replaces the demonstration executor's XOR output commitment. A final state root depends on final entries, whereas a diff commitment also binds the sequence of operations.
+`StateDiff::commitment()` is `H("astrolune.state.diff.v1", canonical_diff_bytes)`. Operation order, repeated writes, deletions, and field lengths are preserved. It supersedes the XOR output commitment that `SimpleExecutor` still produces for demonstrations. A final state root depends on final entries, whereas a diff commitment also binds the sequence of operations.
 
 ## Authenticated absence and proof transport
 

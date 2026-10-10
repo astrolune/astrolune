@@ -9,7 +9,9 @@
 //! `ChainStorage` selects append-only logs for new network directories and preserves
 //! existing bounded `FileBackedStorage` archives. All backends implement `NodeStorage`.
 //! The log retains bodies on disk, with an in-memory height index and latest state.
-//! Finality authentication remains the caller's responsibility.
+//! An opt-in [`RetentionPolicy`] compacts the log in place after a commit. Finality
+//! authentication and any independently held recovery pin remain the caller's
+//! responsibility; retention establishes no trust and proves nothing to a peer.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
@@ -26,6 +28,7 @@ mod log;
 mod log_record;
 mod persistent;
 mod receipts;
+mod retention;
 mod snapshot;
 pub use receipts::{
     BlockEffects, MAX_BLOCK_RECEIPTS, MAX_INDEXED_TRANSACTIONS, MAX_RECEIPTS_BYTES, StoredReceipts,
@@ -35,6 +38,12 @@ pub use chain::ChainStorage;
 pub use history::{MAX_STATE_HISTORY_BLOCKS, MAX_STATE_HISTORY_BYTES, MAX_STATE_HISTORY_CHANGES};
 pub use log::AppendOnlyStorage;
 pub use persistent::FileBackedStorage;
+pub use retention::{
+    DEFAULT_COMPACTION_BYTES, DEFAULT_COMPACTION_INTERVAL_BLOCKS, DEFAULT_RETAINED_BLOCKS,
+    MAX_COMPACTION_BYTES, MAX_COMPACTION_INTERVAL_BLOCKS, MAX_RETAINED_BLOCKS,
+    MIN_COMPACTION_BYTES, MIN_COMPACTION_INTERVAL_BLOCKS, MIN_RETAINED_BLOCKS, RetentionPolicy,
+    RetentionState,
+};
 
 /// Maximum encoded reference chain archive size (256 MiB).
 pub const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
@@ -197,6 +206,19 @@ impl InMemoryStorage {
     #[must_use]
     pub fn block_count(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// Height of the oldest retained checkpoint; absence means an empty store.
+    /// A floor states local availability, never that a height was not finalized.
+    #[must_use]
+    pub fn retained_floor(&self) -> Option<u64> {
+        self.checkpoints.keys().next().copied()
+    }
+
+    /// Lowest height whose exact state this reference backend still retains.
+    #[must_use]
+    pub fn history_floor(&self) -> Option<u64> {
+        self.snapshots.keys().next().copied()
     }
 
     /// Returns the underlying state database (read-only).

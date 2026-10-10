@@ -1407,10 +1407,13 @@ const LIVE_WEIGHTED: Bound = Bound {
 
 /// Equivocating weight at which two disjoint quorums can both form.
 ///
-/// A quorum is strictly more than two thirds of the total, so `2 * quorum`
-/// always exceeds the total and this subtraction cannot wrap.
+/// A quorum is strictly more than two thirds of the total, so the complement is
+/// strictly smaller than the quorum and this subtraction cannot wrap. The
+/// algebraically equal `2 * quorum - total` is deliberately not used: doubling
+/// a quorum overflows `u128` at and above `3 * 2^126 - 1`, which this form
+/// avoids by never producing an intermediate larger than the total.
 fn accountability_threshold(model: &Model) -> u128 {
-    model.quorum * 2 - model.total
+    model.quorum - (model.total - model.quorum)
 }
 
 /// Explores one bound and returns its report, recording the measured counts.

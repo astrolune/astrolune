@@ -243,11 +243,20 @@ impl PeerTransport {
     }
 }
 
-struct ConnectionSlot(Arc<AtomicUsize>, Arc<NodeMetrics>);
+/// Holds one accepted session slot for the lifetime of its worker thread.
+struct ConnectionSlot {
+    /// Accepted sessions currently being served.
+    active: Arc<AtomicUsize>,
+    /// Shared runtime owning the metrics and the admission controller.
+    peers: peers::PeerRuntime,
+    /// Endpoint whose admitted slot is returned when the worker finishes.
+    peer: p2p::PeerId,
+}
 impl Drop for ConnectionSlot {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-        self.1.subtract(NodeMetric::IncomingSessions, 1);
+        self.active.fetch_sub(1, Ordering::AcqRel);
+        self.peers.metrics.subtract(NodeMetric::IncomingSessions, 1);
+        self.peers.release_inbound(&self.peer);
     }
 }
 
@@ -275,17 +284,33 @@ fn drive(
                         signals.peers.metrics.add(NodeMetric::SessionLimitDrops, 1);
                         continue;
                     }
+                    let peer = p2p::PeerId::new(
+                        &stream
+                            .peer_addr()
+                            .map_or_else(|_| String::new(), |address| address.to_string()),
+                    );
+                    // A refused or banned source is dropped here, closing the
+                    // socket before a TLS handshake, a worker thread or the node
+                    // lock is spent on it.
+                    if signals.peers.refuse_inbound(&peer) {
+                        signals.peers.metrics.add(NodeMetric::SessionLimitDrops, 1);
+                        drop(stream);
+                        continue;
+                    }
                     signals.active.fetch_add(1, Ordering::AcqRel);
                     signals.peers.metrics.add(NodeMetric::IncomingSessions, 1);
-                    let slot =
-                        ConnectionSlot(signals.active.clone(), signals.peers.metrics.clone());
+                    let slot = ConnectionSlot {
+                        active: signals.active.clone(),
+                        peers: signals.peers.clone(),
+                        peer: peer.clone(),
+                    };
                     let peers = signals.peers.clone();
                     let storage_failed = signals.storage_failed.clone();
                     std::thread::Builder::new()
                         .name("peer-request".into())
                         .spawn(move || {
                             let _slot = slot;
-                            let _ = peers.serve(stream, &storage_failed);
+                            let _ = peers.serve(stream, &storage_failed, &peer);
                         })
                         .map_err(io_error)?;
                 }

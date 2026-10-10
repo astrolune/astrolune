@@ -124,9 +124,15 @@ pub fn potb_configuration(
 
 /// Weight two conflicting quorums must share at a given committee total.
 /// Equivocating weight strictly below this cannot produce conflicting finality.
+///
+/// A quorum is strictly more than two thirds of the total, so the complement is
+/// strictly smaller and this subtraction cannot wrap. The algebraically equal
+/// `2 * quorum_power(total) - total` is deliberately not used: doubling a quorum
+/// overflows `u128` at and above `3 * 2^126 - 1`.
 #[must_use]
 pub fn accountability_threshold(total: u128) -> u128 {
-    2 * quorum_power(total) - total
+    let quorum = quorum_power(total);
+    quorum - (total - quorum)
 }
 
 /// Signs a conflicting value in the exact observed slot with the coalition member's own key.

@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 //! Independently signed DNS proofs, stale/foreign record rejection and binary tooling.
+//!
+//! The two tests that spawn the `dns` binary take `testkit::fork_lock`
+//! exclusively. This binary holds no operating-system file lock of its own, so
+//! the guard corrects no failure observed here; it keeps the spawning side of
+//! that module's contract uniform across the workspace, so a later
+//! file-backed test added to this binary is not silently exposed to the
+//! fork-window race described there.
 
 use codec::CanonicalEncode;
 use consensus::{
@@ -153,6 +160,7 @@ fn resolver_authenticates_code_ownership_exact_name_and_freshness() {
 
 #[test]
 fn command_prepares_canonical_calls_and_refuses_overwrite() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let path = std::env::temp_dir().join(format!("astrolune-dns-prepare-{}", std::process::id()));
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_dns"))
@@ -209,6 +217,8 @@ fn resolver_process_serves_verified_results_and_rejects_mismatched_peer_proofs()
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
+
+    let _fork_lock = testkit::fork_lock::spawning_child();
 
     let (trust, code, value) = fixture();
     let path = std::env::temp_dir().join(format!("astrolune-dns-server-{}", std::process::id()));

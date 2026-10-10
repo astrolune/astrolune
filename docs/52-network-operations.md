@@ -8,7 +8,8 @@ signing-state recovery and incident handling remain in the existing
 [network operations](36-private-network-operations.md),
 [durable signing](16-durable-signing.md) and
 [custody and release authority](53-key-custody-and-release-authority.md) documents.
-The procedures here do not establish production or distributed-load qualification.
+The procedures here are operational; they do not establish distributed-load
+qualification, which needs its own retained evidence.
 
 ## Start and verify
 
@@ -122,7 +123,8 @@ windows with the actual transaction/contract mix and retain the highest observed
 sustained growth for planning. Free bytes divided by that rate estimates remaining
 time only while the workload and other disk activity stay comparable. Set local
 thresholds early enough for the deployment's maintenance lead time. No universal
-production threshold is established here.
+disk threshold is established here; each deployment derives its own from its
+measured growth rate.
 
 New network directories use append-only history; automatic retention is not
 implemented. Existing archive formats keep their documented caps. Do not remove
@@ -216,7 +218,7 @@ python3 -B -m unittest discover -s tools -p test_calibrate_network.py -v
 ```
 
 This is qualification of the sampler. It is not a Linux Rust workspace run,
-independent-machine reproducibility, a distributed network benchmark, or a
-production operating acceptance result. Those results require their own retained
-evidence. No consensus-latency or throughput improvement is inferred from these
-functional tests.
+independent-machine reproducibility, a distributed network benchmark, or an
+operating acceptance result for a deployment. Those results require their own
+retained evidence. No consensus-latency or throughput improvement is inferred
+from these functional tests.

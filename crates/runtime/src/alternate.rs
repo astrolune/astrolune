@@ -8,10 +8,13 @@
 //! interpreter. This module supplies the backend that claim is tested against
 //! and the exact field-by-field decision procedure for "match". The alternate
 //! backend is the same Wasmi interpreter under a different value-stack
-//! allocation and stack-pooling strategy, selected by [`EngineProfile`]. It is
-//! not an ahead-of-time compiler, not a just-in-time compiler, not a SIMD
-//! backend and not a second independent implementation of WebAssembly; no such
-//! backend exists in this workspace.
+//! allocation and stack-pooling strategy, selected by [`EngineProfile`], and it
+//! recompiles inside every call. It is not an ahead-of-time compiler, not a
+//! just-in-time compiler, not a SIMD backend and not a second independent
+//! implementation of WebAssembly. The ahead-of-time backend lives in
+//! [`crate::AotBackend`] and uses the comparison procedure defined here; no
+//! just-in-time, SIMD or independently implemented backend exists in this
+//! workspace.
 
 use std::collections::{BTreeMap, BTreeSet};
 

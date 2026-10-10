@@ -2,11 +2,11 @@
 
 # 50. Public interface naming and compatibility
 
-The 0.1 interface baseline was reviewed after live governance and checkpoint
-recovery were implemented. The following names describe the supported boundaries;
-they do not certify production readiness or alternate runtime implementations.
-Rust crate versions remain 0.1. Wire compatibility is tracked separately through
-explicit profile versions and frozen binary fixtures.
+This document fixes the public names of AstroLune's supported boundaries. It was
+written after live governance and checkpoint recovery were implemented, and it is
+updated whenever a public entry point is added or renamed. Rust crate versions
+remain 0.1, so the Rust-level API is not frozen yet; wire compatibility is tracked
+separately through explicit profile versions and frozen binary fixtures.
 
 | Boundary | Public entry points | Meaning |
 |---|---|---|
@@ -18,6 +18,8 @@ explicit profile versions and frozen binary fixtures.
 | Committee authority | `consensus::rotation::HandoffVerifier`, `potb_transition::PotbVerifier` | Sequential authenticated authority changes; application execution is separate |
 | Governance | `GovernanceIntent`, `GovernanceApproval`, `GovernanceCertificate`, `GovernanceState` | Typed request, individual signature, incumbent quorum and delayed activation |
 | Live contracts | `runtime::WasmRuntime`, `WasmCall`, `WasmOutput`, `WASM_VERSION` | Integer ABI-v2 validation, metering and staged host effects |
+| Contract artifacts | `runtime::AotBackend`, `ArtifactCache`, `CompiledArtifact`, `ArtifactKey` | Translation completed before any call budget exists, then reused; a retained artifact is a local cache entry and never consensus data |
+| Network admission | `p2p::admission::AdmissionController`, `AdmissionConfig`, `Offence`, `Refusal` | Bounded local connection, rate and ban decisions from a caller-supplied tick; never an authentication or consensus input |
 | Execution | `execution::ExecutionPolicy`, `execute_parallel`, `SignedSession` | Parent-authorized prices/capacity and deterministic signed execution |
 | Network roles | `node::network::NetworkNode`, `node::observer::ObserverNode` | Voting participant and independently verifying non-voter |
 | Signing | `keystore::DurableSigner` | Protected signing identity and durable anti-equivocation state |
@@ -29,8 +31,12 @@ The original ABI-v1 byte transformation now has explicit names:
 `InterpreterBackend`, `BasicModuleValidator` and `DEFAULT_VERSION` names remain
 source-compatible aliases. Their behavior and old bytes do not change. They do
 not validate or execute WASM and are not alternatives to the active `WasmRuntime`.
-`RuntimeBackend` remains the legacy stateless interface; its `Aot`/`Jit` classes
-are reserved declarations, not implemented backends. `FullNodeService` similarly
+`RuntimeBackend` remains the legacy stateless interface. Its `Jit` class stays a
+reserved declaration with no implementation, and none is possible while
+`unsafe_code` is forbidden workspace-wide. Its `Aot` class is now reported by a
+real backend, `AotBackend`, and names when translation happened rather than any
+native code generation; no backend in this workspace emits machine code, and the
+interpreter profiles are asserted never to report it. `FullNodeService` similarly
 remains a local demonstration, as specified in the implementation status.
 
 ## Naming rules

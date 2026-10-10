@@ -2,7 +2,7 @@
 
 # Support
 
-AstroLune is an engineering baseline without supported production releases or service-level guarantees.
+AstroLune has no published release and makes no service-level commitments. Support is best-effort through this repository.
 
 ## Getting help
 
@@ -23,4 +23,4 @@ Do not use public support channels for vulnerabilities, private keys, credential
 
 ## Unsupported requests
 
-The project cannot currently provide production deployment advice, financial guarantees, token support, data recovery, anonymity assurances, or compatibility promises for unreleased interfaces.
+The project does not provide financial guarantees, token support, data recovery, anonymity assurances, or compatibility promises for interfaces that have not shipped in a release. Operational procedures that do exist are written down in [routine network operations](docs/52-network-operations.md) and [private-network operations](docs/36-private-network-operations.md) rather than answered case by case.

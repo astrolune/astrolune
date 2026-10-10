@@ -6,195 +6,24 @@
 //! the measured non-neutrality of lazy compilation, and the engine bounds that
 //! are consensus-visible and therefore not backend axes.
 //!
-//! Every profile is the same Wasmi interpreter under a different value-stack
-//! allocation strategy. Nothing here is an ahead-of-time, just-in-time or SIMD
-//! backend, and no such backend exists.
+//! Every profile compared here is the same Wasmi interpreter under a different
+//! value-stack allocation strategy. None of them is an ahead-of-time, a
+//! just-in-time or a SIMD backend, and each is asserted below to report
+//! `BackendKind::Interpreter`. The ahead-of-time backend that does report
+//! `BackendKind::Aot` is qualified separately in `crates/runtime/tests/aot.rs`
+//! against the same corpus; it emits no native machine code either, and no
+//! just-in-time or SIMD backend exists in this workspace.
 
+#[path = "support/corpus.rs"]
+mod corpus;
+
+use corpus::{LIMITS, call, context, forge, module, modules, narrow_frames, rejected, wide_frames};
 use runtime::{
-    BackendKind, ContractModule, EngineProfile, ModuleValidator, OutputDifference, RuntimeBackend,
-    RuntimeError, WASM_VERSION, WasmBackend, WasmCall, WasmRuntime, project_wasm_output,
-    runtime_difference, wasm_code_hash, wasm_difference,
+    AotBackend, BackendKind, EngineProfile, ModuleValidator, OutputDifference, RuntimeBackend,
+    RuntimeError, WASM_VERSION, WasmBackend, WasmRuntime, project_wasm_output, runtime_difference,
+    wasm_difference,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use types::{Address, Resources};
-
-/// Deterministic grant shared by every comparison; far below the call bounds.
-const LIMITS: Resources = Resources {
-    compute: 1_000_000,
-    memory: 1_048_576,
-    io: 65_536,
-    bandwidth: 65_536,
-};
-
-fn module(body: &str) -> Vec<u8> {
-    wat::parse_str(body).unwrap()
-}
-
-/// Modules exercising the returning, looping, input/output, state, delete,
-/// event, context, nonzero-status, memory-growth and trapping paths.
-fn modules() -> Vec<Vec<u8>> {
-    [
-        r#"(module (memory (export "memory") 1 1)
-            (func (export "call") (result i32) i32.const 0))"#,
-        r#"(module (memory (export "memory") 1 1)
-            (func (export "call") (result i32) (loop br 0) i32.const 0))"#,
-        r#"(module
-            (import "astrolune_v2" "input_len" (func $len (result i32)))
-            (import "astrolune_v2" "input_copy" (func $copy (param i32 i32 i32) (result i32)))
-            (import "astrolune_v2" "output" (func $out (param i32 i32) (result i32)))
-            (memory (export "memory") 1 2)
-            (func (export "call") (result i32)
-                (drop (call $copy (i32.const 0) (i32.const 128) (call $len)))
-                (drop (call $out (i32.const 128) (call $len)))
-                (i32.const 0)))"#,
-        r#"(module
-            (import "astrolune_v2" "state_put" (func $put (param i32 i32 i32 i32) (result i32)))
-            (import "astrolune_v2" "state_get" (func $get (param i32 i32 i32 i32) (result i32)))
-            (import "astrolune_v2" "output" (func $out (param i32 i32) (result i32)))
-            (memory (export "memory") 1 2) (data (i32.const 0) "keynew")
-            (func (export "call") (result i32)
-                (drop (call $put (i32.const 0) (i32.const 3) (i32.const 3) (i32.const 3)))
-                (drop (call $out (i32.const 128)
-                    (call $get (i32.const 0) (i32.const 3) (i32.const 128) (i32.const 3))))
-                (i32.const 0)))"#,
-        r#"(module
-            (import "astrolune_v2" "state_delete" (func $delete (param i32 i32) (result i32)))
-            (memory (export "memory") 1 2) (data (i32.const 0) "key")
-            (func (export "call") (result i32)
-                (drop (call $delete (i32.const 0) (i32.const 3)))
-                (i32.const 0)))"#,
-        r#"(module
-            (import "astrolune_v2" "emit" (func $emit (param i32 i32 i32) (result i32)))
-            (memory (export "memory") 1 2) (data (i32.const 0) "topic")
-            (func (export "call") (result i32)
-                (drop (call $emit (i32.const 0) (i32.const 64) (i32.const 8)))
-                (drop (call $emit (i32.const 0) (i32.const 64) (i32.const 8)))
-                (i32.const 0)))"#,
-        r#"(module
-            (import "astrolune_v2" "caller" (func $caller (param i32) (result i32)))
-            (import "astrolune_v2" "block_height" (func $height (result i64)))
-            (import "astrolune_v2" "output" (func $out (param i32 i32) (result i32)))
-            (memory (export "memory") 1 2)
-            (func (export "call") (result i32)
-                (drop (call $caller (i32.const 0)))
-                (i64.store (i32.const 32) (call $height))
-                (drop (call $out (i32.const 0) (i32.const 40)))
-                (i32.const 0)))"#,
-        r#"(module (memory (export "memory") 1 1)
-            (func (export "call") (result i32) i32.const 1))"#,
-        r#"(module (memory (export "memory") 1 256)
-            (func (export "call") (result i32)
-                (drop (memory.grow (i32.const 3))) (i32.const 0)))"#,
-        r#"(module (memory (export "memory") 1 1)
-            (func (export "call") (result i32) unreachable))"#,
-    ]
-    .into_iter()
-    .map(module)
-    .collect()
-}
-
-/// Candidates the reference validator must reject.
-fn rejected() -> Vec<Vec<u8>> {
-    let valid = module(
-        r#"(module (memory (export "memory") 1 1)
-            (func (export "call") (result i32) i32.const 0))"#,
-    );
-    // Code section: one body containing zero locals, i32.const 0 and end.
-    let tail = [10, 6, 1, 4, 0, 65, 0, 11];
-    assert!(valid.ends_with(&tail));
-
-    let mut candidates = vec![
-        Vec::new(),
-        b"\0asm\x01\0\0\0".to_vec(),
-        module(
-            r#"(module (memory (export "memory") 1 1)
-                (func (export "call") (result i32) i32.const 0)
-                (func $float (result f32) f32.const 1))"#,
-        ),
-        module(
-            r#"(module (import "astrolune_v2" "unknown" (func))
-                (memory (export "memory") 1 1)
-                (func (export "call") (result i32) i32.const 0))"#,
-        ),
-        module(r#"(module (memory (export "memory") 1 1))"#),
-        module(
-            r#"(module (memory (export "memory") 1 1)
-                (func (export "call") (result i32) i32.const 0)
-                (func $s) (start $s))"#,
-        ),
-        module(
-            r#"(module (memory (export "memory") 1)
-                (func (export "call") (result i32) i32.const 0))"#,
-        ),
-    ];
-    for opcode in [0x01, 0x0b, 0x0f] {
-        let mut invalid = valid.clone();
-        let start = invalid.len() - tail.len();
-        invalid[start + 1] += 1;
-        invalid[start + 3] += 1;
-        invalid.push(opcode);
-        candidates.push(invalid);
-    }
-    candidates
-}
-
-/// Contract-local state and the access declaration authorizing it.
-type Context = (BTreeMap<Vec<u8>, Vec<u8>>, BTreeSet<Vec<u8>>);
-
-/// A finalized context in which the state, event and context paths succeed.
-fn context() -> Context {
-    (
-        BTreeMap::from([(b"key".to_vec(), vec![3; 3])]),
-        BTreeSet::from([b"key".to_vec()]),
-    )
-}
-
-fn call<'a>(state: &'a BTreeMap<Vec<u8>, Vec<u8>>, access: &'a BTreeSet<Vec<u8>>) -> WasmCall<'a> {
-    WasmCall {
-        input: b"differential",
-        caller: Address([5; 32]),
-        height: 77,
-        state,
-        access,
-        limits: LIMITS,
-    }
-}
-
-fn forge(code: Vec<u8>) -> ContractModule {
-    ContractModule {
-        code_hash: wasm_code_hash(&code),
-        version: WASM_VERSION,
-        code,
-    }
-}
-
-/// Builds a self-recursive module whose frames hold only the i32 parameter.
-fn narrow_frames(depth: u32) -> Vec<u8> {
-    module(&format!(
-        r#"(module (memory (export "memory") 1 1)
-            (func $down (param i32) (result i32)
-                (if (result i32) (local.get 0)
-                    (then (call $down (i32.sub (local.get 0) (i32.const 1))))
-                    (else (i32.const 0))))
-            (func (export "call") (result i32) (call $down (i32.const {depth}))))"#
-    ))
-}
-
-/// Builds the same recursion with thirty-two additional i64 locals per frame.
-fn wide_frames(depth: u32) -> Vec<u8> {
-    let locals = (0..32)
-        .map(|index| format!("(local $l{index} i64)"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    module(&format!(
-        r#"(module (memory (export "memory") 1 1)
-            (func $down (param i32) (result i32) {locals}
-                (if (result i32) (local.get 0)
-                    (then (call $down (i32.sub (local.get 0) (i32.const 1))))
-                    (else (i32.const 0))))
-            (func (export "call") (result i32) (call $down (i32.const {depth}))))"#
-    ))
-}
 
 #[test]
 fn qualified_profiles_agree_with_the_reference_interpreter_on_accepted_modules() {
@@ -448,17 +277,39 @@ fn the_recursion_and_stack_caps_are_consensus_visible_and_not_backend_axes() {
 }
 
 #[test]
-fn every_profile_builds_a_send_and_sync_interpreter_backend() {
+fn every_interpreter_profile_stays_an_interpreter_and_only_the_aot_backend_claims_aot() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<WasmRuntime>();
     assert_send_sync::<WasmBackend>();
+    assert_send_sync::<AotBackend>();
 
     for profile in EngineProfile::QUALIFIED {
         let backend: Box<dyn RuntimeBackend> = Box::new(WasmBackend::new(profile, LIMITS));
         assert_eq!(
             backend.kind(),
             BackendKind::Interpreter,
-            "{profile:?} interprets Wasmi bytecode and must not claim Aot or Jit"
+            "{profile:?} recompiles inside every call and must not claim Aot or Jit"
+        );
+    }
+
+    // The claim is narrowed, not dropped. An interpreter profile still may not
+    // report Aot; only the backend that completes translation before a call's
+    // fuel budget exists may, and it still emits no native machine code, so no
+    // backend in this workspace reports Jit.
+    let aot: Box<dyn RuntimeBackend> = Box::new(AotBackend::new(LIMITS));
+    assert_eq!(aot.kind(), BackendKind::Aot);
+    for profile in EngineProfile::QUALIFIED {
+        assert_ne!(
+            WasmBackend::new(profile, LIMITS).kind(),
+            BackendKind::Aot,
+            "{profile:?} translates inside the metered call and must not claim Aot"
+        );
+        assert_ne!(
+            AotBackend::with_profile(profile, LIMITS)
+                .expect("a qualified profile translates ahead of the call")
+                .kind(),
+            BackendKind::Jit,
+            "{profile:?} emits no native machine code under any backend"
         );
     }
 }

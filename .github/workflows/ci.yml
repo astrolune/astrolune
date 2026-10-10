@@ -96,6 +96,40 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  suites:
+    name: Four-leg suite qualification
+    if: ${{ always() }}
+    needs: [tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: suite-*
+          path: target/suite-legs
+      # A leg that produced no result fails here rather than passing quietly:
+      # the four uploaded records are the only evidence the suite ran on every
+      # platform and profile, and three clean records look exactly like four to
+      # anything that merely reads the files it was handed.
+      - name: Require four clean legs that agree on one compiler
+        run: >-
+          python -B .github/scripts/compare-suites.py
+          --artifact-root target/suite-legs
+          --output target/suite-legs/SUITE-QUALIFICATION.json
+      # Retained on refusal too: the verdict names which leg was absent or
+      # unclean, which the job log alone does not keep for 90 days.
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: suite-qualification
+          path: target/suite-legs/SUITE-QUALIFICATION.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -170,6 +204,77 @@ jobs:
           name: qualification-${{ matrix.target }}
           path: target/ci-artifacts/QUALIFICATION.json
           if-no-files-found: error
+          retention-days: 90
+
+  reproducibility:
+    name: Independent-run reproducibility (${{ matrix.target }})
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - uses: actions/download-artifact@v7
+        with:
+          name: qualification-${{ matrix.target }}
+          path: target/qualification/this-run
+      # `ASTROLUNE_MACHINE` embeds the run id, so two runs are always distinct
+      # machines to the comparator. Two hosted runners of one image are two
+      # machines only in that sense; `docs/39` records what that does not
+      # establish. An absent second run is reported and establishes nothing: it
+      # is never reported as agreement.
+      - name: Compare this run against another run of the same revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # Pull-request runs are excluded on purpose: there `GITHUB_SHA` is a
+          # merge commit that moves with the base branch, so their packaged
+          # revision is not this revision and comparing them would manufacture
+          # a disagreement out of two correct builds.
+          runs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=100" \
+            --jq '.workflow_runs[] | select(.event != "pull_request") | .id')"
+          other="$(printf '%s\n' "$runs" | grep -vx "${GITHUB_RUN_ID}" | head -n 1 || true)"
+          if [ -z "$other" ]; then
+            echo "No other successful CI run of ${GITHUB_SHA} exists, so this run" \
+              "establishes nothing about independent-machine reproducibility."
+            exit 0
+          fi
+          if ! gh run download "$other" --name "qualification-${TARGET}" \
+            --dir target/qualification/other-run; then
+            echo "Run ${other} retains no qualification-${TARGET} artifact, so no" \
+              "second machine's evidence is available to compare."
+            exit 0
+          fi
+          mine="$(jq -r .revision target/qualification/this-run/QUALIFICATION.json)"
+          theirs="$(jq -r .revision target/qualification/other-run/QUALIFICATION.json)"
+          if [ "$mine" != "$theirs" ]; then
+            echo "Run ${other} packaged revision ${theirs}, not ${mine}, so it is" \
+              "not evidence about this revision."
+            exit 0
+          fi
+          python -B .github/scripts/compare-qualification.py \
+            target/qualification/this-run/QUALIFICATION.json \
+            target/qualification/other-run/QUALIFICATION.json \
+            --output "target/qualification/REPRODUCIBILITY-${TARGET}.json"
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: reproducibility-${{ matrix.target }}
+          path: target/qualification/REPRODUCIBILITY-*.json
+          if-no-files-found: ignore
           retention-days: 90
 
   fuzz:
@@ -250,7 +355,19 @@ jobs:
   quality:
     name: CI required checks
     if: ${{ always() }}
-    needs: [formatting, clippy, tests, docs, build, fuzz, benchmarks, workflows]
+    needs:
+      [
+        formatting,
+        clippy,
+        tests,
+        suites,
+        docs,
+        build,
+        reproducibility,
+        fuzz,
+        benchmarks,
+        workflows,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

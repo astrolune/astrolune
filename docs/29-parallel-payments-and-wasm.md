@@ -180,7 +180,8 @@ tuning parameter; [measurement limits](56-performance-measurement.md).
 
 `WasmRuntime` validates binary WebAssembly and executes it using pinned Wasmi
 2.0.0 with eager validation, portable dispatch, integer operations and fuel.
-The previous XOR interpreter remains a demonstration helper. The explicit new
+The ABI-v1 byte transformation behind `DemoByteTransformBackend` remains a
+demonstration helper. The explicit new
 runtime version is `{ abi: 2, metering: 1 }`. [Genesis profile 2](30-signed-contracts.md) explicitly activates signed contracts in the daemon.
 
 A module exports `memory` and `call() -> i32`. Zero means success; nonzero returns
@@ -226,7 +227,9 @@ state I/O and output/event bandwidth are charged separately. Wasmi instruction
 fuel is part of the pinned metering version, not measured elapsed time.
 
 Changing engine version, fuel schedule or allowed features requires an explicit
-runtime-version change. Alternate native backends are not yet qualified.
+runtime-version change. No native backend is qualified; the qualified
+ahead-of-time backend emits no native code and is described in
+[document 58](58-ahead-of-time-contract-backend.md).
 
 ## Qualified alternate engine configurations
 
@@ -325,15 +328,56 @@ express, and the two stack thresholds.
 
 This qualifies configuration independence across the `RuntimeBackend` seam for
 two allocation axes, and it records one measured configuration axis that is not
-independent. It is not an ahead-of-time, just-in-time, SIMD or independently
-implemented backend; no such backend exists in this workspace, and
-`BackendKind::Aot` and `BackendKind::Jit` remain reserved declarations. The
-compared profiles share one interpreter, one translator and one fuel schedule,
-so agreement between them does not establish agreement with a hypothetical
-native backend. Nothing here changes the runtime version, enables an alternate
-backend for live execution, or establishes any throughput, compile-time or
-memory-footprint claim; the reported seconds are campaign durations, not
-benchmarks.
+independent. None of the profiles compared here is an ahead-of-time, a
+just-in-time, a SIMD or an independently implemented backend, and each reports
+`BackendKind::Interpreter`; the separate ahead-of-time backend that reports
+`BackendKind::Aot` is described in the next section. No profile here and no
+backend anywhere in this workspace emits native machine code, so
+`BackendKind::Jit` remains a reserved declaration. The compared profiles share
+one interpreter, one translator and one fuel schedule, so agreement between them
+does not establish agreement with a hypothetical native backend. Nothing here
+changes the runtime version, enables an alternate backend for live execution, or
+establishes any throughput, compile-time or memory-footprint claim; the reported
+seconds are campaign durations, not benchmarks.
+
+## Ahead-of-time contract backend
+
+Translation is no longer confined to the metered call.
+`WasmRuntime::compile_artifact` validates and translates a module ahead of any
+call budget and returns a reusable `CompiledArtifact`, and
+`WasmRuntime::execute_artifact` runs one without translating. `ArtifactCache`
+retains artifacts keyed by `ArtifactKey`, whose `compiler` field commits to the
+pinned Wasmi release, its pinned cargo features and every engine setting the
+profile resolves to, and whose `target` field commits to the compile-time
+target. `AotBackend` exposes the path behind the legacy seam and is the only
+type in the workspace that reports `BackendKind::Aot`. Nothing here emits native
+machine code.
+
+Moving translation earlier is the inverse of the disqualified lazy strategies
+and is safe for the mirror-image reason. On 2026-10-10, Windows with Rust 1.99.0
+and pinned Wasmi 2.0.0, the minimal returning module charges 2 compute units on
+every ahead-of-time path, on a cache miss and a cache hit alike, which is
+exactly what the reference interpreter charges while recompiling. A reused
+artifact under `EngineProfile::LazyTranslation` charges 30 on its first call and
+2 on its second, and under `EngineProfile::Lazy` 38 and then 2, so a charge
+would depend on cache state; `ArtifactCache` therefore refuses both profiles.
+
+`execution::execute_contract` previously compiled each contract's code twice per
+transaction, once through `validate` and once inside `execute_call`, on an
+engine it discarded immediately. It now compiles at most once, and not at all
+once a process-wide bounded cache holds the contract. Against that previous
+double compile the cached transaction measured 3.8x faster for an 81-byte
+module and 27.7x faster for a 28,750-byte module on one eight-core host.
+
+The qualification compares complete `WasmOutput` results with `wasm_difference`,
+not the narrower seam projection: 160 compared executions over the ten accepted
+modules and four qualified profiles, 40 over the ten rejected candidates with
+the same `RuntimeError` variant required, the two stack thresholds unchanged at
+depths 127 and 61, and the workspace campaign extended so the ahead-of-time path
+inherits all three sizes, reaching 74,043 compared ahead-of-time executions at
+one million mutations with 0 disagreements. SIMD rejection is pinned so the
+engine feature cannot be enabled silently.
+[Identity, bounds, differential case counts and measured figures](58-ahead-of-time-contract-backend.md).
 
 ## Contract tooling
 
@@ -361,4 +405,4 @@ build test. The latter needs the target libraries and is ignored in the default
 workspace run; run `cargo test -p cargo-contract --test commands -- --ignored`.
 The pinned build test has been run locally with the official target component.
 
-Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Restricted source manifests and exact offline package reconstruction are implemented in [document 34](34-contract-source-packages.md). Alternate AOT/JIT backends, their runtime/metering qualification and contract fuzz campaigns remain open and deferred.
+Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Restricted source manifests and exact offline package reconstruction are implemented in [document 34](34-contract-source-packages.md). A qualified ahead-of-time backend, its artifact cache and its differential qualification are implemented in [document 58](58-ahead-of-time-contract-backend.md); a native just-in-time backend is impossible under the workspace-wide `forbid(unsafe_code)` and a SIMD backend is declined as a runtime-version change, both for reasons recorded there. Contract fuzz campaigns remain open and deferred.

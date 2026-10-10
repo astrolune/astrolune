@@ -12,7 +12,7 @@ use wasmi::{
 };
 
 use crate::{
-    ContractModule, MAX_INPUT_SIZE, MAX_MODULE_SIZE, MAX_OUTPUT_SIZE, ModuleValidator,
+    ArtifactKey, ContractModule, MAX_INPUT_SIZE, MAX_MODULE_SIZE, MAX_OUTPUT_SIZE, ModuleValidator,
     RuntimeError, RuntimeVersion,
 };
 
@@ -35,6 +35,31 @@ const MAX_RECURSION_DEPTH: usize = 128;
 const MAX_STACK_HEIGHT: usize = 16_384;
 /// Cached engine stacks kept for reuse by the reference profile.
 const REFERENCE_CACHED_STACKS: usize = 2;
+
+/// Pinned Wasmi release the compiler identity commits to.
+///
+/// `crates/runtime/Cargo.toml` pins `wasmi = "=2.0.0"`, and the
+/// `the_declared_engine_pin_matches_the_manifest` test asserts that this
+/// constant, [`WASM_ENGINE_FEATURES`] and that manifest line agree. The engine
+/// therefore cannot be bumped without moving every compiler identity, which is
+/// what stops an artifact compiled by one release from being reused by another.
+pub const WASM_ENGINE_VERSION: &str = "2.0.0";
+
+/// Pinned Wasmi cargo features, in manifest order.
+///
+/// Wasmi derives its default proposal set from its cargo features, so `simd`,
+/// `relaxed-simd` and `memory64` are rejected because those features are off
+/// rather than because a `Config` call disables them. An enabled cargo feature
+/// would change the accepted instruction set without changing any engine
+/// setting this runtime applies, so the feature list is part of the compiler
+/// identity.
+pub const WASM_ENGINE_FEATURES: [&str; 5] = [
+    "stable",
+    "std",
+    "validate",
+    "portable-dispatch",
+    "prefer-btree-collections",
+];
 
 /// Engine tuning axes an alternate backend may vary.
 ///
@@ -135,6 +160,19 @@ impl EngineProfile {
         matches!(self, Self::PreallocatedStack | Self::Alternate)
     }
 
+    /// Returns whether this profile completes translation before a call starts.
+    ///
+    /// Eager compilation translates every function body while the module is
+    /// compiled, which is strictly before any call's fuel budget exists. The
+    /// deferred strategies translate inside the call and are charged for it, so
+    /// an artifact reused across calls would be charged more on its first use
+    /// than on its later ones and a charge would depend on cache state. Only a
+    /// profile that answers `true` may back a [`crate::ArtifactCache`].
+    #[must_use]
+    pub fn translates_ahead_of_the_call(self) -> bool {
+        matches!(self.compilation_mode(), CompilationMode::Eager)
+    }
+
     /// Returns how many engine stacks this profile keeps for reuse.
     #[must_use]
     pub fn cached_stacks(self) -> usize {
@@ -145,6 +183,202 @@ impl EngineProfile {
             Self::UnpooledStack | Self::Alternate => 0,
         }
     }
+}
+
+/// One engine toggle this runtime pins for every profile.
+///
+/// The toggles are enumerated rather than stored as fields so that one table
+/// drives both the `Config` the engine is built from and the compiler identity
+/// an artifact is keyed by. Adding a toggle to [`PINNED_TOGGLES`] therefore
+/// moves every identity, and no toggle can be applied without being committed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EngineToggle {
+    ConsumeFuel,
+    Floats,
+    AllowStartFn,
+    MultiMemory,
+    ReferenceTypes,
+    TailCall,
+    ExtendedConst,
+    SaturatingFloatToInt,
+    MultiValue,
+}
+
+/// Every engine toggle and the value this runtime pins it to.
+const PINNED_TOGGLES: [(EngineToggle, bool); 9] = [
+    (EngineToggle::ConsumeFuel, true),
+    (EngineToggle::Floats, false),
+    (EngineToggle::AllowStartFn, false),
+    (EngineToggle::MultiMemory, false),
+    (EngineToggle::ReferenceTypes, false),
+    (EngineToggle::TailCall, false),
+    (EngineToggle::ExtendedConst, false),
+    (EngineToggle::SaturatingFloatToInt, false),
+    (EngineToggle::MultiValue, false),
+];
+
+impl EngineToggle {
+    /// Applies this toggle to a configuration under construction.
+    fn apply(self, config: &mut Config, enabled: bool) {
+        match self {
+            Self::ConsumeFuel => {
+                config.consume_fuel(enabled);
+            }
+            Self::Floats => {
+                config.floats(enabled);
+            }
+            Self::AllowStartFn => {
+                config.allow_start_fn(enabled);
+            }
+            Self::MultiMemory => {
+                config.wasm_multi_memory(enabled);
+            }
+            Self::ReferenceTypes => {
+                config.wasm_reference_types(enabled);
+            }
+            Self::TailCall => {
+                config.wasm_tail_call(enabled);
+            }
+            Self::ExtendedConst => {
+                config.wasm_extended_const(enabled);
+            }
+            Self::SaturatingFloatToInt => {
+                config.wasm_saturating_float_to_int(enabled);
+            }
+            Self::MultiValue => {
+                config.wasm_multi_value(enabled);
+            }
+        }
+    }
+
+    /// Returns the stable byte the compiler identity commits this toggle by.
+    ///
+    /// The code is explicit so reordering [`PINNED_TOGGLES`] cannot change an
+    /// identity, and so a removed toggle's code cannot be reused by accident.
+    fn code(self) -> u8 {
+        match self {
+            Self::ConsumeFuel => 1,
+            Self::Floats => 2,
+            Self::AllowStartFn => 3,
+            Self::MultiMemory => 4,
+            Self::ReferenceTypes => 5,
+            Self::TailCall => 6,
+            Self::ExtendedConst => 7,
+            Self::SaturatingFloatToInt => 8,
+            Self::MultiValue => 9,
+        }
+    }
+}
+
+/// The two tuning axes and the stack bounds, resolved for one profile.
+///
+/// One value produces both the [`Config`] the engine is built from and the
+/// compiler identity an artifact is keyed by, so a setting that moves the
+/// engine also moves the identity, and an artifact compiled before the change
+/// can never be reused after it.
+#[derive(Clone, Copy, Debug)]
+struct EnginePolicy {
+    max_recursion_depth: usize,
+    max_stack_height: usize,
+    /// `None` leaves the pinned release's own default initial height in place,
+    /// which is why the identity encodes the absence rather than a sentinel.
+    min_stack_height: Option<usize>,
+    max_cached_stacks: usize,
+    compilation_mode: CompilationMode,
+}
+
+impl EnginePolicy {
+    /// Resolves the stack bounds and the two tuning axes for one profile.
+    fn for_profile(profile: EngineProfile) -> Self {
+        Self {
+            max_recursion_depth: MAX_RECURSION_DEPTH,
+            max_stack_height: MAX_STACK_HEIGHT,
+            min_stack_height: profile.preallocates_stack().then_some(MAX_STACK_HEIGHT),
+            max_cached_stacks: profile.cached_stacks(),
+            compilation_mode: profile.compilation_mode(),
+        }
+    }
+
+    /// Builds the engine configuration this policy describes.
+    fn config(&self) -> Config {
+        let mut config = Config::default();
+        for (toggle, enabled) in PINNED_TOGGLES {
+            toggle.apply(&mut config, enabled);
+        }
+        config
+            .set_max_recursion_depth(self.max_recursion_depth)
+            .set_max_stack_height(self.max_stack_height)
+            .set_max_cached_stacks(self.max_cached_stacks)
+            .compilation_mode(self.compilation_mode);
+        if let Some(height) = self.min_stack_height {
+            // The maximum is already set above, so the minimum cannot exceed it.
+            config.set_min_stack_height(height);
+        }
+        config
+    }
+
+    /// Commits the pinned engine release, its pinned cargo features, every
+    /// pinned toggle and every field above, in declaration order.
+    fn identity(&self) -> Hash256 {
+        let mut bytes = Vec::new();
+        push_bytes(&mut bytes, WASM_ENGINE_VERSION.as_bytes());
+        push_count(&mut bytes, WASM_ENGINE_FEATURES.len());
+        for feature in WASM_ENGINE_FEATURES {
+            push_bytes(&mut bytes, feature.as_bytes());
+        }
+        push_count(&mut bytes, PINNED_TOGGLES.len());
+        for (toggle, enabled) in PINNED_TOGGLES {
+            bytes.push(toggle.code());
+            bytes.push(u8::from(enabled));
+        }
+        push_count(&mut bytes, self.max_recursion_depth);
+        push_count(&mut bytes, self.max_stack_height);
+        match self.min_stack_height {
+            None => bytes.push(0),
+            Some(height) => {
+                bytes.push(1);
+                push_count(&mut bytes, height);
+            }
+        }
+        push_count(&mut bytes, self.max_cached_stacks);
+        bytes.push(match self.compilation_mode {
+            CompilationMode::Eager => 1,
+            CompilationMode::LazyTranslation => 2,
+            CompilationMode::Lazy => 3,
+        });
+        types::hash::domain_hash(b"astrolune.contract.wasm.compiler.v1", &bytes)
+    }
+}
+
+/// Appends a length-framed byte string, so no two encodings can run together.
+fn push_bytes(buffer: &mut Vec<u8>, bytes: &[u8]) {
+    push_count(buffer, bytes.len());
+    buffer.extend_from_slice(bytes);
+}
+
+/// Appends a count as eight little-endian bytes.
+fn push_count(buffer: &mut Vec<u8>, value: usize) {
+    let value = u64::try_from(value).expect("engine counts fit in 64 bits");
+    buffer.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Commits the execution target this interpreter was compiled for.
+///
+/// The interpreter emits no native machine code and the `simd` cargo feature is
+/// off, so no CPU feature detection participates in execution and none is
+/// encoded here. What is encoded is the compile-time target: architecture,
+/// operating system, target family, pointer width and endianness. A toolchain
+/// change that leaves all five equal is not distinguished; see
+/// `docs/58-ahead-of-time-contract-backend.md` for that limit.
+#[must_use]
+pub fn target_identity() -> Hash256 {
+    let mut bytes = Vec::new();
+    push_bytes(&mut bytes, std::env::consts::ARCH.as_bytes());
+    push_bytes(&mut bytes, std::env::consts::OS.as_bytes());
+    push_bytes(&mut bytes, std::env::consts::FAMILY.as_bytes());
+    bytes.extend_from_slice(&usize::BITS.to_le_bytes());
+    bytes.push(u8::from(cfg!(target_endian = "little")));
+    types::hash::domain_hash(b"astrolune.contract.wasm.target.v1", &bytes)
 }
 
 /// Finalized call context and explicit contract-local access authorization.
@@ -183,6 +417,7 @@ pub struct WasmOutput {
 pub struct WasmRuntime {
     engine: Engine,
     profile: EngineProfile,
+    compiler: Hash256,
 }
 
 impl Default for WasmRuntime {
@@ -208,28 +443,11 @@ impl WasmRuntime {
     /// to charge more compute and must never execute live calls.
     #[must_use]
     pub fn with_profile(profile: EngineProfile) -> Self {
-        let mut config = Config::default();
-        config
-            .consume_fuel(true)
-            .floats(false)
-            .allow_start_fn(false)
-            .wasm_multi_memory(false)
-            .wasm_reference_types(false)
-            .wasm_tail_call(false)
-            .wasm_extended_const(false)
-            .wasm_saturating_float_to_int(false)
-            .wasm_multi_value(false)
-            .set_max_recursion_depth(MAX_RECURSION_DEPTH)
-            .set_max_stack_height(MAX_STACK_HEIGHT)
-            .set_max_cached_stacks(profile.cached_stacks())
-            .compilation_mode(profile.compilation_mode());
-        if profile.preallocates_stack() {
-            // The maximum is already set above, so the minimum cannot exceed it.
-            config.set_min_stack_height(MAX_STACK_HEIGHT);
-        }
+        let policy = EnginePolicy::for_profile(profile);
         Self {
-            engine: Engine::new(&config),
+            engine: Engine::new(&policy.config()),
             profile,
+            compiler: policy.identity(),
         }
     }
 
@@ -239,7 +457,46 @@ impl WasmRuntime {
         self.profile
     }
 
-    fn compile(&self, bytes: &[u8]) -> Result<Module, RuntimeError> {
+    /// Returns the deterministic compiler identity of this runtime's engine.
+    ///
+    /// The digest commits to the pinned Wasmi release, its pinned cargo
+    /// features and every engine setting this runtime applies, including the
+    /// two tuning axes [`EngineProfile`] moves. It is derived from those
+    /// settings and not from the profile's name, so two profiles that resolved
+    /// to the same settings would correctly share an identity and renaming a
+    /// profile cannot change one.
+    ///
+    /// It identifies a configuration and not an `Engine` instance. Two
+    /// runtimes built from the same profile report the same identity while
+    /// holding engines that cannot share translated code, which is why
+    /// [`WasmRuntime::execute_artifact`] additionally refuses an artifact
+    /// produced by a different engine.
+    #[must_use]
+    pub fn compiler_identity(&self) -> Hash256 {
+        self.compiler
+    }
+
+    /// Returns the artifact cache identity of `module` under this runtime.
+    ///
+    /// This is a pure projection of the module's own identity onto this engine
+    /// and target. It validates nothing; a key for a module this runtime would
+    /// reject is still well defined.
+    #[must_use]
+    pub fn artifact_key(&self, module: &ContractModule) -> ArtifactKey {
+        ArtifactKey {
+            code_hash: module.code_hash,
+            version: module.version,
+            compiler: self.compiler,
+            target: target_identity(),
+        }
+    }
+
+    /// Borrows the engine, so a sibling module can compare artifact ownership.
+    pub(crate) fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    pub(crate) fn compile(&self, bytes: &[u8]) -> Result<Module, RuntimeError> {
         if bytes.len() > MAX_MODULE_SIZE {
             return Err(RuntimeError::LimitExceeded);
         }
@@ -291,6 +548,12 @@ impl WasmRuntime {
 
     /// Executes a validated module in a fresh instance with private writes.
     ///
+    /// Every call translates `module` again, so a contract transaction pays the
+    /// translation cost once per call. [`WasmRuntime::compile_artifact`] hoists
+    /// that translation out of the metered call and
+    /// [`WasmRuntime::execute_artifact`] then executes without translating.
+    /// Both paths charge identically, which `crates/runtime/tests/aot.rs` pins.
+    ///
     /// # Errors
     /// Rejects forged module hashes/versions, forbidden imports/features, exhausted
     /// resources, invalid pointers, undeclared accesses, nonzero returns, and traps.
@@ -307,6 +570,19 @@ impl WasmRuntime {
         }
         validate_call(&call)?;
         let compiled = self.compile(&module.code)?;
+        self.run(&compiled, call)
+    }
+
+    /// Instantiates already translated bytecode and runs one metered call.
+    ///
+    /// Everything this does happens after the fuel budget is installed, so it
+    /// is the part of a call that `Resources::compute` accounts for. No
+    /// translation occurs here under an eager profile.
+    pub(crate) fn run(
+        &self,
+        compiled: &Module,
+        call: WasmCall<'_>,
+    ) -> Result<WasmOutput, RuntimeError> {
         let fuel = call.limits.compute;
         let host = Host {
             call,
@@ -335,7 +611,7 @@ impl WasmRuntime {
             .map_err(|_| RuntimeError::LimitExceeded)?;
         let linker = host_linker(&self.engine).map_err(|_| RuntimeError::InvalidModule)?;
         let instance = linker
-            .instantiate_and_start(&mut store, &compiled)
+            .instantiate_and_start(&mut store, compiled)
             .map_err(|error| runtime_error(&error))?;
         let function = instance
             .get_typed_func::<(), i32>(&store, "call")
@@ -393,7 +669,7 @@ pub fn wasm_code_hash(bytes: &[u8]) -> Hash256 {
     types::hash::domain_hash(b"astrolune.contract.wasm.abi2.meter1", bytes)
 }
 
-fn validate_call(call: &WasmCall<'_>) -> Result<(), RuntimeError> {
+pub(crate) fn validate_call(call: &WasmCall<'_>) -> Result<(), RuntimeError> {
     if call.input.len() > MAX_INPUT_SIZE
         || call.limits.compute == 0
         || call.limits.compute > 10_000_000

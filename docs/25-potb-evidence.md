@@ -59,7 +59,7 @@ Vote signatures in the existing protocol bind chain ID and committee root, not
 the genesis hash directly. Do not reuse chain IDs and identical voting contexts
 across deployments and assume that the CLI can distinguish those signatures.
 
-## Experimental scoring
+## Reference scoring
 
 `PotbTracker` replays contiguous certified headers from a caller-supplied trusted
 anchor. Every transition checks parent, height, committee, signatures and quorum
@@ -83,7 +83,7 @@ candidate_weight = min(maximum_weight, initial_weight + epochs * age_increment)
 
 The implementation avoids intermediate overflow even at full-width u128 limits.
 A verified historical double vote yields candidate weight zero for that identity
-in this experimental policy. Duplicate proofs cannot stack penalties; choosing
+under this reference policy. Duplicate proofs cannot stack penalties; choosing
 the minimum offence ID makes accumulated observations order-independent. Re-entry,
 admission costs, identity splitting, ownership concentration and trust-graph
 policy are not solved by an age bonus or a per-identity cap.

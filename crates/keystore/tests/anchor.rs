@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 //! Restored-journal rollback, anchor pairing, catch-up and cross-process regressions.
+//!
+//! Every test here that opens a lock-holding handle takes
+//! `testkit::fork_lock` in shared mode, and the tests that spawn a child
+//! process take it exclusively. On Unix a spawn forks first, so the child
+//! holds duplicates of this process's lock descriptors until it execs; an
+//! unguarded drop-and-re-open in a sibling thread then observes a lock that
+//! should already have been released. That module documents the mechanism and
+//! the reason the guard is not a retry inside the production open path.
 
 use keystore::{
     DurableSigner, KeystoreError, SIGNING_ANCHOR_BYTES, Signer, SigningContext, SigningLock,
@@ -63,6 +71,7 @@ fn safety() -> SigningSafety {
 
 #[test]
 fn a_restored_older_journal_signs_alone_but_never_beside_its_independent_anchor() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     drop(DurableSigner::create(fixture.journal(), context(), [1; 32]).unwrap());
     let mut signer =
@@ -145,6 +154,7 @@ fn a_restored_older_journal_signs_alone_but_never_beside_its_independent_anchor(
 
 #[test]
 fn an_anchor_one_decision_behind_catches_up_and_a_further_gap_fails_closed() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     drop(DurableSigner::create_protected(fixture.journal(), context(), [1; 32]).unwrap());
     let signer =
@@ -204,6 +214,7 @@ fn an_anchor_one_decision_behind_catches_up_and_a_further_gap_fails_closed() {
 
 #[test]
 fn anchors_are_explicitly_provisioned_and_bound_to_exactly_one_journal() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     // Opening never creates a missing anchor, even with the key and journal present.
     drop(DurableSigner::create(fixture.journal(), context(), [1; 32]).unwrap());
@@ -274,6 +285,7 @@ fn anchors_are_explicitly_provisioned_and_bound_to_exactly_one_journal() {
 
 #[test]
 fn an_anchored_decision_survives_process_exit_without_destructors() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let fixture = Fixture::new();
     drop(DurableSigner::create_protected(fixture.journal(), context(), [1; 32]).unwrap());
     drop(

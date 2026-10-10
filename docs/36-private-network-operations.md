@@ -128,7 +128,7 @@ journal for an old key to bypass a recovery error.
 If committed bytes are corrupt, retain the damaged files for diagnosis and recover
 an observer from a verified consistent copy or synchronize a new observer from
 trusted peers. Do not delete a published head, overwrite a journal, or downgrade
-the daemon to demonstration mode to make startup succeed.
+the daemon to local demonstration mode to make startup succeed.
 
 ## Verification and remaining limits
 

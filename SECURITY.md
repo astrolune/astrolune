@@ -2,18 +2,18 @@
 
 # Security Policy
 
-## Experimental status
+## Security status
 
-AstroLune is an unaudited engineering baseline, not production software. No release currently supports economic value or makes security, privacy, anonymity, availability, or finality guarantees.
+This policy covers the development branch, which is where all current work lands. AstroLune has no published release and no completed external audit, so the properties it offers are those its documents state and its tests exercise; [the implementation status](docs/08-implementation-status.md) records every area and its bounds, and the scope section below lists the documented mechanisms that carry no deployed protection.
 
 ## Supported versions
 
 | Version | Security support |
 |---|---|
 | Unreleased development branch | Best-effort triage |
-| Published releases | None exist yet |
+| Published releases | None yet; the process is in [`RELEASING.md`](RELEASING.md) |
 
-This table will change only after the project publishes a reviewed release policy.
+This table gains a supported line for each release once releases ship.
 
 ## Reporting a vulnerability
 
@@ -55,7 +55,7 @@ Reports are especially valuable for:
 
 ## Out of scope for security guarantees
 
-Placeholder binaries, unimplemented traits, documented future mechanisms, benchmark targets, and privacy/anonymity ideas are not claims of deployed protection. Findings that improve these designs are welcome, but no bounty or reward program is promised.
+Declared-but-unimplemented backends, documented future mechanisms, benchmark targets, and privacy or anonymity designs are not claims of deployed protection. Findings that improve these designs are welcome; there is no bounty or reward program.
 
 Several mechanisms are implemented and locally tested but deliberately bounded, and their limits are not defects. Bounded parallel signature verification splits independent verifications and is not the cofactored batch equation; [scope](docs/09-cryptographic-foundations.md#bounded-parallel-verification). The signing anchor detects a restored older journal through an independently provisioned store and does not provide hardware isolation or survive a coordinated rewrite of both stores; [threat boundary](docs/53-key-custody-and-release-authority.md). The consensus model is bounded exhaustive exploration at one height, never a proof; [bounds](docs/55-formal-consensus-model.md). Adversarial simulations hold Byzantine coalitions below the accountability threshold; [scope](docs/46-rotating-network-simulations.md). Release signing ships the mechanism only: this repository invents no signing identity or key. Advisory scanning is a database check over the Rust workspace, not an implementation audit, and its licence/ban coverage gap is recorded; [review](docs/51-dependency-and-security-review.md). No external cryptography, consensus, runtime or security audit has been performed.
 

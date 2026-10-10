@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 //! Persistence failure and process-recovery checks using isolated temporary directories.
+//!
+//! Every test here that opens a lock-holding handle takes
+//! `testkit::fork_lock` in shared mode, and the tests that spawn a child
+//! process take it exclusively. On Unix a spawn forks first, so the child
+//! holds duplicates of this process's lock descriptors until it execs; an
+//! unguarded drop-and-re-open in a sibling thread then observes a lock that
+//! should already have been released. That module documents the mechanism and
+//! the reason the guard is not a retry inside the production open path.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,6 +55,7 @@ fn update(byte: u8) -> StateDiff {
 
 #[test]
 fn absence_proofs_survive_restart_and_preserve_old_snapshots() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let key = StateKey(vec![0]);
     let mut database = FileBackedState::open(fixture.path()).unwrap();
@@ -109,6 +118,7 @@ fn process_probe() {
 
 #[test]
 fn writer_lock_is_exclusive_and_released_on_process_exit() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let fixture = Fixture::new();
     let state = FileBackedState::open(fixture.path()).unwrap();
     assert_eq!(
@@ -126,6 +136,7 @@ fn writer_lock_is_exclusive_and_released_on_process_exit() {
 
 #[test]
 fn failed_disk_write_leaves_memory_and_published_file_unchanged() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut state = FileBackedState::open(fixture.path()).unwrap();
     state.commit(state.root(), &[update(1)]).unwrap();
@@ -150,6 +161,7 @@ fn failed_disk_write_leaves_memory_and_published_file_unchanged() {
 
 #[test]
 fn failed_rename_keeps_memory_unchanged_and_allows_retry() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut state = FileBackedState::open(fixture.path()).unwrap();
     let root = state.root();
@@ -167,6 +179,7 @@ fn failed_rename_keeps_memory_unchanged_and_allows_retry() {
 
 #[test]
 fn proposed_root_is_verified_before_any_disk_change() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut state = FileBackedState::open(fixture.path()).unwrap();
     let before = fs::read(fixture.path()).unwrap();
@@ -182,6 +195,7 @@ fn proposed_root_is_verified_before_any_disk_change() {
 
 #[test]
 fn corrupt_or_legacy_files_are_rejected_without_overwrite() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let cases = [vec![], vec![0; 16], b"ASTSTATE\x02\x00".to_vec()];
     for bytes in cases {
@@ -202,6 +216,7 @@ fn corrupt_or_legacy_files_are_rejected_without_overwrite() {
 
 #[test]
 fn memory_and_disk_backends_agree_through_restarts() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut disk = FileBackedState::open(fixture.path()).unwrap();
     let mut memory = InMemoryState::new();

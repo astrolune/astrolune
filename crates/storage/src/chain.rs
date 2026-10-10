@@ -13,8 +13,8 @@ use types::{Block, Hash256};
 
 #[derive(Debug)]
 enum Backend {
-    Log(AppendOnlyStorage),
-    Archive(FileBackedStorage),
+    Log(Box<AppendOnlyStorage>),
+    Archive(Box<FileBackedStorage>),
 }
 
 /// New network directories use an append-only log. Existing `ASTSTORE` archives
@@ -72,10 +72,14 @@ impl ChainStorage {
                 _ => return Err(StorageError::Corrupt),
             }
             FileBackedStorage::open(path)
+                .map(Box::new)
                 .map(Backend::Archive)
                 .map(Self)
         } else {
-            AppendOnlyStorage::open(path).map(Backend::Log).map(Self)
+            AppendOnlyStorage::open(path)
+                .map(Box::new)
+                .map(Backend::Log)
+                .map(Self)
         }
     }
     /// Whether this directory still uses the bounded legacy archive.
@@ -105,6 +109,60 @@ impl ChainStorage {
     #[must_use]
     pub fn block_count(&self) -> usize {
         dispatch!(&self.0, s => s.block_count())
+    }
+
+    /// Height of the oldest retained checkpoint; bodies start one height above it.
+    /// Zero means complete history from genesis; absence means an empty store.
+    #[must_use]
+    pub fn retained_floor(&self) -> Option<u64> {
+        dispatch!(&self.0, s => s.retained_floor())
+    }
+
+    /// Lowest height whose exact state the backend can still rebuild.
+    #[must_use]
+    pub fn history_floor(&self) -> Option<u64> {
+        dispatch!(&self.0, s => s.history_floor())
+    }
+
+    /// Installs the automated retention policy for the append-only log.
+    /// The bounded legacy archive refuses automated in-place retention.
+    pub fn set_retention_policy(
+        &mut self,
+        policy: crate::RetentionPolicy,
+    ) -> Result<(), StorageError> {
+        match &mut self.0 {
+            Backend::Log(log) => {
+                log.set_retention_policy(policy);
+                Ok(())
+            }
+            Backend::Archive(_) => Err(StorageError::Unsupported),
+        }
+    }
+
+    /// Current retention policy, floors and last automatic evaluation outcome.
+    #[must_use]
+    pub fn retention_state(&self) -> crate::RetentionState {
+        match &self.0 {
+            Backend::Log(log) => log.retention_state(),
+            Backend::Archive(archive) => crate::RetentionState {
+                policy: crate::RetentionPolicy::disabled(),
+                retained_floor: archive.retained_floor(),
+                history_floor: archive.history_floor(),
+                self_compacted: false,
+                compactions: 0,
+                last_error: None,
+            },
+        }
+    }
+
+    /// The anchor this writer durably recorded compacting to, if any.
+    /// Legacy archives never record one, so they always report complete history.
+    #[must_use]
+    pub fn local_retention_anchor(&self) -> Option<Checkpoint> {
+        match &self.0 {
+            Backend::Log(log) => log.local_retention_anchor(),
+            Backend::Archive(_) => None,
+        }
     }
     /// Reads retained history, propagating on-disk corruption and I/O errors.
     pub fn read_finalized(&self, height: u64) -> Result<Option<(Block, Vec<u8>)>, StorageError> {

@@ -22,7 +22,7 @@ Harassment, threats, discrimination, sexualized attention, doxxing, sustained di
 
 Report conduct concerns privately to a verified project maintainer through a channel published by the project host. Do not include unrelated sensitive data. Maintainers handling a report should disclose conflicts of interest and preserve confidentiality as far as reasonably possible.
 
-Responses may include clarification, warning, content removal, temporary restriction, or permanent exclusion, proportionate to behavior and risk. This baseline does not name an enforcement team that has not yet been established.
+Responses may include clarification, warning, content removal, temporary restriction, or permanent exclusion, proportionate to behavior and risk. Enforcement rests with the project maintainers reachable through the repository host; this document names no separate enforcement committee.
 
 ## Scope
 

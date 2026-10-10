@@ -8,7 +8,7 @@
 
 ### A Rust-first foundation for a verifiable, fast-finality network
 
-AstroLune explores **Proof of Trusted Behavior (PoTB)**, weighted VRF committees,
+AstroLune implements **Proof of Trusted Behavior (PoTB)**, weighted VRF committees,
 gradual committee rotation, and prevote/precommit BFT finality in a modular Rust workspace.
 
 <p>
@@ -34,14 +34,14 @@ gradual committee rotation, and prevote/precommit BFT finality in a modular Rust
 
 ## Overview
 
-AstroLune is a research and engineering workspace for a modular blockchain node. The repository focuses on explicit boundaries, deterministic behavior, bounded resources, and interfaces that can evolve into versioned protocol specifications.
+AstroLune is a modular blockchain node implemented as a Rust workspace. It is built around explicit subsystem boundaries, deterministic behavior, bounded resource use, and wire interfaces that carry explicit version and profile tags.
 
 | Area | Direction | Current shape |
 | --- | --- | --- |
 | Consensus | PoTB weight, weighted VRF committees, partial rotation | [Live VRF rotation, standby participation and verified catch-up](docs/40-live-vrf-network.md) |
 | Finality | Proposal, prevote, and precommit with > ⅔ voting power | Certified fixed or genesis-v2 rotating daemon network |
 | Execution | Deterministic state transitions with parallel scheduling | Parallel signed payments and ABI-v2 contract waves |
-| Persistence | Snapshots, archives, genesis, accounts, and recovery | Reference implementation baseline |
+| Persistence | Snapshots, archives, genesis, accounts, and recovery | Append-only chain log, atomic publication, verified replay recovery |
 | Contracts | Restricted deterministic Rust runtime boundary | Metered integer WebAssembly; signed deployment and calls |
 | Ecosystem | AstroLune DNS registry and resolution | On-chain ownership/leases and certified-proof resolver |
 
@@ -54,7 +54,7 @@ AstroLune is a research and engineering workspace for a modular blockchain node.
 | **Fast finality** | Proposal, prevote, and precommit require voting power strictly above two thirds. |
 | **Separated execution** | Consensus fixes order; deterministic execution independently computes state transitions. |
 | **Parallel performance** | State leasing, execution waves, optimistic replay, lanes, batching, locality, and prefetch are designed as separate concerns. |
-| **Deterministic contracts** | Restricted Rust source targets a versioned canonical runtime with interpreter/AOT/JIT parity as a goal. |
+| **Deterministic contracts** | Restricted Rust source targets a versioned canonical runtime; the interpreter and the ahead-of-time backend are qualified to agree field for field, including charged compute. |
 | **Lean networking** | Bounded binary P2P frames and compact-block reconstruction keep the network surface explicit. |
 | **Independent services** | DNS registry and resolution remain separate from validator signing authority. |
 
@@ -102,7 +102,7 @@ Prediction, telemetry, cache state, worker count, SIMD availability, and JIT ava
 | `crates/storage` | Validator-local durable persistence |
 | `crates/sync` | Finalized block and snapshot sync |
 | `crates/telemetry` | Local-only observability |
-| `crates/testkit` | Non-production deterministic fixtures |
+| `crates/testkit` | Deterministic fixtures and the bounded benchmark harness |
 | `crates/transaction` | Transaction validation boundaries |
 | `crates/types` | Canonical shared protocol types |
 | `services/dns` | Authenticated in-network naming |
@@ -119,7 +119,7 @@ Validator hardware requirements depend on the deployment profile:
 | Mainnet recommended | 24 cores at 2.8 GHz or higher | 256–512 GB | 2 TB NVMe SSD |
 | Testnet / local development minimum | 8 cores | 16 GB | 50 GB free disk space |
 
-Mainnet participation targets operators able to meet this hardware baseline. These are design requirements, not benchmark guarantees or checks currently enforced by the daemon. See [validator hardware and operational requirements](docs/07-validator-requirements.md).
+Mainnet participation targets operators able to meet this hardware profile. These are design requirements rather than measured figures, and the daemon does not enforce them. See [validator hardware and operational requirements](docs/07-validator-requirements.md).
 
 The repository pins Rust `1.99.0` with rustfmt and Clippy through [`rust-toolchain.toml`](rust-toolchain.toml). Install Rust with [rustup](https://rustup.rs/); entering the repository selects the pinned toolchain.
 
@@ -208,7 +208,7 @@ Start or resume a local chain with the same trusted genesis on every invocation:
 cargo run -p daemon -- --genesis genesis.bin --data-dir node-data --blocks 3
 ```
 
-Genesis initializes a durable height-zero anchor with account balances and validator weights; produced blocks start at height one. A different or missing genesis is rejected on restart. Native signed payments update balances and nonces, while consensus remains a demonstration. See [genesis verification and materialization](docs/12-genesis-and-accounts.md), [payment rules and RPC](docs/13-native-payments.md), and the [versioned transaction format](docs/14-versioned-transactions.md).
+Genesis initializes a durable height-zero anchor with account balances and validator weights; produced blocks start at height one. A different or missing genesis is rejected on restart. Native signed payments update balances and nonces; without `--validators` this local mode publishes placeholder finality rather than certificates. See [genesis verification and materialization](docs/12-genesis-and-accounts.md), [payment rules and RPC](docs/13-native-payments.md), and the [versioned transaction format](docs/14-versioned-transactions.md).
 
 <details>
 <summary>Operational notes</summary>
@@ -217,13 +217,13 @@ Without genesis, the daemon uses chain ID 7 and keeps account/submission RPC una
 
 Archive versions 2 and 3 are readable; receipt-producing commits write version 3. Old version-1 archives are rejected without migration or rewriting. The consensus library authenticates votes and certificates; see [authenticated finality](docs/15-authenticated-finality.md). `BlockProducer` provides an explicit certified commit path. The [local BFT guard](docs/17-local-bft-voting.md) verifies prevote proofs and preserves vote locks across timeouts and restarts using a [protected durable journal](docs/16-durable-signing.md).
 
-The [reference round-robin participant](docs/18-signed-proposals-and-participants.md) authenticates signed proposals and coordinates execution, voting, round changes, and atomic publication. The [network driver](docs/19-reference-network.md) connects it to the daemon, mutually authenticated TLS exchange, timers, durable proposal recovery, and certified catch-up. [Transport identity validation and provisioning](docs/20-authenticated-transport.md) are implemented. Verified weighted VRF selection is implemented in the consensus library. Live committee rotation and production qualification remain unfinished. [Contract profile 2](docs/30-signed-contracts.md) adds explicit genesis activation of signed deployments, calls and parallel mixed execution.
+The [reference round-robin participant](docs/18-signed-proposals-and-participants.md) authenticates signed proposals and coordinates execution, voting, round changes, and atomic publication. The [network driver](docs/19-reference-network.md) connects it to the daemon, mutually authenticated TLS exchange, timers, durable proposal recovery, and certified catch-up. [Transport identity validation and provisioning](docs/20-authenticated-transport.md) are implemented. Verified weighted VRF selection and [live committee rotation](docs/40-live-vrf-network.md) are implemented; distributed calibration and independent review remain open. [Contract profile 2](docs/30-signed-contracts.md) adds explicit genesis activation of signed deployments, calls and parallel mixed execution.
 
 </details>
 
 ## Non-goals
 
-- The baseline does not claim production cryptography, consensus safety, anonymity, or benchmark figures.
+- AstroLune provides no transaction privacy or anonymity; finalized account activity is public.
 - AstroLune does not include a general-purpose user storage or file-sharing marketplace. `storage` is validator-local blockchain persistence.
 - External RPC does not carry internal consensus traffic.
 - Arbitrary native Rust binaries are not deployable contracts.

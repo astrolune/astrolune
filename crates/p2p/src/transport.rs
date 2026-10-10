@@ -11,8 +11,10 @@
 
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
+use crate::admission::{AdmissionConfig, AdmissionController, Refusal};
 use crate::error::NetworkError;
 use crate::frame::{
     BoundedFrameDecoder, FRAME_HEADER_SIZE, FrameDecoder, FrameEncoder, MAX_FRAME_SIZE,
@@ -27,7 +29,11 @@ const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_READ_TIMEOUT_MS: u64 = 30000;
 
 /// Maximum number of concurrent peer connections.
-const MAX_PEERS: usize = 128;
+///
+/// Identical to [`crate::admission::DEFAULT_MAX_TOTAL_CONNECTIONS`], which is the
+/// value the admission controller actually enforces. The name is retained because
+/// it is the historical name of the flat transport ceiling.
+pub const MAX_PEERS: usize = crate::admission::DEFAULT_MAX_TOTAL_CONNECTIONS;
 
 /// Identifies a remote peer on the network.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -91,6 +97,8 @@ pub enum TransportError {
     PeerLimitReached,
     /// The peer is not connected.
     NotConnected,
+    /// Bounded admission control refused this peer or this received message.
+    Refused(Refusal),
 }
 
 impl fmt::Display for TransportError {
@@ -101,6 +109,7 @@ impl fmt::Display for TransportError {
             Self::Timeout => write!(f, "connection timed out"),
             Self::PeerLimitReached => write!(f, "peer limit reached"),
             Self::NotConnected => write!(f, "peer not connected"),
+            Self::Refused(reason) => write!(f, "admission refused: {reason}"),
         }
     }
 }
@@ -110,6 +119,7 @@ impl std::error::Error for TransportError {
         match self {
             Self::Io(e) => Some(e),
             Self::InvalidFrame(e) => Some(e),
+            Self::Refused(reason) => Some(reason),
             _ => None,
         }
     }
@@ -263,78 +273,151 @@ pub struct PeerManager {
     peers: Arc<Mutex<std::collections::BTreeMap<PeerId, PeerConnection>>>,
     /// Maximum number of allowed peers.
     max_peers: usize,
+    /// Bounded admission control shared by every caller of this manager.
+    admission: Arc<Mutex<AdmissionController>>,
+    /// Origin of the monotonic tick this transport supplies to admission.
+    started: Instant,
 }
 
 impl PeerManager {
     /// Creates a new peer manager with the default peer limit.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            peers: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
-            max_peers: MAX_PEERS,
-        }
+        Self::with_limit(MAX_PEERS)
     }
 
     /// Creates a new peer manager with a custom peer limit.
+    ///
+    /// Every other admission bound keeps its documented default.
     #[must_use]
     pub fn with_limit(max_peers: usize) -> Self {
+        Self::with_admission(AdmissionConfig::default().with_max_total_connections(max_peers))
+    }
+
+    /// Creates a new peer manager with explicit admission bounds.
+    #[must_use]
+    pub fn with_admission(config: AdmissionConfig) -> Self {
         Self {
             peers: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
-            max_peers,
+            max_peers: config.max_total_connections,
+            admission: Arc::new(Mutex::new(AdmissionController::new(config))),
+            started: Instant::now(),
         }
+    }
+
+    /// Returns the shared admission controller.
+    ///
+    /// A caller that observes an offence this transport cannot see, such as a
+    /// failed signature check, records it against the same controller through
+    /// this handle, supplying a tick from [`PeerManager::tick_ms`].
+    #[must_use]
+    pub fn admission(&self) -> Arc<Mutex<AdmissionController>> {
+        self.admission.clone()
+    }
+
+    /// Milliseconds since this manager was created.
+    ///
+    /// The admission module never reads a clock. This transport reads one on its
+    /// behalf and supplies a tick that cannot decrease within one process.
+    #[must_use]
+    pub fn tick_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Locks the shared controller, treating a poisoned lock as a dead manager.
+    fn admission_locked(&self) -> Result<MutexGuard<'_, AdmissionController>, TransportError> {
+        self.admission
+            .lock()
+            .map_err(|_| TransportError::NotConnected)
+    }
+
+    /// Returns an admitted slot, ignoring a poisoned lock that already failed closed.
+    fn release(&self, peer_id: &PeerId) {
+        if let Ok(mut admission) = self.admission.lock() {
+            admission.release_connection(peer_id);
+        }
+    }
+
+    /// Inserts an admitted connection, releasing the slot of any it replaces.
+    fn register(&self, conn: PeerConnection) -> Result<PeerId, TransportError> {
+        let peer_id = conn.peer_id().clone();
+        let Ok(mut peers) = self.peers.lock() else {
+            self.release(&peer_id);
+            return Err(TransportError::NotConnected);
+        };
+        let replaced = peers.insert(peer_id.clone(), conn).is_some();
+        drop(peers);
+        if replaced {
+            self.release(&peer_id);
+        }
+        Ok(peer_id)
     }
 
     /// Connects to a remote peer and adds it to the managed set.
     ///
+    /// Admission is consulted before a socket is created. The earlier order
+    /// established the connection first and only then compared the peer count
+    /// against the limit, so a caller already at capacity still completed a
+    /// handshake and immediately discarded it; a refused dial now costs nothing.
+    ///
     /// # Errors
     ///
-    /// Returns `TransportError` if the connection fails or the peer limit
-    /// has been reached.
+    /// Returns `TransportError` if admission refuses the peer or the connection
+    /// fails.
     pub fn connect(&self, addr: &str) -> Result<PeerId, TransportError> {
-        let conn = PeerConnection::connect(addr)?;
-        let peer_id = conn.peer_id().clone();
-
-        let mut peers = self
-            .peers
-            .lock()
-            .map_err(|_| TransportError::NotConnected)?;
-        if peers.len() >= self.max_peers {
-            return Err(TransportError::PeerLimitReached);
+        let peer_id = PeerId::new(addr);
+        let tick = self.tick_ms();
+        self.admission_locked()?
+            .admit_outbound(&peer_id, tick)
+            .map_err(TransportError::Refused)?;
+        match PeerConnection::connect(addr) {
+            Ok(conn) => self.register(conn),
+            Err(error) => {
+                self.release(&peer_id);
+                Err(error)
+            }
         }
-        peers.insert(peer_id.clone(), conn);
-
-        Ok(peer_id)
     }
 
     /// Registers an accepted incoming connection.
     ///
+    /// Admission is consulted before the stream is wrapped, so a refused caller
+    /// has its socket dropped here instead of being retained in the managed set.
+    /// Refusal covers the total cap, the per-source connection cap, the
+    /// per-source connection-attempt budget and an active ban.
+    ///
     /// # Errors
     ///
-    /// Returns `TransportError` if the peer limit has been reached.
+    /// Returns `TransportError` if admission refuses the peer or socket options
+    /// cannot be set.
     pub fn accept(&self, addr: &str, stream: TcpStream) -> Result<PeerId, TransportError> {
-        let conn = PeerConnection::from_stream(addr, stream)?;
-        let peer_id = conn.peer_id().clone();
-
-        let mut peers = self
-            .peers
-            .lock()
-            .map_err(|_| TransportError::NotConnected)?;
-        if peers.len() >= self.max_peers {
-            return Err(TransportError::PeerLimitReached);
+        let peer_id = PeerId::new(addr);
+        let tick = self.tick_ms();
+        self.admission_locked()?
+            .admit_inbound(&peer_id, tick)
+            .map_err(TransportError::Refused)?;
+        match PeerConnection::from_stream(addr, stream) {
+            Ok(conn) => self.register(conn),
+            Err(error) => {
+                self.release(&peer_id);
+                Err(error)
+            }
         }
-        peers.insert(peer_id.clone(), conn);
-
-        Ok(peer_id)
     }
 
-    /// Removes a peer from the managed set.
+    /// Removes a peer from the managed set and returns its admitted slot.
     ///
     /// Returns `true` if the peer was found and removed, `false` otherwise.
     #[must_use]
     pub fn disconnect(&self, peer_id: &PeerId) -> bool {
-        self.peers
+        let removed = self
+            .peers
             .lock()
-            .is_ok_and(|mut peers| peers.remove(peer_id).is_some())
+            .is_ok_and(|mut peers| peers.remove(peer_id).is_some());
+        if removed {
+            self.release(peer_id);
+        }
+        removed
     }
 
     /// Sends a frame to a specific peer.
@@ -351,18 +434,44 @@ impl PeerManager {
         conn.write_frame(frame)
     }
 
-    /// Reads a frame from a specific peer.
+    /// Reads a frame from a specific peer and charges it against admission.
+    ///
+    /// A banned peer is refused before the read. A malformed or oversized frame
+    /// records the offence its [`NetworkError`] names. An accepted frame is
+    /// charged to the message-count and byte-volume budgets of its
+    /// [`crate::admission::MessageClass`] at the peer, source and process tiers;
+    /// a refused charge is itself scored and the frame is dropped.
     ///
     /// # Errors
     ///
-    /// Returns `TransportError` if the peer is not connected or the read fails.
+    /// Returns `TransportError` if the peer is not connected, the read fails, or
+    /// admission refuses the peer or the frame.
     pub fn receive(&self, peer_id: &PeerId) -> Result<OwnedFrame, TransportError> {
-        let mut peers = self
-            .peers
-            .lock()
-            .map_err(|_| TransportError::NotConnected)?;
-        let conn = peers.get_mut(peer_id).ok_or(TransportError::NotConnected)?;
-        conn.read_frame()
+        if self.admission_locked()?.is_banned(peer_id, self.tick_ms()) {
+            return Err(TransportError::Refused(Refusal::Banned));
+        }
+        let read = {
+            let mut peers = self
+                .peers
+                .lock()
+                .map_err(|_| TransportError::NotConnected)?;
+            let conn = peers.get_mut(peer_id).ok_or(TransportError::NotConnected)?;
+            conn.read_frame()
+        };
+        let tick = self.tick_ms();
+        let frame = match read {
+            Ok(frame) => frame,
+            Err(TransportError::InvalidFrame(error)) => {
+                self.admission_locked()?
+                    .record_network_error(peer_id, error, tick);
+                return Err(TransportError::InvalidFrame(error));
+            }
+            Err(error) => return Err(error),
+        };
+        self.admission_locked()?
+            .charge_message(peer_id, frame.kind, frame.payload.len(), tick)
+            .map_err(TransportError::Refused)?;
+        Ok(frame)
     }
 
     /// Broadcasts a frame to all connected peers.
@@ -386,6 +495,12 @@ impl PeerManager {
                 (id.clone(), result)
             })
             .collect()
+    }
+
+    /// Maximum concurrent peers this manager admits.
+    #[must_use]
+    pub const fn max_peers(&self) -> usize {
+        self.max_peers
     }
 
     /// Returns the number of currently connected peers.
@@ -476,7 +591,20 @@ impl TcpPeerListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::admission::Offence;
     use crate::message::MessageKind;
+
+    /// Binds a loopback listener and returns one accepted server side of a pair.
+    ///
+    /// The client half is returned too so the caller keeps the socket open for as
+    /// long as the assertion needs it.
+    fn accepted_pair() -> (std::net::TcpListener, TcpStream, TcpStream, String) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = TcpStream::connect(address).unwrap();
+        let (server, peer) = listener.accept().unwrap();
+        (listener, client, server, peer.to_string())
+    }
 
     #[test]
     fn owned_frame_encode_roundtrip() {
@@ -498,7 +626,109 @@ mod tests {
     #[test]
     fn peer_manager_with_limit() {
         let mgr = PeerManager::with_limit(5);
-        assert_eq!(mgr.max_peers, 5);
+        assert_eq!(mgr.max_peers(), 5);
+        assert_eq!(
+            mgr.admission()
+                .lock()
+                .unwrap()
+                .config()
+                .max_total_connections,
+            5,
+            "the peer limit must be the admission total cap"
+        );
+    }
+
+    #[test]
+    fn connect_is_refused_before_a_socket_is_created_when_the_total_cap_is_full() {
+        let mgr = PeerManager::with_limit(0);
+        // 127.0.0.1:9 is the discard port and is not listening in this test, so a
+        // dial would fail slowly; admission must refuse before reaching it.
+        match mgr.connect("127.0.0.1:9") {
+            Err(TransportError::Refused(Refusal::TotalConnections)) => {}
+            other => panic!("expected a total-cap refusal, got {other:?}"),
+        }
+        assert_eq!(mgr.peer_count(), 0);
+    }
+
+    #[test]
+    fn connect_is_refused_without_dialling_an_unparsable_endpoint() {
+        let mgr = PeerManager::new();
+        match mgr.connect("not-an-address") {
+            Err(TransportError::Refused(Refusal::UnknownSource)) => {}
+            other => panic!("expected an unknown-source refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accept_refuses_a_connection_past_the_per_source_cap_and_retains_nothing() {
+        let config = AdmissionConfig {
+            max_connections_per_source: 1,
+            ..AdmissionConfig::default()
+        };
+        let mgr = PeerManager::with_admission(config);
+        let (listener, _first_client, first, first_peer) = accepted_pair();
+        let address = listener.local_addr().unwrap();
+        let _second_client = TcpStream::connect(address).unwrap();
+        let (second, second_peer) = listener.accept().unwrap();
+
+        mgr.accept(&first_peer, first).unwrap();
+        assert_eq!(mgr.peer_count(), 1);
+        match mgr.accept(&second_peer.to_string(), second) {
+            Err(TransportError::Refused(Refusal::SourceConnections)) => {}
+            other => panic!("expected a per-source refusal, got {other:?}"),
+        }
+        assert_eq!(
+            mgr.peer_count(),
+            1,
+            "a refused connection must not be retained in the managed set"
+        );
+    }
+
+    #[test]
+    fn disconnect_returns_the_admitted_slot_so_the_source_can_reconnect() {
+        let config = AdmissionConfig {
+            max_connections_per_source: 1,
+            ..AdmissionConfig::default()
+        };
+        let mgr = PeerManager::with_admission(config);
+        let (listener, _client, server, peer) = accepted_pair();
+        let id = mgr.accept(&peer, server).unwrap();
+        assert_eq!(mgr.admission().lock().unwrap().total_connections(), 1);
+        assert!(mgr.disconnect(&id));
+        assert_eq!(
+            mgr.admission().lock().unwrap().total_connections(),
+            0,
+            "disconnect must return the admitted slot"
+        );
+
+        let address = listener.local_addr().unwrap();
+        let _again = TcpStream::connect(address).unwrap();
+        let (server, peer) = listener.accept().unwrap();
+        mgr.accept(&peer.to_string(), server)
+            .expect("a released slot must be reusable by the same source");
+    }
+
+    #[test]
+    fn accept_refuses_a_banned_source_recorded_through_the_shared_controller() {
+        let mgr = PeerManager::new();
+        let (_listener, _client, server, peer) = accepted_pair();
+        let controller = mgr.admission();
+        {
+            let mut admission = controller.lock().unwrap();
+            let tick = mgr.tick_ms();
+            for round in 0..3 {
+                admission.record_offence(&PeerId::new(&peer), Offence::OversizedPayload, tick);
+                assert!(
+                    round < 2 || admission.is_banned(&PeerId::new(&peer), tick),
+                    "round={round}: three oversized payloads must reach the default threshold"
+                );
+            }
+        }
+        match mgr.accept(&peer, server) {
+            Err(TransportError::Refused(Refusal::Banned)) => {}
+            other => panic!("expected a ban refusal, got {other:?}"),
+        }
+        assert_eq!(mgr.peer_count(), 0);
     }
 
     #[test]
@@ -521,6 +751,11 @@ mod tests {
 
         let err = TransportError::PeerLimitReached;
         assert_eq!(format!("{err}"), "peer limit reached");
+
+        let err = TransportError::Refused(Refusal::Banned);
+        assert_eq!(format!("{err}"), "admission refused: source is banned");
+        let source = std::error::Error::source(&err).map(ToString::to_string);
+        assert_eq!(source, Some("source is banned".to_owned()));
     }
 
     #[test]

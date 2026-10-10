@@ -401,6 +401,7 @@ dependencies = [
  "rpc",
  "runtime",
  "state",
+ "testkit",
  "transaction",
  "types",
  "wat",
@@ -611,6 +612,7 @@ dependencies = [
  "codec",
  "crypto",
  "getrandom 0.4.3",
+ "testkit",
  "types",
  "zeroize",
 ]

@@ -13,6 +13,7 @@ use node::{
     network_wire::{NetworkMessage, decode_exchange, encode_exchange},
     observer::ObserverNode,
 };
+use p2p::admission::RateLimit;
 use std::{net::TcpListener, path::PathBuf, sync::atomic::AtomicU64};
 use transaction::{Payment, address_from_public_key, signing_hash};
 use types::{Address, Resources, Transaction, ValidatorId};
@@ -157,7 +158,22 @@ impl Fixture {
             genesis: self.network.genesis_hash(),
             discovery,
             compact_blocks: true,
+            admission: Arc::new(Mutex::new(AdmissionController::default())),
+            started: Instant::now(),
             metrics: Arc::new(NodeMetrics::new(0, true)),
+        }
+    }
+
+    fn runtime_with(
+        &self,
+        node: PeerNode,
+        local: SocketAddr,
+        discovery: bool,
+        config: &AdmissionConfig,
+    ) -> PeerRuntime {
+        PeerRuntime {
+            admission: Arc::new(Mutex::new(AdmissionController::new(*config))),
+            ..self.runtime(node, local, discovery)
         }
     }
 }
@@ -222,7 +238,9 @@ fn server_accepts_raw_and_discovery_compact_requests_alongside_legacy() {
         let server = runtime.clone();
         let handle = std::thread::spawn(move || {
             let storage_failed = AtomicBool::new(false);
-            let _ = server.serve(listener.accept().unwrap().0, &storage_failed);
+            let socket = listener.accept().unwrap().0;
+            let client = PeerId::new(&socket.peer_addr().unwrap().to_string());
+            let _ = server.serve(socket, &storage_failed, &client);
             assert!(!storage_failed.load(Ordering::Acquire));
         });
         let mut stream = fixture
@@ -450,4 +468,174 @@ fn connected_compact_failure_retries_legacy_and_keeps_preference_across_reconnec
             handle.join().unwrap();
         }
     }
+}
+
+/// Opens one authenticated client session and reports the server-visible endpoint.
+fn client_session(fixture: &Fixture, address: SocketAddr) -> (PeerStream, PeerId) {
+    let socket = TcpStream::connect(address).unwrap();
+    let endpoint = PeerId::new(&socket.local_addr().unwrap().to_string());
+    (fixture.transport.connect(socket).unwrap(), endpoint)
+}
+
+/// Serves exactly one inbound session on `listener` with the supplied runtime.
+fn serve_once(runtime: &PeerRuntime, listener: TcpListener) -> std::thread::JoinHandle<bool> {
+    let server = runtime.clone();
+    std::thread::spawn(move || {
+        let socket = listener.accept().unwrap().0;
+        let client = PeerId::new(&socket.peer_addr().unwrap().to_string());
+        let storage_failed = AtomicBool::new(false);
+        let outcome = server.serve(socket, &storage_failed, &client).is_ok();
+        assert!(!storage_failed.load(Ordering::Acquire));
+        outcome
+    })
+}
+
+#[test]
+fn inbound_admission_refuses_a_connection_past_the_per_source_cap_and_reuses_released_slots() {
+    let fixture = Fixture::new();
+    let node = fixture.observer("inbound-cap");
+    let config = AdmissionConfig {
+        max_connections_per_source: 2,
+        ..AdmissionConfig::default()
+    };
+    let runtime = fixture.runtime_with(node, "127.0.0.1:1".parse().unwrap(), false, &config);
+    let peers: Vec<PeerId> = (1..=3_u16)
+        .map(|port| PeerId::new(&format!("127.0.0.1:{port}")))
+        .collect();
+    for peer in &peers[..2] {
+        assert!(
+            !runtime.refuse_inbound(peer),
+            "peer={peer:?}: admission within the per-source cap was refused"
+        );
+    }
+    assert!(
+        runtime.refuse_inbound(&peers[2]),
+        "a third concurrent connection from one source must be refused"
+    );
+    runtime.release_inbound(&peers[0]);
+    assert!(
+        !runtime.refuse_inbound(&peers[2]),
+        "a released slot must be reusable by the same source"
+    );
+}
+
+#[test]
+fn a_malformed_inbound_request_is_scored_until_its_source_address_is_refused() {
+    let fixture = Fixture::new();
+    let node = fixture.observer("malformed-requests");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let runtime = fixture.runtime(node, address, false);
+    let threshold = AdmissionConfig::default().ban_threshold;
+    let weight = AdmissionConfig::default().weight(Offence::InvalidFrame);
+    let rounds = threshold.div_ceil(weight);
+
+    for round in 0..rounds {
+        let handle = serve_once(&runtime, listener.try_clone().unwrap());
+        let (mut stream, endpoint) = client_session(&fixture, address);
+        // 49 bytes is neither a legacy 48-byte request nor a compact request, so
+        // the server must reject the decode rather than answer it.
+        write_packet(
+            &mut stream,
+            &[0_u8; 49],
+            runtime.limit(MAX_COMPACT_REQUEST_BYTES),
+            IO_TIMEOUT,
+        )
+        .unwrap();
+        assert!(
+            !handle.join().unwrap(),
+            "round={round}: a malformed request was served successfully"
+        );
+        drop(stream);
+        let _ = endpoint;
+    }
+
+    assert!(
+        runtime.banned(&PeerId::new("127.0.0.1:1")),
+        "{rounds} malformed requests must reach the default ban threshold of {threshold}"
+    );
+    assert!(
+        runtime.refuse_inbound(&PeerId::new("127.0.0.1:2")),
+        "a banned source must be refused before a session is spawned for it"
+    );
+}
+
+#[test]
+fn a_served_session_charges_every_request_and_ends_once_the_block_budget_is_spent() {
+    let fixture = Fixture::new();
+    let full = fixture.finalized();
+    let genesis = fixture.network.genesis_hash();
+    let mut node = fixture.observer("charged-session");
+    node.receive_prepared(PreparedExchange::decode(genesis, &full).unwrap())
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let mut peer_limits = AdmissionConfig::default().peer_limits;
+    peer_limits.per_class[MessageClass::Blocks as usize].messages = RateLimit::new(0, 1);
+    let config = AdmissionConfig {
+        peer_limits,
+        ..AdmissionConfig::default()
+    };
+    let runtime = fixture.runtime_with(node, address, false, &config);
+    let handle = serve_once(&runtime, listener);
+    let (mut stream, _endpoint) = client_session(&fixture, address);
+    let request = SyncRequest { genesis, height: 1 }.encode();
+
+    write_packet(&mut stream, &request, runtime.limit(48), IO_TIMEOUT).unwrap();
+    let response = read_packet(&mut stream, runtime.limit(MAX_EXCHANGE_BYTES), IO_TIMEOUT).unwrap();
+    assert_eq!(response, full, "the first request fits a burst of one");
+
+    write_packet(&mut stream, &request, runtime.limit(48), IO_TIMEOUT).unwrap();
+    assert!(
+        read_packet(&mut stream, runtime.limit(MAX_EXCHANGE_BYTES), IO_TIMEOUT).is_err(),
+        "the session must end rather than answer a request past its budget"
+    );
+    assert!(
+        !handle.join().unwrap(),
+        "a refused charge must end the session with an error"
+    );
+    assert_eq!(
+        runtime.metrics.get(NodeMetric::SessionLimitDrops),
+        1,
+        "a refused charge must be counted exactly once"
+    );
+}
+
+#[test]
+fn a_banned_peer_is_never_dialled_by_a_polling_worker() {
+    let fixture = Fixture::new();
+    let node = fixture.observer("banned-dial");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let runtime = fixture.runtime(node, "127.0.0.1:1".parse().unwrap(), false);
+    let remote = PeerId::new(&address.to_string());
+    let rounds = AdmissionConfig::default()
+        .ban_threshold
+        .div_ceil(AdmissionConfig::default().weight(Offence::OversizedPayload));
+    for _ in 0..rounds {
+        runtime.score(&remote, Offence::OversizedPayload);
+    }
+    assert!(
+        runtime.banned(&remote),
+        "{rounds} offences must ban the source"
+    );
+
+    let mut session = None;
+    let mut compact = false;
+    assert!(
+        runtime
+            .exchange_with_fallback(address, &mut session, &mut compact, None)
+            .is_err(),
+        "a banned peer must not be dialled"
+    );
+    assert!(
+        session.is_none(),
+        "no session may be opened to a banned peer"
+    );
+    assert!(
+        listener.accept().is_err(),
+        "a banned peer must receive no connection at all"
+    );
 }

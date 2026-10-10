@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Differential qualification oracle for the alternate engine profiles behind
-//! the `RuntimeBackend` seam.
+//! the `RuntimeBackend` seam, and for the ahead-of-time artifact cache.
 //!
 //! Compiled into the stable-toolchain backend qualification campaign in
 //! `tests/integration/tests/backends.rs` through `#[path]` source inclusion.
@@ -13,16 +13,25 @@
 //! resource classes. The narrower `RuntimeBackend` seam is compared separately
 //! and is additionally pinned to the projection of the interpreter path.
 //!
-//! Every profile is the same Wasmi interpreter under a different value-stack
-//! allocation strategy. None of them is an ahead-of-time compiler, a
+//! The same candidates then go through one process-wide `ArtifactCache` twice,
+//! so every candidate is compared once as a cache miss and once as a cache hit.
+//! The cache's bounds are far smaller than the number of distinct modules a
+//! long campaign accepts, so generation retirement is exercised continuously
+//! and is required to leave every compared field unchanged.
+//!
+//! Every engine profile is the same Wasmi interpreter under a different
+//! value-stack allocation strategy, and the ahead-of-time path is that same
+//! interpreter with translation hoisted out of the metered call. Neither is a
 //! just-in-time compiler, a SIMD backend or an independent implementation of
 //! WebAssembly, and no such backend exists in this workspace. The campaign
-//! therefore establishes configuration independence across the seam, nothing
-//! about native code generation and nothing about throughput.
+//! therefore establishes configuration independence across the seam and cache
+//! transparency across the ahead-of-time path, nothing about native code
+//! generation and nothing about throughput.
 
 use runtime::{
-    ContractModule, EngineProfile, ModuleValidator, RuntimeBackend, WASM_VERSION, WasmBackend,
-    WasmCall, WasmRuntime, project_wasm_output, runtime_difference, wasm_difference,
+    AotBackend, ArtifactCache, BackendKind, ContractModule, EngineProfile, ModuleValidator,
+    RuntimeBackend, RuntimeError, WASM_VERSION, WasmBackend, WasmCall, WasmOutput, WasmRuntime,
+    project_wasm_output, runtime_difference, wasm_difference,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -38,6 +47,14 @@ const MAX_FUEL: u64 = 100_000;
 const MAX_DERIVED_INPUT: u64 = 97;
 /// Contract-local key declared by the structured state and delete modules.
 const CONTRACT_KEY: &[u8] = b"key";
+/// Artifacts one cache generation retains during the campaign.
+///
+/// Deliberately far below the number of distinct modules a long campaign
+/// accepts, so retirement happens thousands of times and every comparison
+/// after it is a comparison across a fresh engine.
+const CAMPAIGN_ARTIFACTS: usize = 64;
+/// Canonical module bytes one cache generation retains during the campaign.
+const CAMPAIGN_CODE_BYTES: usize = 1024 * 1024;
 
 /// Differential counters accumulated across a whole campaign.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -56,13 +73,30 @@ pub struct Compared {
     pub rejected: usize,
     /// `RuntimeBackend` seam executions compared against the reference seam.
     pub seams: usize,
+    /// Ahead-of-time validation results compared against the reference.
+    pub aot_validations: usize,
+    /// Ahead-of-time executions compared against the reference interpreter.
+    pub aot_executions: usize,
+    /// Ahead-of-time executions served from an artifact already held.
+    pub aot_hits: usize,
+    /// Ahead-of-time seam executions compared against the reference seam.
+    pub aot_seams: usize,
+    /// Generations the process-wide cache has retired so far.
+    ///
+    /// Cumulative across every campaign that ran in this process, because the
+    /// cache is, so two campaigns in one process report the later one's figure
+    /// including the earlier one's retirements.
+    pub aot_retirements: usize,
 }
 
-/// Compares every alternate engine profile against the reference interpreter
-/// for one candidate module, accumulating into `totals`.
+/// Compares every alternate engine profile and the ahead-of-time artifact
+/// cache against the reference interpreter for one candidate module,
+/// accumulating into `totals`.
 ///
 /// Rejected candidates still contribute compared validation results, because a
-/// profile that accepts what the reference rejects is a consensus split.
+/// profile that accepts what the reference rejects is a consensus split, and
+/// because an artifact must never be retained for a module the reference
+/// rejects.
 pub fn check(bytes: &[u8], totals: &mut Compared) {
     totals.candidates += 1;
 
@@ -82,6 +116,12 @@ pub fn check(bytes: &[u8], totals: &mut Compared) {
         );
         totals.validations += 1;
     }
+    assert_eq!(
+        artifact_cache().validate(bytes, WASM_VERSION),
+        expected,
+        "the ahead-of-time cache must agree with the reference validator"
+    );
+    totals.aot_validations += 1;
 
     let Ok(module) = expected else {
         return;
@@ -108,7 +148,86 @@ pub fn check(bytes: &[u8], totals: &mut Compared) {
         totals.executions += 1;
     }
 
+    check_aot(&module, &plan, &first, totals);
     check_seam(&module, &plan, totals);
+}
+
+/// Compares the ahead-of-time path against the reference interpreter, once with
+/// the artifact already held and once without.
+///
+/// A cold cache supplies the miss, so translating for this candidate is
+/// compared on the complete `WasmOutput` and not only through the narrower
+/// seam. The shared campaign cache then supplies the hits, and because its
+/// bounds are far below the number of distinct modules a campaign accepts it
+/// retires generations continuously while doing so.
+fn check_aot(
+    module: &ContractModule,
+    plan: &Plan,
+    expected: &Result<WasmOutput, RuntimeError>,
+    totals: &mut Compared,
+) {
+    let cold = ArtifactCache::new();
+    assert!(!cold.contains(&reference_runtime().artifact_key(module)));
+    assert_eq!(
+        wasm_difference(expected, &cold.execute(module, plan.call())),
+        None,
+        "the ahead-of-time path must execute identically on a cache miss for \
+         module {:?}",
+        module.code_hash
+    );
+    totals.aot_executions += 1;
+
+    let cache = artifact_cache();
+    let key = reference_runtime().artifact_key(module);
+    for _ in 0..2 {
+        let held = cache.contains(&key);
+        assert_eq!(
+            wasm_difference(expected, &cache.execute(module, plan.call())),
+            None,
+            "the ahead-of-time path must execute identically on module {:?}",
+            module.code_hash
+        );
+        totals.aot_executions += 1;
+        totals.aot_hits += usize::from(held);
+    }
+
+    let stats = cache.stats();
+    assert!(
+        stats.artifacts <= CAMPAIGN_ARTIFACTS,
+        "the cache must stay inside its artifact bound"
+    );
+    assert!(
+        stats.code_bytes <= CAMPAIGN_CODE_BYTES,
+        "the cache must stay inside its byte bound"
+    );
+    totals.aot_retirements =
+        usize::try_from(stats.retirements).expect("retirement count fits in a usize");
+
+    // A fresh backend per candidate, matching `check_seam`, so the seam is
+    // compared under the candidate's own derived grant, once cold and once warm.
+    let backend = AotBackend::with_bounds(
+        EngineProfile::Reference,
+        plan.limits,
+        CAMPAIGN_ARTIFACTS,
+        CAMPAIGN_CODE_BYTES,
+    )
+    .expect("the reference profile translates ahead of the call");
+    assert_eq!(backend.kind(), BackendKind::Aot);
+    assert_ne!(
+        backend.kind(),
+        WasmBackend::new(EngineProfile::Reference, plan.limits).kind()
+    );
+    let seam = WasmBackend::new(EngineProfile::Reference, plan.limits).execute(module, &plan.input);
+    for repeat in 0..2 {
+        assert_eq!(
+            runtime_difference(&seam, &backend.execute(module, &plan.input)),
+            None,
+            "the ahead-of-time seam execution {repeat} must agree with the \
+             recompiling seam on module {:?}",
+            module.code_hash
+        );
+        totals.aot_seams += 1;
+    }
 }
 
 /// Compares the narrower `RuntimeBackend` seam and pins it to the projection of
@@ -162,8 +281,26 @@ fn alternate_runtimes() -> &'static [WasmRuntime] {
     })
 }
 
+/// Lazily builds the process-wide ahead-of-time cache once.
+///
+/// One cache for the whole campaign is the point: a per-candidate cache would
+/// only ever be compared cold, and would never exercise retirement or the reuse
+/// of an artifact across unrelated candidates.
+fn artifact_cache() -> &'static ArtifactCache {
+    static CACHE: OnceLock<ArtifactCache> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        ArtifactCache::with_bounds(
+            EngineProfile::Reference,
+            CAMPAIGN_ARTIFACTS,
+            CAMPAIGN_CODE_BYTES,
+        )
+        .expect("the reference profile translates ahead of the call")
+    })
+}
+
 /// Asserts that the configurations measured to change charged compute are kept
-/// out of the qualified set, so a future engine bump cannot silently admit one.
+/// out of the qualified set, so a future engine bump cannot silently admit one,
+/// and that none of them can back the ahead-of-time cache.
 pub fn assert_disqualified_profiles_stay_excluded() {
     for profile in EngineProfile::DISQUALIFIED {
         assert!(
@@ -174,11 +311,27 @@ pub fn assert_disqualified_profiles_stay_excluded() {
             !EngineProfile::QUALIFIED.contains(&profile),
             "{profile:?} must not be listed as qualified"
         );
+        assert!(
+            !profile.translates_ahead_of_the_call(),
+            "{profile:?} defers translation into the call"
+        );
+        assert!(
+            ArtifactCache::with_profile(profile).is_none(),
+            "{profile:?} must not be allowed to back an artifact cache"
+        );
+        assert!(
+            AotBackend::with_profile(profile, Resources::ZERO).is_none(),
+            "{profile:?} must not be allowed to back the ahead-of-time backend"
+        );
     }
     for profile in EngineProfile::ALTERNATES {
         assert!(
             profile.is_consensus_neutral() && EngineProfile::QUALIFIED.contains(&profile),
             "{profile:?} must be qualified before it is compared"
+        );
+        assert!(
+            profile.translates_ahead_of_the_call(),
+            "{profile:?} must translate ahead of the call before it is compared"
         );
     }
 }

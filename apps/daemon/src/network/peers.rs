@@ -12,6 +12,8 @@ use node::{
     network_wire::{MAX_EXCHANGE_BYTES, SyncRequest},
 };
 use p2p::{
+    PeerId,
+    admission::{AdmissionConfig, AdmissionController, MessageClass, Offence},
     discovery::{self, PeerDirectory},
     exchange::{read_packet, write_packet},
     tls::PeerStream,
@@ -43,6 +45,10 @@ pub(super) struct PeerRuntime {
     genesis: Hash256,
     discovery: bool,
     compact_blocks: bool,
+    /// Bounded admission control shared by the accept loop and every session.
+    admission: Arc<Mutex<AdmissionController>>,
+    /// Origin of the monotonic tick this runtime supplies to admission.
+    started: Instant,
     pub(super) metrics: Arc<NodeMetrics>,
 }
 impl PeerRuntime {
@@ -70,8 +76,85 @@ impl PeerRuntime {
             genesis,
             discovery: options.discovery.is_some(),
             compact_blocks: options.compact_blocks,
+            admission: Arc::new(Mutex::new(AdmissionController::new(
+                AdmissionConfig::default()
+                    .with_max_total_connections(options.config.network.max_peers),
+            ))),
+            started: Instant::now(),
             metrics,
         })
+    }
+
+    /// Milliseconds since this runtime was created.
+    ///
+    /// The admission module never reads a clock. The daemon reads one on its
+    /// behalf and supplies a tick that cannot decrease within one process.
+    fn tick(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Whether bounded admission refuses an inbound connection from `peer`.
+    ///
+    /// A poisoned controller refuses: an unenforced limit is worse than a closed
+    /// connection. A granted slot is returned by `release_inbound`.
+    pub(super) fn refuse_inbound(&self, peer: &PeerId) -> bool {
+        let tick = self.tick();
+        !self
+            .admission
+            .lock()
+            .is_ok_and(|mut admission| admission.admit_inbound(peer, tick).is_ok())
+    }
+
+    /// Returns one admitted inbound slot to the controller.
+    pub(super) fn release_inbound(&self, peer: &PeerId) {
+        if let Ok(mut admission) = self.admission.lock() {
+            admission.release_connection(peer);
+        }
+    }
+
+    /// Whether bounded admission is currently refusing this remote address.
+    fn banned(&self, peer: &PeerId) -> bool {
+        let tick = self.tick();
+        self.admission
+            .lock()
+            .is_ok_and(|mut admission| admission.is_banned(peer, tick))
+    }
+
+    /// Records one offence against the source address of `peer`.
+    fn score(&self, peer: &PeerId, offence: Offence) {
+        let tick = self.tick();
+        if let Ok(mut admission) = self.admission.lock() {
+            admission.record_offence(peer, offence, tick);
+        }
+    }
+
+    /// Records the offence an I/O failure implies, if it implies one at all.
+    ///
+    /// Only a decode failure is scored. A closed connection, an expired deadline
+    /// and an orderly session rotation are ordinary and never offences.
+    fn score_io(&self, peer: &PeerId, error: &io::Error) {
+        if error.kind() == io::ErrorKind::InvalidData {
+            self.score(peer, Offence::InvalidFrame);
+        }
+    }
+
+    /// Charges one inbound request against bounded admission.
+    ///
+    /// A catch-up request obliges this node to read and encode finalized history,
+    /// so it is charged to the block budget rather than to a cheap class. A
+    /// refusal ends the session; it does not queue or delay the request.
+    fn charge_request(&self, peer: &PeerId, bytes: usize) -> Result<(), DaemonError> {
+        let tick = self.tick();
+        let mut admission = self
+            .admission
+            .lock()
+            .map_err(|_| io_error("admission lock poisoned"))?;
+        admission
+            .charge_class(peer, MessageClass::Blocks, bytes, tick)
+            .map_err(|reason| {
+                self.metrics.add(NodeMetric::SessionLimitDrops, 1);
+                io_error(reason)
+            })
     }
     pub(super) fn stop(&self) {
         self.stop.store(true, Ordering::Release);
@@ -245,7 +328,13 @@ impl PeerRuntime {
         compact: bool,
         next_height: Option<u64>,
     ) -> io::Result<PreparedExchange> {
+        let remote = PeerId::new(&address.to_string());
         if session.is_none() {
+            // A banned peer is not dialled. The caller treats this like any other
+            // failed exchange, so the existing backoff bounds the retry rate.
+            if self.banned(&remote) {
+                return Err(io::Error::other("peer refused by local admission"));
+            }
             let connect = || {
                 self.transport
                     .connect(TcpStream::connect_timeout(&address, IO_TIMEOUT)?)
@@ -307,7 +396,10 @@ impl PeerRuntime {
             session.count += 1;
             Ok(prepared)
         };
-        exchange().inspect_err(|_| self.metrics.add(NodeMetric::ExchangeFailures, 1))
+        exchange().inspect_err(|error| {
+            self.metrics.add(NodeMetric::ExchangeFailures, 1);
+            self.score_io(&remote, error);
+        })
     }
     fn exchange_with_fallback(
         &self,
@@ -327,10 +419,18 @@ impl PeerRuntime {
         }
         result
     }
+    /// Serves one admitted inbound session.
+    ///
+    /// `peer` is the already-admitted endpoint whose slot the caller holds. Every
+    /// request is charged against bounded admission before any history is read,
+    /// and a malformed request or a foreign genesis namespace is scored against
+    /// that endpoint's source address. Admission decides nothing about message
+    /// validity: the ordinary genesis, committee and signature checks still run.
     pub(super) fn serve(
         &self,
         stream: TcpStream,
         storage_failed: &AtomicBool,
+        peer: &PeerId,
     ) -> Result<(), DaemonError> {
         let mut stream = self.transport.accept(stream).map_err(io_error)?;
         let started = Instant::now();
@@ -343,24 +443,39 @@ impl PeerRuntime {
                 break;
             }
             let bytes = read_packet(&mut stream, self.limit(MAX_COMPACT_REQUEST_BYTES), timeout)
-                .map_err(io_error)?;
+                .map_err(|error| {
+                    self.score_io(peer, &error);
+                    io_error(error)
+                })?;
+            self.charge_request(peer, bytes.len())?;
             // Discovery-enabled nodes also serve old fixed-profile peers without learning routes.
             let (hints, payload, wrapped) =
                 if bytes.len() == 48 || bytes.starts_with(b"ALCQ\x01\0\0\0") {
                     (Vec::new(), bytes.as_slice(), false)
                 } else {
-                    let (hints, payload) = self
-                        .unpack(&bytes, MAX_COMPACT_REQUEST_BYTES)
-                        .map_err(io_error)?;
+                    let (hints, payload) =
+                        self.unpack(&bytes, MAX_COMPACT_REQUEST_BYTES)
+                            .map_err(|error| {
+                                self.score_io(peer, &error);
+                                io_error(error)
+                            })?;
                     (hints, payload, true)
                 };
             let compact = if payload.len() == 48 {
                 None
             } else {
-                Some(CompactRequest::decode(payload).map_err(io_error)?)
+                Some(CompactRequest::decode(payload).map_err(|error| {
+                    self.score(peer, Offence::InvalidFrame);
+                    io_error(error)
+                })?)
             };
             let request = compact.as_ref().map_or_else(
-                || SyncRequest::decode(payload).map_err(io_error),
+                || {
+                    SyncRequest::decode(payload).map_err(|error| {
+                        self.score(peer, Offence::InvalidFrame);
+                        io_error(error)
+                    })
+                },
                 |request| Ok(request.sync()),
             )?;
             let prepared = {
@@ -368,8 +483,15 @@ impl PeerRuntime {
                     .node
                     .lock()
                     .map_err(|_| io_error("node lock poisoned"))?;
-                node.prepare_response(request)
-                    .map_err(|error| self.response_error(storage_failed, error))?
+                node.prepare_response(request).map_err(|error| {
+                    // `prepare_response` reports an input failure only for a peer
+                    // whose trusted genesis namespace differs, which honest
+                    // current input cannot do.
+                    if let Some(offence) = error.offence() {
+                        self.score(peer, offence);
+                    }
+                    self.response_error(storage_failed, error)
+                })?
             };
             // The response owns its messages. Encoding no longer holds up node
             // ticks, received messages or RPC operations behind the node mutex.

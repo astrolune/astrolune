@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
 
+pub mod admission;
 pub mod discovery;
 pub mod error;
 pub mod exchange;
@@ -16,13 +17,18 @@ pub mod provisioning;
 pub mod tls;
 pub mod transport;
 
+pub use admission::{
+    AdmissionConfig, AdmissionController, ClassLimit, ClassLimits, MessageClass, Offence,
+    RateLimit, Refusal, Tier, TokenBucket, source_address,
+};
 pub use error::NetworkError;
 pub use frame::{
     BoundedFrameDecoder, FRAME_HEADER_SIZE, Frame, FrameDecoder, FrameEncoder, MAX_FRAME_SIZE,
 };
 pub use message::{CompactBlock, MessageKind, Reconstruction};
 pub use transport::{
-    OwnedFrame, PeerConnection, PeerId, PeerManager, PeerMessage, TcpPeerListener, TransportError,
+    MAX_PEERS, OwnedFrame, PeerConnection, PeerId, PeerManager, PeerMessage, TcpPeerListener,
+    TransportError,
 };
 
 #[cfg(test)]

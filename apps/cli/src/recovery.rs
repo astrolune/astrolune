@@ -10,7 +10,7 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
-use storage::ChainStorage;
+use storage::{ChainStorage, NodeStorage, RetentionPolicy};
 
 fn error(value: impl std::fmt::Display) -> CliError {
     CliError::Config(value.to_string())
@@ -19,6 +19,9 @@ fn error(value: impl std::fmt::Display) -> CliError {
 pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
     if matches!(command, "export-retained" | "verify-retained") {
         return retained(command, args);
+    }
+    if matches!(command, "retention-status" | "retention-compact") {
+        return retention(command, args);
     }
     let expected = if command == "export-history" { 5 } else { 4 };
     if args.len() != expected {
@@ -170,4 +173,141 @@ fn retained(command: &str, args: &[OsString]) -> Result<(), CliError> {
     println!("verified_height: {}", head.height);
     println!("verified_block: {}", head.block);
     Ok(())
+}
+
+/// Reports or applies automated in-place retention for one local directory.
+///
+/// Both commands acquire the exclusive storage writer lock, so the validator must
+/// be stopped first. Reporting is read-only. Applying requires the independently
+/// trusted profile and public keys, authenticates the existing history before
+/// discarding anything, and reauthenticates the shortened directory afterwards.
+/// Neither command reads, copies or resets a signing journal or its anchor.
+fn retention(command: &str, args: &[OsString]) -> Result<(), CliError> {
+    let status = command == "retention-status";
+    if !(status && matches!(args.len(), 1 | 3) || !status && args.len() == 5) {
+        return Err(error("invalid retention arguments; run cli help"));
+    }
+    let directory = Path::new(&args[if status { 0 } else { 2 }]);
+    let path = directory.join("chain.bin");
+    if !std::fs::symlink_metadata(&path)
+        .map_err(error)?
+        .file_type()
+        .is_file()
+    {
+        return Err(error("existing regular chain.bin required"));
+    }
+    let mut storage = ChainStorage::open(&path).map_err(error)?;
+    if status {
+        return report(&storage, args.get(1..3));
+    }
+    let (genesis, keys) = anchors(Path::new(&args[0]), Path::new(&args[1]))?;
+    let network = genesis.network(keys)?;
+    let head = network.verify_storage(&storage).map_err(error)?;
+    if head.height < wallet::integer(&args[3])? {
+        return Err(error("history precedes the independent minimum height"));
+    }
+    let retain = wallet::integer(&args[4])?;
+    let floor = head
+        .height
+        .checked_sub(retain)
+        .filter(|floor| *floor > 0)
+        .ok_or_else(|| error("retention requires a positive anchor height"))?;
+    storage.prune(floor).map_err(error)?;
+    // The shortened directory must still authenticate from its recorded anchor.
+    if network.verify_storage(&storage).map_err(error)? != head {
+        return Err(error("compacted history failed reauthentication"));
+    }
+    report(&storage, None)
+}
+
+/// Prints the retained floor and retention state, and what a policy would do next.
+fn report(storage: &ChainStorage, policy: Option<&[OsString]>) -> Result<(), CliError> {
+    let state = storage.retention_state();
+    let head = storage.checkpoint().map_or(0, |cp| cp.height);
+    println!(
+        "backend: {}",
+        if storage.is_legacy_archive() {
+            "archive"
+        } else {
+            "append-only log"
+        }
+    );
+    println!("head_height: {head}");
+    println!("retained_floor: {}", height(state.retained_floor));
+    println!("retained_bodies: {}", storage.block_count());
+    println!("history_floor: {}", height(state.history_floor));
+    println!("self_compacted: {}", state.self_compacted);
+    println!("compactions: {}", state.compactions);
+    println!(
+        "policy: {}",
+        if state.policy.is_enabled() {
+            "bounded"
+        } else {
+            "disabled"
+        }
+    );
+    match state.last_error {
+        Some(error) => println!("last_retention_error: {error}"),
+        None => println!("last_retention_error: none"),
+    }
+    let Some(requested) = policy else {
+        return Ok(());
+    };
+    let retention = config::HistoryRetentionConfig {
+        enabled: true,
+        retained_blocks: wallet::integer(&requested[0])?,
+        interval_blocks: wallet::integer(&requested[1])?,
+        ..config::HistoryRetentionConfig::default()
+    };
+    retention
+        .validate()
+        .map_err(|e| error(format!("invalid retention policy: {e:?}")))?;
+    let requested = RetentionPolicy::bounded(
+        retention.retained_blocks,
+        retention.interval_blocks,
+        retention.max_compaction_bytes,
+    )
+    .map_err(error)?;
+    println!("requested_retained_blocks: {}", requested.retained_blocks());
+    println!("requested_interval_blocks: {}", requested.interval_blocks());
+    println!(
+        "requested_next_floor: {}",
+        height(requested.target_floor(state.retained_floor.unwrap_or(0), head))
+    );
+    Ok(())
+}
+
+fn height(value: Option<u64>) -> String {
+    value.map_or_else(|| "none".to_owned(), |height| height.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn configuration_and_storage_retention_bounds_state_the_same_numbers() {
+        assert_eq!(config::MIN_RETAINED_BLOCKS, storage::MIN_RETAINED_BLOCKS);
+        assert_eq!(config::MAX_RETAINED_BLOCKS, storage::MAX_RETAINED_BLOCKS);
+        assert_eq!(
+            config::DEFAULT_RETAINED_BLOCKS,
+            storage::DEFAULT_RETAINED_BLOCKS
+        );
+        assert_eq!(
+            config::MIN_RETENTION_INTERVAL_BLOCKS,
+            storage::MIN_COMPACTION_INTERVAL_BLOCKS
+        );
+        assert_eq!(
+            config::DEFAULT_RETENTION_INTERVAL_BLOCKS,
+            storage::DEFAULT_COMPACTION_INTERVAL_BLOCKS
+        );
+        assert_eq!(
+            config::MAX_RETENTION_INTERVAL_BLOCKS,
+            storage::MAX_COMPACTION_INTERVAL_BLOCKS
+        );
+        assert_eq!(config::MIN_COMPACTION_BYTES, storage::MIN_COMPACTION_BYTES);
+        assert_eq!(
+            config::DEFAULT_COMPACTION_BYTES,
+            storage::DEFAULT_COMPACTION_BYTES
+        );
+        assert_eq!(config::MAX_COMPACTION_BYTES, storage::MAX_COMPACTION_BYTES);
+    }
 }

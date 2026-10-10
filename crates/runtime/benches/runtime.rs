@@ -18,6 +18,12 @@
 //! and trap benchmarks measure a failing call, which is the point of measuring
 //! them, and their figures include the error path.
 //!
+//! The ahead-of-time group is repeatable in the same sense, with one named
+//! exception: `aot/cache/cold` builds a fresh engine and translates on every
+//! iteration deliberately, because that is the cost a call pays when no
+//! artifact is held. Every other ahead-of-time row runs against a warm cache or
+//! a prepared artifact and therefore repeats identical work.
+//!
 //! What this does NOT establish: block or contract throughput for any
 //! deployment, charged compute (which is a consensus quantity measured in fuel,
 //! not nanoseconds), the cost of a module produced by a real compiler rather
@@ -29,9 +35,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::{
-    ContractModule, DEMO_VERSION, DemoModuleValidator, EngineProfile, InterpreterBackend,
-    MAX_INPUT_SIZE, MAX_MODULE_SIZE, MAX_OUTPUT_SIZE, ModuleValidator, RuntimeBackend,
-    WASM_VERSION, WasmCall, WasmRuntime, wasm_code_hash,
+    ArtifactCache, ContractModule, DEMO_VERSION, DemoModuleValidator, EngineProfile,
+    InterpreterBackend, MAX_INPUT_SIZE, MAX_MODULE_SIZE, MAX_OUTPUT_SIZE, ModuleValidator,
+    RuntimeBackend, WASM_VERSION, WasmCall, WasmRuntime, wasm_code_hash,
 };
 use testkit::bench::Suite;
 use types::{Address, Resources};
@@ -223,11 +229,10 @@ fn bench_validation(suite: &mut Suite, runtime: &WasmRuntime) {
 /// Measures complete calls: compile, instantiate, interpret and charge.
 ///
 /// `WasmRuntime::execute_call` compiles the module again on every call, so the
-/// one-step figure is the floor a contract transaction pays before running any
-/// instruction of its own. The crate exposes no instantiate-only entry point,
-/// so instantiation cannot be isolated here; the difference between
-/// `execute_call/body_steps/1` and `validate/body_steps/1` is indicative of it
-/// and nothing stronger.
+/// one-step figure is the floor a call pays through that entry point before
+/// running any instruction of its own. `bench_ahead_of_time` measures the same
+/// work with translation hoisted out of the call, which isolates the
+/// instantiate-and-interpret remainder that this group cannot separate.
 fn bench_execution(suite: &mut Suite, runtime: &WasmRuntime) {
     let empty_state = BTreeMap::new();
     let no_access = BTreeSet::new();
@@ -298,6 +303,60 @@ fn bench_profiles(suite: &mut Suite) {
     }
 }
 
+/// Measures the ahead-of-time path against the recompile-per-call path.
+///
+/// Four figures are recorded per module size. `compile_artifact` is the
+/// translation a contract pays once, ahead of any call. `execute_artifact` is a
+/// call that translates nothing. `transaction/recompiled` is the pair of
+/// compiles a contract transaction used to perform, a validating pass followed
+/// by a recompiling call, which is what `execution::execute_contract` did
+/// before the cache existed. `transaction/cached` is the same transaction
+/// against a warm cache. The last two are the before-and-after figures; the
+/// first two say where the difference comes from.
+///
+/// `cache/cold` includes building an engine and translating, which is what a
+/// call pays after a generation is retired. None of these figures is a
+/// consensus quantity: charged compute is identical on every one of these
+/// paths, which `crates/runtime/tests/aot.rs` pins in fuel, not nanoseconds.
+fn bench_ahead_of_time(suite: &mut Suite, runtime: &WasmRuntime) {
+    let empty_state = BTreeMap::new();
+    let no_access = BTreeSet::new();
+
+    for steps in BODY_STEPS {
+        let code = adder(steps);
+        let contract = accepted(runtime, &code);
+        let artifact = runtime
+            .compile_artifact(&contract)
+            .expect("benchmark fixture module is accepted");
+        let cache = ArtifactCache::new();
+        cache
+            .prepare(&contract)
+            .expect("benchmark fixture module is accepted");
+
+        suite.bench(format!("aot/compile_artifact/body_steps/{steps}"), || {
+            runtime.compile_artifact(&contract)
+        });
+        suite.bench(format!("aot/execute_artifact/body_steps/{steps}"), || {
+            runtime.execute_artifact(&artifact, call(&[], &empty_state, &no_access, BUDGET))
+        });
+        suite.bench(
+            format!("aot/transaction/recompiled/body_steps/{steps}"),
+            || {
+                let module = runtime
+                    .validate(&code, WASM_VERSION)
+                    .expect("benchmark fixture module is accepted");
+                runtime.execute_call(&module, call(&[], &empty_state, &no_access, BUDGET))
+            },
+        );
+        suite.bench(format!("aot/transaction/cached/body_steps/{steps}"), || {
+            cache.execute(&contract, call(&[], &empty_state, &no_access, BUDGET))
+        });
+        suite.bench(format!("aot/cache/cold/body_steps/{steps}"), || {
+            ArtifactCache::new().execute(&contract, call(&[], &empty_state, &no_access, BUDGET))
+        });
+    }
+}
+
 /// Measures the retained ABI-v1 demonstration path.
 ///
 /// `DemoModuleValidator` performs size and version checks with a non-standard
@@ -328,6 +387,7 @@ fn main() {
     bench_engine(&mut suite);
     bench_validation(&mut suite, &runtime);
     bench_execution(&mut suite, &runtime);
+    bench_ahead_of_time(&mut suite, &runtime);
     bench_profiles(&mut suite);
     bench_demonstration(&mut suite);
     suite.report();

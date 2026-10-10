@@ -167,7 +167,7 @@ uncached/cached execution equivalence, failed-write retry, reserved resources,
 system-envelope tampering, profile downgrade rejection and disk records lacking
 quorum authority. The shared stable/libFuzzer oracle includes all four formats and
 seven additional structured seeds, for 78 total. These tests do not establish
-distributed liveness, independent cryptographic review or production readiness.
+distributed liveness or independent cryptographic review.
 
 [Eight frozen binary fixtures](../tests/integration/fixtures/potb-v1/README.md)
 cover configuration, initial state and two complete handoffs with evidence and

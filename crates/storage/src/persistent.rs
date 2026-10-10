@@ -133,6 +133,19 @@ impl FileBackedStorage {
         self.inner.block_count()
     }
 
+    /// Height of the oldest retained checkpoint; absence means an empty archive.
+    /// This backend rewrites its whole archive and records no local anchor.
+    #[must_use]
+    pub fn retained_floor(&self) -> Option<u64> {
+        self.inner.retained_floor()
+    }
+
+    /// Lowest height whose exact state this archive still retains.
+    #[must_use]
+    pub fn history_floor(&self) -> Option<u64> {
+        self.inner.history_floor()
+    }
+
     /// Returns a retained block body.
     #[must_use]
     pub fn get_block(&self, hash: &Hash256) -> Option<&Block> {

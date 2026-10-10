@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 //! Durable signing, recovery, namespace isolation, and process locking regressions.
+//!
+//! Every test here that opens a lock-holding handle takes
+//! `testkit::fork_lock` in shared mode, and the tests that spawn a child
+//! process take it exclusively. On Unix a spawn forks first, so the child
+//! holds duplicates of this process's lock descriptors until it execs; an
+//! unguarded drop-and-re-open in a sibling thread then observes a lock that
+//! should already have been released. That module documents the mechanism and
+//! the reason the guard is not a retry inside the production open path.
 
 use keystore::{
     ChainSigner, DurableSigner, KeyPurpose, KeystoreError, MAX_JOURNAL_BYTES, Signer,
@@ -51,6 +59,7 @@ fn position(height: u64, round: u32, phase: u8) -> SigningPosition {
 
 #[test]
 fn restart_preserves_idempotency_conflicts_and_monotonic_watermark() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut signer = DurableSigner::create(fixture.path(), context(), [1; 32]).unwrap();
     let handle = signer.key_handle();
@@ -111,6 +120,7 @@ fn restart_preserves_idempotency_conflicts_and_monotonic_watermark() {
 
 #[test]
 fn namespaces_handles_phases_and_missing_journals_fail_without_rewriting() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     assert_eq!(
         DurableSigner::open(fixture.path(), context(), [1; 32]).unwrap_err(),
@@ -186,6 +196,7 @@ fn namespaces_handles_phases_and_missing_journals_fail_without_rewriting() {
 
 #[test]
 fn corrupt_incomplete_and_oversized_files_are_never_repaired_implicitly() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut signer = DurableSigner::create(fixture.path(), context(), [1; 32]).unwrap();
     signer
@@ -237,6 +248,7 @@ fn corrupt_incomplete_and_oversized_files_are_never_repaired_implicitly() {
 
 #[test]
 fn independent_handles_and_processes_cannot_share_an_active_journal() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let fixture = Fixture::new();
     let signer = DurableSigner::create(fixture.path(), context(), [1; 32]).unwrap();
     assert_eq!(
@@ -266,6 +278,7 @@ fn independent_handles_and_processes_cannot_share_an_active_journal() {
 
 #[test]
 fn decision_survives_process_exit_without_destructors() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let fixture = Fixture::new();
     drop(DurableSigner::create(fixture.path(), context(), [1; 32]).unwrap());
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -314,6 +327,8 @@ fn journal_child() {
 #[test]
 fn protected_journal_preserves_lock_and_rejects_mode_or_safety_downgrades() {
     use keystore::{SigningLock, SigningSafety};
+
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut signer = DurableSigner::create_protected(fixture.path(), context(), [1; 32]).unwrap();
     let handle = signer.key_handle();
@@ -406,6 +421,7 @@ fn protected_journal_preserves_lock_and_rejects_mode_or_safety_downgrades() {
 #[cfg(unix)]
 #[test]
 fn symbolic_journal_alias_is_rejected() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     drop(DurableSigner::create(fixture.path(), context(), [1; 32]).unwrap());
     let alias = fixture.0.join("alias.bin");
@@ -418,6 +434,7 @@ fn symbolic_journal_alias_is_rejected() {
 
 #[test]
 fn vrf_proofs_are_non_exporting_namespaced_and_do_not_consume_a_vote_position() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let signer = DurableSigner::create_protected(fixture.path(), context(), [1; 32]).unwrap();
     let input = crypto::VrfInput {

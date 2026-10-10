@@ -357,7 +357,8 @@ fn incompatible_retention_or_import_is_explicit_and_non_destructive() {
         log.import_snapshot(cp, &mut chunks),
         Err(StorageError::Unsupported)
     );
-    assert_eq!(log.prune(1), Err(StorageError::Unsupported));
+    assert_eq!(log.prune(1), Err(StorageError::InvalidOrder));
+    assert_eq!(log.prune(0), Ok(()));
     assert_eq!(fs::read(fixture.path()).unwrap(), before);
     let imported = Fixture::new();
     let mut other = AppendOnlyStorage::open(imported.path()).unwrap();

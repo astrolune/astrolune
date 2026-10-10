@@ -3,10 +3,16 @@
 
 //! Authenticated ABI-v2 contract transitions. All effects are private until commit.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 use codec::CanonicalEncode;
-use runtime::{ModuleValidator, RuntimeError, WASM_VERSION, WasmCall, WasmRuntime};
+use runtime::{
+    ArtifactCache, ContractModule, ModuleValidator, RuntimeError, WASM_VERSION, WasmCall,
+    wasm_code_hash,
+};
 use state::{
     AccessMode, AccessRequest, StateDiff, StateLease, StateSnapshot, account_key, read_account,
 };
@@ -89,6 +95,28 @@ struct Effects {
     result_bytes: Vec<u8>,
 }
 
+/// The process-wide ahead-of-time artifact cache every contract transaction
+/// shares.
+///
+/// Ownership is deliberate. A contract transaction has no object that outlives
+/// it: `execute_action` is reached from `SimpleExecutor`, from `SignedSession`
+/// and from a worker-pool chunk, and each of those is created per block, per
+/// execution attempt or per wave and dropped before the next one. A cache held
+/// by any of them would be cold on every transaction and would buy nothing, and
+/// a cache held by one of them would be invisible to the others. The cache is
+/// therefore anchored to the process, which is the only scope that outlives
+/// every caller, and it is bounded so that doing so cannot grow without limit.
+///
+/// Sharing it is safe because it is not consensus state. An artifact is keyed
+/// by code hash, runtime version, engine configuration and target, a hit and a
+/// miss produce identical output, and `crates/runtime/tests/aot.rs` pins both
+/// properties. A node that has never seen a contract therefore computes the
+/// same result as one that has executed it a thousand times.
+fn artifacts() -> &'static ArtifactCache {
+    static CACHE: OnceLock<ArtifactCache> = OnceLock::new();
+    CACHE.get_or_init(ArtifactCache::new)
+}
+
 fn execute_action(
     snapshot: &dyn StateSnapshot,
     tx: &Transaction,
@@ -104,7 +132,7 @@ fn execute_action(
     if !tx.access_list.contains(&code_key) {
         return Err(ExecutionError::UndeclaredStateAccess);
     }
-    let runtime = WasmRuntime::new();
+    let runtime = artifacts();
     let mut diff = StateDiff::new();
     let mut actual = vec![
         AccessRequest {
@@ -123,6 +151,9 @@ fn execute_action(
             if snapshot.get(&code_key)?.is_some() {
                 return Err(ExecutionError::InvalidContract);
             }
+            // Deployment compiles once and retains the artifact, so the first
+            // call to this contract is already a cache hit. The acceptance
+            // decision is unchanged; retaining the result is a side effect.
             runtime
                 .validate(code, WASM_VERSION)
                 .map_err(runtime_error)?;
@@ -151,11 +182,19 @@ fn execute_action(
             overhead.compute += loaded as u64;
             let limits = subtract(tx.resource_limit, overhead)?;
             let access = keys.iter().cloned().collect::<BTreeSet<_>>();
-            let module = runtime
-                .validate(&code, WASM_VERSION)
-                .map_err(runtime_error)?;
+            // One compile at most, and none at all once the cache holds this
+            // contract. The identity is built here rather than by a separate
+            // validating pass, so the module's acceptance is decided exactly
+            // once: `ArtifactCache::execute` checks the version and the hash,
+            // compiles or reuses, and only then checks the call's own bounds,
+            // which is the order a validate-then-execute pair produced.
+            let module = ContractModule {
+                code_hash: wasm_code_hash(&code),
+                version: WASM_VERSION,
+                code,
+            };
             let result = runtime
-                .execute_call(
+                .execute(
                     &module,
                     WasmCall {
                         input,
@@ -167,25 +206,9 @@ fn execute_action(
                     },
                 )
                 .map_err(runtime_error)?;
-            for (key, value) in result.writes {
-                let global = contract_state_key(address, &key);
-                match value {
-                    Some(value) => diff.put(global.clone(), value),
-                    None => diff.delete(global.clone()),
-                }
-                actual.push(AccessRequest {
-                    key: global,
-                    mode: AccessMode::Write,
-                });
-            }
-            codec::encode_bytes(&result.return_data, &mut result_bytes);
-            codec::encode_length(result.events.len(), &mut result_bytes);
-            for (topic, data) in result.events {
-                result_bytes.extend_from_slice(&topic);
-                codec::encode_bytes(&data, &mut result_bytes);
-            }
+            let charged = stage_result(address, result, &mut diff, &mut actual, &mut result_bytes);
             overhead
-                .checked_add(result.resources)
+                .checked_add(charged)
                 .ok_or(ExecutionError::ResourceLimit)?
         }
     };
@@ -195,6 +218,37 @@ fn execute_action(
         resources,
         result_bytes,
     })
+}
+
+/// Stages one call's writes and encodes its return data and events.
+///
+/// Returns the resources the call itself was charged, which the caller adds to
+/// the transaction's own overhead.
+fn stage_result(
+    address: types::Address,
+    result: runtime::WasmOutput,
+    diff: &mut StateDiff,
+    actual: &mut Vec<AccessRequest>,
+    result_bytes: &mut Vec<u8>,
+) -> Resources {
+    for (key, value) in result.writes {
+        let global = contract_state_key(address, &key);
+        match value {
+            Some(value) => diff.put(global.clone(), value),
+            None => diff.delete(global.clone()),
+        }
+        actual.push(AccessRequest {
+            key: global,
+            mode: AccessMode::Write,
+        });
+    }
+    codec::encode_bytes(&result.return_data, result_bytes);
+    codec::encode_length(result.events.len(), result_bytes);
+    for (topic, data) in result.events {
+        result_bytes.extend_from_slice(&topic);
+        codec::encode_bytes(&data, result_bytes);
+    }
+    result.resources
 }
 
 type ContractState = BTreeMap<Vec<u8>, Vec<u8>>;

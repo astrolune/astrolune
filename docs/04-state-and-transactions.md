@@ -18,7 +18,7 @@ The decoder limits access lists to 1,048,576 entries, each state key to 256 byte
 
 The versioned envelope changes transaction bytes and commitments; unversioned transactions are not accepted. Alternate length encodings and receipt flags are rejected. Golden vectors, exhaustive prefix and flag checks, transaction mutation checks, and truncation tests are in `crates/codec`; fuzz targets for transactions, state keys, and receipts assert that every accepted input re-encodes to identical bytes.
 
-The current cryptographic suite, signing bytes, transaction IDs, and `SignedValidator` behavior are specified in [cryptographic foundations](09-cryptographic-foundations.md). The demonstration validator remains separate from cryptographic admission.
+The current cryptographic suite, signing bytes, transaction IDs, and `SignedValidator` behavior are specified in [cryptographic foundations](09-cryptographic-foundations.md). The separate `BasicValidator` demonstration path performs no cryptographic admission.
 
 ## 4.2 Adaptive Execution Leasing
 
@@ -80,6 +80,6 @@ Database implementations must make lifetimes explicit. Compaction cannot invalid
 
 ## 4.10 Efficient state database
 
-The state database must support immutable snapshots, content or version integrity, batched reads, write batches, sequential commit, crash recovery, checksums, pruning policy, and snapshot export/import. A concrete production engine is not selected. The implemented reference backends now provide bounded Merkle state, membership and absence proofs, verified snapshots, and atomic publication; see [state and recovery](10-state-and-recovery.md) for exact formats, failure behavior, compatibility, and remaining work.
+The state database must support immutable snapshots, content or version integrity, batched reads, write batches, sequential commit, crash recovery, checksums, pruning policy, and snapshot export/import. The implemented backends provide bounded Merkle state, membership and absence proofs, verified snapshots, and atomic publication; see [state and recovery](10-state-and-recovery.md) for exact formats, failure behavior, compatibility, and remaining work. No third-party storage engine is used: `state` and `storage` are built directly on standard-library file I/O and locks, so their bounds are the documented reference bounds rather than an external engine's.
 
 State sharding is deferred. If required later, it begins as internal partitions under one execution domain and one state commitment. Cross-shard asynchronous semantics are not introduced by storage layout alone.

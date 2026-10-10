@@ -37,16 +37,19 @@ Consensus fixes transaction order. Execution produces receipts and state diffs. 
 
 ## Status vocabulary
 
-- **Planned:** documented target without a Rust interface.
-- **Interface baseline:** compileable types and traits without operational implementation.
+Every area carries one grade from this ladder, recording how far that area has been
+carried:
+
+- **Planned:** specified in the engineering documents, with no Rust interface yet.
+- **Interface baseline:** compileable types and traits fix the boundary before behavior lands.
 - **Implemented:** concrete behavior exists.
 - **Tested:** positive and negative behavior is automated.
-- **Benchmarked:** reproducible measurements exist.
-- **Audited:** an independent review has been completed and findings addressed.
-- **Production-ready:** release gates, operations, and supported-version policy are complete.
+- **Benchmarked:** reproducible measurements exist for a stated machine and revision.
+- **Audited:** an independent external review has completed and its findings are addressed.
+- **Production-ready:** release gates, operations, and a supported-version policy are complete.
 
 The repository implements a certified reference network, deterministic execution,
 durable storage and ecosystem services. Its daemon integrates
 [compact propagation and bounded execution-stage overlap](docs/54-compact-blocks-and-execution-pipeline.md).
-The [implementation status](docs/08-implementation-status.md) distinguishes tested
-reference behavior from unresolved production and external qualification gates.
+The [implementation status](docs/08-implementation-status.md) carries the current
+grade for every area and the release gates that remain.

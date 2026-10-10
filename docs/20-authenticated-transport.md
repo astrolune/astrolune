@@ -38,7 +38,7 @@ The command creates a new directory with `peer-1` through `peer-4`. Give each op
 
 The temporary issuing key is never saved by this command. Adding peers, renewing certificates, or replacing a compromised identity therefore requires a new bundle and a coordinated trust-root replacement, or an externally managed CA issuing compatible identities. Automated renewal, revocation lists, live reload, and overlapping trust-root rotation are not implemented. Restart is required to load replacement files. Changing transport keys does not reset consensus signing state.
 
-For explicit local transport debugging only, `--allow-plaintext` can replace `--tls-dir`. These options are mutually exclusive. Both the listener and all configured peers must use loopback IP addresses; accepted sockets are also checked. Plaintext is never enabled because TLS setup or authentication failed. The separate demonstration daemon mode retains its existing behavior and is not a certified network.
+For explicit local transport debugging only, `--allow-plaintext` can replace `--tls-dir`. These options are mutually exclusive. Both the listener and all configured peers must use loopback IP addresses; accepted sockets are also checked. Plaintext is never enabled because TLS setup or authentication failed. The separate local demonstration mode keeps its own behavior and is not a certified network.
 
 ## Bounds and integration
 

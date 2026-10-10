@@ -189,9 +189,140 @@ Neither failure is platform-specific in cause: the state-proof race was observed
 Windows release first and Linux debug second, and the socket-mode defect is dormant
 on Linux only because `accept` there does not inherit the flag.
 
-Two hosted runs with failures are not cross-platform qualification. The causes are
-fixed, but a clean run across all four legs has not been observed yet, so that
-roadmap item stays open. Linux reproducibility is still unobserved because the
-release-build jobs did not reach their archive step in the first run, and
-independent-machine reproducibility needs a second machine rather than a
-second run on the same hosted image.
+Two hosted runs with failures are not cross-platform qualification. This run does
+establish Linux reproducibility: the `ubuntu-latest` release-build job passed in
+full, and that job runs the two-build byte comparison, the smoke checks, the
+archive and the qualification report in one sequence, so a pass means the two
+fresh Linux builds produced equal hashes for all four executables. An earlier
+statement here that Linux reproducibility remained unobserved described the first
+run, where the release-build jobs failed before their archive step, and was left
+standing after the second run contradicted it. What the second run does not
+establish is a clean four-leg suite, which the two debug failures denied, or
+reproducibility across two machines, which one run cannot supply at all.
+
+## Clean four-leg run
+
+The repository owner reports that the `CI` workflow is now green on every job on
+GitHub-hosted runners, including all four `tests` legs, after the two root-caused
+debug failures above were fixed. The evidence that makes that an observation
+rather than a report is the run's own artifacts, and the exact figures are
+recorded here as soon as they are supplied.
+
+**To be supplied, and invented by nothing in this repository**: the GitHub Actions
+run identifier `<run-id>`, its UTC date `<date>`, and the per-leg counts the four
+`suite-<os>-<profile>` artifacts of that run record. For any run that includes the
+comparison job described below, all of those figures already sit in one
+`astrolune.suite-qualification/1` verdict in that run's `suite-qualification`
+artifact — the four legs' `passed`, `failed`, `ignored`, `measured`,
+`filtered_out` and `suites`, their shared `rustc` identity, the `dev` and
+`release` count drift, and the advisory platform and profile differences — so the
+figures are read from one machine-written document rather than retyped from four
+job logs. A run that predates that job has the four leg artifacts but no verdict,
+and its figures must be read from them directly.
+
+Until `<run-id>` and `<date>` replace those placeholders, this section records a
+report and not an observation, and the cross-platform suite qualification roadmap
+item stays open on that basis alone. A clean four-leg run, once recorded, still
+establishes only that the pinned toolchain's workspace suite passes on two
+GitHub-hosted runner images in two profiles on one revision. It is not an
+independent audit, not a result on any platform outside that matrix, not a
+statement about any revision but that one, and not evidence about hardware,
+timing or load that a shared hosted runner cannot control.
+
+## Four-leg suite comparison
+
+`.github/scripts/suite-report.py` records each leg, and
+`.github/scripts/compare-suites.py` decides whether the four together qualify the
+revision. The CI job `Four-leg suite qualification` downloads every `suite-*`
+artifact of the run and invokes it, and `CI required checks` requires that job,
+so the verdict is a branch gate rather than a figure a reader has to total by
+hand.
+
+```text
+python -B .github/scripts/compare-suites.py --artifact-root target/suite-legs --output target/suite-legs/SUITE-QUALIFICATION.json
+python -B .github/scripts/compare-suites.py suite-ubuntu-latest-dev/SUITE.json suite-ubuntu-latest-release/SUITE.json suite-windows-latest-dev/SUITE.json suite-windows-latest-release/SUITE.json
+```
+
+The expected leg set is the four pairs of `ubuntu-latest`/`windows-latest` and
+`dev`/`release`, written into the script rather than read from the files it is
+given, because a set derived from the input can never notice that one of its
+members never arrived. A comparison that cannot name every expected leg exactly
+once is an error and emits no verdict at all: an absent leg, a leg supplied
+twice, and a leg the matrix never declares are each refused by name. Every leg
+must additionally carry the `rustc -Vv` host triple its own platform implies,
+so a result dropped into the wrong artifact directory cannot be counted as the
+leg its directory name claims.
+
+A suite result carries no digest over its own fields, so the comparer re-derives
+what it can: a leg whose `outcome` does not follow from its own `failed` count
+and `exit_status`, or that counts failures it does not name, has been edited and
+is refused rather than counted. Qualification then requires every leg's
+`outcome` to be `ok`, its `exit_status` to be zero, its `failed` count to be
+zero and its `failed_tests` to be empty, and requires all four legs to report
+one `rustc` version, since all four install the same pinned toolchain and a
+second compiler identity means one leg qualified something else.
+
+Cross-leg count differences are split by whether the matrix explains them. The
+two legs of one profile run the same commands over the same workspace, so their
+`passed` and `suites` counts may differ only by platform-gated tests; the bound
+is 5% of the larger leg, and a larger gap, or a leg reporting zero, is a
+refusal. Differences the matrix does cause are advisory and reported rather than
+refused: `host` differs by platform by construction, and the release legs run a
+fifth `cargo test` invocation that filters `cargo-contract` down to its four
+ignored tests, so `ignored`, `measured` and `filtered_out` legitimately move with
+the profile. This mirrors the `host` and `rustc` advisory split in
+`compare-qualification.py`.
+
+The verdict is `astrolune.suite-qualification/1`, written with sorted keys and an
+LF terminator, and it records the per-leg counts, the totals, the drift each
+profile allowed and observed, the advisory differences, and every refusal in
+sorted order rather than only the first. It establishes nothing about a revision:
+a suite result carries no commit hash, so the verdict binds four legs of one run,
+not four legs of one revision, and the run itself is what names the revision.
+It is not a coverage measurement, not a timing measurement — the leg records
+deliberately exclude timings so two runs of one revision on one platform stay
+byte-identical — and not evidence that the tests are adequate.
+
+## Independent-run reproducibility comparison
+
+`.github/scripts/compare-qualification.py` was committed and unit-tested but
+reachable from no workflow, so the `qualification-<target>` artifact's 90-day
+retention held evidence nothing ever read. The CI job
+`Independent-run reproducibility (<target>)` now closes that: it downloads this
+run's `QUALIFICATION.json`, asks the Actions API for the most recent other
+successful `CI` run of the same `head_sha`, downloads that run's retained report
+for the same target, and compares the two. `CI required checks` requires the job,
+so a disagreement blocks rather than sits in an artifact.
+
+What the comparator requires is that the two reports name one target, carry
+digests their own fields reproduce, agree on every field in `COMPARABLE`, and
+come from distinct `machine` identities. `ci.yml` sets `ASTROLUNE_MACHINE` to
+`${{ runner.name }}#${{ github.run_id }}.${{ github.run_attempt }}`, and the run
+identifier differs between any two runs, so two runs of one revision satisfy the
+distinctness requirement by construction. That is worth stating plainly rather
+than presenting as a stronger result than it is. On GitHub-hosted runners each
+job receives a freshly provisioned ephemeral virtual machine, so two runs are in
+practice two machines; `runner.name` is a pool label such as `GitHub Actions 2`
+and is not a hardware identity, so the check cannot tell a second machine from a
+second run on the same one. Two hosted runners of one image are therefore two
+machines in exactly the sense the comparator checks: stronger than one run,
+because the build ran twice on separately provisioned hosts with independently
+populated caches, and weaker than two independently administered hosts, because
+both are the same image, the same operating-system patch level, the same
+filesystem layout and the same administrator. Byte identity across two
+differently administered machines, across two base images, or across any host
+outside GitHub's hosted pool is **not** established, and the
+`independent_builds` count inside one report remains two builds on one machine.
+
+The comparison is opportunistic by design. A revision whose CI has run once has
+no second report, and a revision whose earlier run is older than the 90-day
+retention has no retained artifact; the job reports either case in its log and
+exits zero, because evidence that is unavailable is not evidence of agreement.
+Pull-request runs are excluded from the candidates, and the two reports' own
+`revision` fields are compared before the comparator is invoked, because on a
+pull-request run `GITHUB_SHA` is a merge commit that moves with the base branch:
+two correct builds of one head commit under two different merge commits would
+otherwise be reported as a reproducibility failure. A reader therefore cannot
+infer from a green job that two machines were compared, only that no two
+available reports disagreed. The job performs no signing, holds no key, and
+publishes nothing.

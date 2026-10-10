@@ -12,9 +12,15 @@ use types::Resources;
 pub enum BackendKind {
     /// Portable reference semantics.
     Interpreter,
-    /// Reserved ahead-of-time class; no qualified implementation is provided.
+    /// Translation completed before any call budget exists, then reused.
+    ///
+    /// Reported by [`crate::AotBackend`] only, and asserted never to be
+    /// reported by an interpreter profile. It states when translation happened
+    /// and nothing about native code generation; no backend in this workspace
+    /// emits native machine code.
     Aot,
-    /// Reserved just-in-time class; no qualified implementation is provided.
+    /// Reserved just-in-time class; no implementation is provided, and none is
+    /// possible while `unsafe_code` is forbidden workspace-wide.
     Jit,
 }
 

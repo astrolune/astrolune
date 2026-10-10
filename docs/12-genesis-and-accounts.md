@@ -22,7 +22,7 @@ cargo run -p daemon -- --genesis genesis.bin --data-dir node-data --blocks 3
 cargo run -p daemon -- --genesis genesis.bin --data-dir node-data --blocks 0
 ```
 
-The daemon reads bounded binary genesis input before creating data files or listeners. `--dry-run` validates input without writing data or opening listeners. Chain ID and initial block capacity come from genesis. The demonstration committee uses the first `committee_size` validators in canonical order with their full `u128` weights; this is not a PoTB sampler and does not implement rotation or authenticated finality.
+The daemon reads bounded binary genesis input before creating data files or listeners. `--dry-run` validates input without writing data or opening listeners. Chain ID and initial block capacity come from genesis. In local demonstration mode the committee is the first `committee_size` validators in canonical order with their full `u128` weights; it is not a PoTB sampler and implements neither rotation nor authenticated finality. The certified profiles in documents [19](19-reference-network.md), [40](40-live-vrf-network.md) and [45](45-live-potb-network.md) do.
 
 `FullNodeService::open_with_genesis` atomically installs the materialized state in an empty archive. It stores a trusted height-zero anchor whose identifier is the genesis commitment and whose state root is the materialized root. This anchor has no block body or finality certificate. The first produced block is height one, with the genesis commitment as its parent. `--blocks N` counts additional produced blocks, excluding the genesis anchor; `--blocks 0` initializes or recovers it without listeners.
 
@@ -70,7 +70,7 @@ These namespaces define the reference initial layout. Enforcement of system-key 
 
 ## Compatibility and verification
 
-Valid version-1 genesis bytes remain unchanged. Previously accepted invalid configurations and unknown versions are now rejected by decoding and hashing. The materialized state layout is new; it is not retroactively installed in existing demonstration archives.
+Valid version-1 genesis bytes remain unchanged. Previously accepted invalid configurations and unknown versions are now rejected by decoding and hashing. The materialized state layout is newer than those rules; it is not retroactively installed in archives created before it existed.
 
 Tests cover every truncation, hostile counts, aggregate-weight overflow, configuration validation, byte-mutation round trips, maximum-size materialization, independent byte/hash/root vectors, membership and absence proofs, immutable snapshots, corrupt accounts, file recovery, signed admission using recovered accounts, and CLI success/failure behavior. Activation tests cover daemon restarts, unchanged balances, exact archive equivalence with uninterrupted production, genesis/configuration mismatches, legacy-chain rejection, dry runs, and retry after failed publication. Quorum arithmetic is tested up to `u128::MAX`. The standalone codec fuzz package includes `decode_genesis`; long fuzz campaigns remain outstanding.
 

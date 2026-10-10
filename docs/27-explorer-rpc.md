@@ -50,8 +50,9 @@ Balances use integer units; a decimal token scale is not assumed.
 The daemon authenticates finalized history when operating in certified network
 mode. This RPC does not deliver a complete independent light-client proof and
 does not identify the node's operating mode. A web UI must describe results as
-the contacted node's reported finalized state. The node may instead be in local
-demonstration mode; operators must select a certified endpoint when required.
+the contacted node's reported finalized state. The node may instead be running
+local demonstration mode, so operators must select a certified endpoint when
+authenticated history is required.
 
 No timestamp, market price, transaction-per-second claim, address activity index,
 transaction-hash index, contract runtime or live rotating validator registry is

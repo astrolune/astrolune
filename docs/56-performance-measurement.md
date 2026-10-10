@@ -8,10 +8,9 @@ records integer nanosecond statistics for one operation on one machine. The
 harness has no assertions and no timing threshold anywhere, so no measured
 figure can fail CI, and a benchmark can never substitute for a test.
 
-Until this harness existed the workspace had no benchmarks at all, and several
-documents said so explicitly. Those statements are now narrowed rather than
-deleted: a harness and micro-benchmarks exist, while distributed and end-to-end
-throughput remain unmeasured.
+The harness and its per-crate micro-benchmarks measure single operations on a
+single host. Distributed and end-to-end throughput remain unmeasured, and no
+figure here is comparable across machines.
 
 ## Why no benchmarking framework
 
@@ -356,7 +355,7 @@ proofs show. VRF batch framing is not a byte copy either: encode and decode both
 cost about 12.7 us per contribution because the proof point is parsed in both
 directions.
 
-## Relation to the preliminary benchmark suite
+## Relation to the required benchmark suite
 
 [Section 7.6](07-validator-requirements.md) lists what must be measured before a
 public testnet. This harness addresses part of that list on one local machine
