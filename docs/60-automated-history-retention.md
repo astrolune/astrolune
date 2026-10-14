@@ -199,6 +199,54 @@ requested policy and prints `requested_retained_blocks`,
 `requested_interval_blocks` and `requested_next_floor` without writing anything.
 `retention-compact` prints the same report for the compacted directory.
 
+## Daemon activation
+
+Three daemon flags install the policy on a running node, so retention no longer
+requires a library caller or an offline command.
+
+```text
+daemon --run --retain-blocks N [--retention-interval N] [--retention-bytes N] ...
+```
+
+`--retain-blocks` is what enables retention; naming it alone takes the documented
+defaults for the other two. `--retention-interval` and `--retention-bytes` shape
+a policy that flag has already turned on and are refused on their own, because
+shaping a disabled policy would silently keep every block. Every bound is checked
+by `NodeConfig::validate_with_retention` before a directory is opened or a
+listener bound, so an impossible policy fails in argument parsing rather than at
+the first commit.
+
+All three require `--validators`. The demonstration path authenticates nothing
+and its finality is simulated, so there is no history there that the continuity
+argument below could authorize shortening; the flag is refused rather than
+accepted and ignored. Both roles accept it: `NetworkNode::set_retention_policy`
+and `ObserverNode::set_retention_policy` are installed through the one daemon
+role seam, and an observer qualifies for the same reason a validator does — it
+authenticated and published every block it holds against its own trusted genesis.
+
+Two combinations are refused, both before the first commit rather than at a later
+one. A rotating genesis-v2 profile that is not PoTB is refused because the storage
+log that installs a policy cannot see the network profile: it would accept the
+policy and compact, and only the *next* startup would find that
+`StaticNetwork::local_retention` refuses a self-compacted rotating directory for
+want of a committee history frontier that only an external pin carries. That is a
+node that shortens its history and then cannot start, so the daemon refuses the
+pair instead. `--checkpoint` is refused alongside `--retain-blocks` because pinned
+recovery takes precedence over a directory's own anchor, so a node given both would
+keep verifying a descriptor whose height its own compaction can move the floor
+past; externally pinned recovery and self-compaction stay separate paths, and that
+interaction is not qualified here.
+
+The policy is installed after certified recovery and before the first block of
+the run is produced or imported, so that block already evaluates it, and a
+directory that cannot retain in place says so at startup: the bounded legacy
+archive refuses automated retention. An enabled policy prints one `retention :`
+line naming the suffix, interval and byte budget.
+
+A policy is runtime configuration and is never written to disk. A restart without
+the flags retains every subsequent block, and what the directory carries across
+that restart is the durable compaction record, not the policy that caused it.
+
 ## Limits
 
 On 2026-10-10, on Windows 11 with Rust 1.99.0, `cargo test --locked -p storage -p
@@ -211,10 +259,22 @@ rather than qualifying power loss.
 Automated retention is disabled by default and must be enabled explicitly.
 `crates/config` exposes `HistoryRetentionConfig` as a standalone validated type
 rather than a `NodeConfig` field, because `NodeConfig` is built from exhaustive
-struct literals in `apps/daemon` and `tests/integration`; a daemon flag that
-installs the policy through `NetworkNode::set_retention_policy` is not wired up,
-so today the policy is installed by a library caller or applied once by
-`retention-compact`.
+struct literals in `apps/daemon` and `tests/integration`. The daemon flags above
+install it; `retention-compact` still applies one compaction offline, and a
+library caller can still install a policy directly.
+
+Daemon activation is covered by two integration tests.
+`configured_retention_compacts_a_running_daemon_and_still_recovers_locally` runs a
+three-validator quorum with the smallest retained suffix and the smallest interval,
+and checks the durable record, the floor and local recovery without a pin.
+`rotating_profiles_refuse_automated_retention_before_shortening_anything` checks
+that a rotating genesis-v2 directory refuses the flag while the same directory and
+arguments recover without it, and that PoTB accepts the identical flag. Together
+they establish that the flags reach storage, that one shortening recovers, and that
+the one profile whose recovery needs an external pin cannot shorten itself by
+accident. They do not establish a retention schedule under load, the observer role,
+which is reasoned from the shared daemon role seam rather than exercised, or any
+figure about compaction cost.
 
 The retained suffix is at most 64 blocks, because the anchor state comes from the
 bounded reverse state index; a large state transition can evict the intended floor

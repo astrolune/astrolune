@@ -335,6 +335,7 @@ dependencies = [
  "state",
  "storage",
  "telemetry",
+ "testkit",
  "transaction",
  "types",
  "zeroize",

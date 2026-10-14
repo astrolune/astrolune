@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeSet, ffi::OsString, net::SocketAddr, path::PathBuf};
 
-use config::{NetworkConfig, NodeConfig};
+use config::{HistoryRetentionConfig, NetworkConfig, NodeConfig};
 
 use crate::DaemonError;
 
@@ -33,6 +33,9 @@ Options:
   --discover-in CIDR  Discover TLS peers inside this private IPv4 subnet only
   --metrics-listen ADDR  Optional loopback Prometheus HTTP endpoint
   --round-timeout-ms N  Initial BFT step deadline (100..60000; default 1000)
+  --retain-blocks N  Enable automated in-place history retention (8..64 blocks)
+  --retention-interval N  Excess blocks before one compaction (1..65536; default 16)
+  --retention-bytes N  Byte budget for one compaction (16MiB..8GiB; default 512MiB)
   --p2p-listen ADDR  Peer socket address (default: 127.0.0.1:17330)
   --rpc-listen ADDR  RPC socket address (default: 127.0.0.1:17331)
   --help             Show this message
@@ -66,16 +69,17 @@ pub(crate) struct Options {
     pub peers: Vec<SocketAddr>,
     pub compact_blocks: bool,
     pub round_timeout_ms: u64,
+    pub retention: HistoryRetentionConfig,
     pub discovery: Option<p2p::discovery::DiscoveryScope>,
     pub metrics_listen: Option<SocketAddr>,
 }
 
-pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, DaemonError> {
-    let mut args = args.into_iter().peekable();
-    if args.peek().is_none() {
-        return Ok(Command::Help);
-    }
-    let mut options = Options {
+/// Every option before any argument is read.
+///
+/// Kept out of [`parse`] so that adding a switch extends one exhaustive literal
+/// rather than the argument loop, and so a reader sees all defaults at once.
+fn defaults() -> Options {
+    Options {
         config: NodeConfig {
             chain_id: 7,
             data_dir: PathBuf::from("node-data"),
@@ -100,9 +104,20 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
         peers: Vec::new(),
         compact_blocks: false,
         round_timeout_ms: 1000,
+        // Automated retention stays disabled until a retained suffix is named,
+        // so an unconfigured node keeps every finalized block it published.
+        retention: HistoryRetentionConfig::default(),
         discovery: None,
         metrics_listen: None,
-    };
+    }
+}
+
+pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, DaemonError> {
+    let mut args = args.into_iter().peekable();
+    if args.peek().is_none() {
+        return Ok(Command::Help);
+    }
+    let mut options = defaults();
     let mut seen = BTreeSet::new();
     while let Some(arg) = args.next() {
         let flag = arg.to_str().ok_or_else(|| invalid("non-UTF-8 option"))?;
@@ -125,10 +140,24 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             "--observer" => options.observer = true,
             "--compact-blocks" => options.compact_blocks = true,
             "--run" => {}
-            "--blocks" | "--data-dir" | "--genesis" | "--p2p-listen" | "--rpc-listen"
-            | "--validators" | "--validator-key" | "--tls-dir" | "--peers"
-            | "--round-timeout-ms" | "--discover-in" | "--metrics-listen" | "--checkpoint"
-            | "--checkpoint-id" | "--signing-anchor" => {
+            "--blocks"
+            | "--data-dir"
+            | "--genesis"
+            | "--p2p-listen"
+            | "--rpc-listen"
+            | "--validators"
+            | "--validator-key"
+            | "--tls-dir"
+            | "--peers"
+            | "--round-timeout-ms"
+            | "--discover-in"
+            | "--metrics-listen"
+            | "--checkpoint"
+            | "--checkpoint-id"
+            | "--signing-anchor"
+            | "--retain-blocks"
+            | "--retention-interval"
+            | "--retention-bytes" => {
                 let value = args
                     .next()
                     .ok_or_else(|| invalid(&format!("missing value for {flag}")))?;
@@ -163,7 +192,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
     validate_network(&options, &seen)?;
     options
         .config
-        .validate()
+        .validate_with_retention(&options.retention)
         .map_err(|error| invalid(&format!("{error:?}")))?;
     Ok(Command::Run(Box::new(options)))
 }
@@ -179,6 +208,25 @@ fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), Da
     if options.signing_anchor.is_some() && options.validator_key.is_none() {
         return Err(invalid(
             "--signing-anchor requires --validator-key and its existing journal",
+        ));
+    }
+    if options.retention.enabled && options.checkpoint.is_some() {
+        // Pinned recovery takes precedence over a directory's own anchor, so a
+        // node given both would keep verifying a descriptor whose height its own
+        // compaction can move the floor past. The interaction is not qualified,
+        // so it is refused rather than left to fail on a later restart.
+        return Err(invalid(
+            "--retain-blocks cannot be combined with --checkpoint; externally pinned \
+             recovery and self-compaction are separate retention paths",
+        ));
+    }
+    if !options.retention.enabled
+        && (seen.contains("--retention-interval") || seen.contains("--retention-bytes"))
+    {
+        // Shaping a disabled policy silently retains everything, so the
+        // combination is refused rather than accepted and ignored.
+        return Err(invalid(
+            "--retention-interval and --retention-bytes require --retain-blocks",
         ));
     }
     if options
@@ -243,13 +291,17 @@ fn validate_network(options: &Options, seen: &BTreeSet<String>) -> Result<(), Da
         || options.discovery.is_some()
         || options.metrics_listen.is_some()
         || options.observer
+        || options.retention.enabled
         || options.tls_dir.is_some()
         || options.allow_plaintext
         || !options.peers.is_empty()
         || seen.contains("--round-timeout-ms")
     {
+        // Retention shortens history this process itself authenticated against
+        // trusted genesis. The demonstration path authenticates nothing, so the
+        // flag is refused there rather than accepted and silently ignored.
         return Err(invalid(
-            "observer mode, validator keys, TLS, peers, and BFT deadlines require --validators",
+            "observer mode, validator keys, TLS, peers, retention, and BFT deadlines require --validators",
         ));
     }
     Ok(())
@@ -299,6 +351,23 @@ fn parse_value(options: &mut Options, flag: &str, value: &str) -> Result<(), Dae
                 .parse()
                 .map_err(|_| invalid("--blocks is out of range"))?,
         );
+    } else if let "--retain-blocks" | "--retention-interval" | "--retention-bytes" = flag {
+        if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(invalid(&format!("{flag} requires an unsigned integer")));
+        }
+        let count: u64 = value
+            .parse()
+            .map_err(|_| invalid(&format!("{flag} is out of range")))?;
+        match flag {
+            // Naming a retained suffix is what enables retention; the other two
+            // only shape a policy that this flag has already turned on.
+            "--retain-blocks" => {
+                options.retention.enabled = true;
+                options.retention.retained_blocks = count;
+            }
+            "--retention-interval" => options.retention.interval_blocks = count,
+            _ => options.retention.max_compaction_bytes = count,
+        }
     } else {
         let address: SocketAddr = value
             .parse()
@@ -342,6 +411,115 @@ mod tests {
         ] {
             assert!(parse(args.iter().map(OsString::from)).is_err(), "{args:?}");
         }
+    }
+
+    #[test]
+    fn retention_stays_disabled_until_a_retained_suffix_is_named() {
+        let Command::Run(options) = parse(["--blocks", "0"].map(OsString::from)).unwrap() else {
+            panic!("expected run")
+        };
+        assert!(
+            !options.retention.enabled,
+            "automated retention must be opt-in"
+        );
+        // A disabled policy still carries the documented numbers, so a later
+        // enable does not have to restate them.
+        assert_eq!(
+            options.retention.retained_blocks,
+            config::DEFAULT_RETAINED_BLOCKS
+        );
+    }
+
+    #[test]
+    fn a_named_retained_suffix_enables_retention_and_keeps_the_other_defaults() {
+        let Command::Run(options) = parse(
+            [
+                "--blocks",
+                "0",
+                "--validators",
+                "keys",
+                "--genesis",
+                "genesis",
+                "--validator-key",
+                "seed",
+                "--allow-plaintext",
+                "--retain-blocks",
+                "16",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap() else {
+            panic!("expected run")
+        };
+        assert!(options.retention.enabled);
+        assert_eq!(options.retention.retained_blocks, 16);
+        assert_eq!(
+            options.retention.interval_blocks,
+            config::DEFAULT_RETENTION_INTERVAL_BLOCKS
+        );
+        assert_eq!(
+            options.retention.max_compaction_bytes,
+            config::DEFAULT_COMPACTION_BYTES
+        );
+    }
+
+    #[test]
+    fn every_retention_bound_is_checked_before_a_directory_is_opened() {
+        // The certified-network context is supplied so each case below is
+        // refused by the rule it names and not by the `--validators` rule.
+        let certified = [
+            "--blocks",
+            "0",
+            "--validators",
+            "keys",
+            "--genesis",
+            "genesis",
+            "--validator-key",
+            "seed",
+            "--allow-plaintext",
+        ];
+        for args in [
+            // Below MIN_RETAINED_BLOCKS and above MAX_RETAINED_BLOCKS.
+            vec!["--retain-blocks", "7"],
+            vec!["--retain-blocks", "65"],
+            // Zero interval, and above MAX_RETENTION_INTERVAL_BLOCKS.
+            vec!["--retain-blocks", "16", "--retention-interval", "0"],
+            vec!["--retain-blocks", "16", "--retention-interval", "65537"],
+            // Below the 16 MiB floor and above the 8 GiB ceiling.
+            vec!["--retain-blocks", "16", "--retention-bytes", "16777215"],
+            vec!["--retain-blocks", "16", "--retention-bytes", "8589934593"],
+            // Shaping a policy that was never enabled configures nothing.
+            vec!["--retention-interval", "16"],
+            vec!["--retention-bytes", "536870912"],
+            // Externally pinned recovery and self-compaction are separate paths.
+            vec![
+                "--retain-blocks",
+                "16",
+                "--checkpoint",
+                "point.bin",
+                "--checkpoint-id",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ],
+            // The same strict integer rules the other counted flags use.
+            vec!["--retain-blocks"],
+            vec!["--retain-blocks", "-1"],
+            vec!["--retain-blocks", "+16"],
+            vec!["--retain-blocks", "sixteen"],
+            vec!["--retain-blocks", "16", "--retain-blocks", "32"],
+        ] {
+            let mut full = certified.to_vec();
+            full.extend_from_slice(&args);
+            assert!(
+                parse(full.iter().map(OsString::from)).is_err(),
+                "{full:?} must be refused"
+            );
+        }
+        // A valid policy on the demonstration path is refused too: that path
+        // authenticates nothing, so there is no history retention may shorten.
+        assert!(
+            parse(["--blocks", "0", "--retain-blocks", "16"].map(OsString::from)).is_err(),
+            "retention without --validators must be refused"
+        );
     }
 
     #[test]

@@ -45,9 +45,14 @@ ancestry, current quorum, execution roots and current resource parameters.
 The snapshot has the state engine's 64 MiB bound. Each retained log record has
 the existing 72 MiB bound, with at most 64 exported bodies. The descriptor has a
 fixed maximum independent of chain age. A running node continues appending new
-blocks: retention is an explicit offline operation, not an automatic background
-deletion policy. The old directory remains available for rollback inspection or
-archival operation; retire it only after validating and switching to the export.
+blocks: the export described here is an explicit offline operation that writes a
+new directory and is never a background deletion policy. A node that should shorten
+its own history as it runs uses the separate automatic policy in
+[automated history retention](60-automated-history-retention.md), which compacts in
+place, authenticates the shortening by continuity rather than by an external pin,
+and is what the `--retain-blocks` daemon flag installs. The old directory remains
+available for rollback inspection or archival operation; retire it only after
+validating and switching to the export.
 
 Validator recovery uses the same pinned execution verification. Production
 signing journals must retain their protected watermark and exclusive ownership;

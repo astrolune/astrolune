@@ -7,6 +7,7 @@
 
 pub mod bench;
 pub mod fork_lock;
+pub mod port;
 
 use types::{Address, Hash256, Resources, Transaction, ValidatorId};
 

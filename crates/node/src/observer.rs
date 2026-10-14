@@ -126,6 +126,24 @@ impl ObserverNode {
         crate::compact_wire::TransactionDictionary::new(self.chain.producer.pending_transactions())
     }
 
+    /// Installs the automated retention policy evaluated after every commit.
+    /// The default disabled policy retains every finalized block. The bounded
+    /// legacy archive refuses automated retention.
+    ///
+    /// An observer authenticated and published every block it holds against its
+    /// own trusted genesis, exactly as a validator did, so the same continuity
+    /// argument authorizes the same in-place shortening. It carries no signing
+    /// journal, which retention never reads either way.
+    pub fn set_retention_policy(
+        &mut self,
+        policy: storage::RetentionPolicy,
+    ) -> Result<(), NetworkNodeError> {
+        self.chain
+            .storage
+            .set_retention_policy(policy)
+            .map_err(local)
+    }
+
     /// Enables a single bounded execution worker with sequential publication.
     pub fn enable_execution_pipeline(&mut self) -> Result<(), NetworkNodeError> {
         if self.background.is_none() {

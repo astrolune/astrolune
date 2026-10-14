@@ -32,6 +32,7 @@ types = { version = "0.1.0", path = "../../crates/types" }
 p2p = { version = "0.1.0", path = "../../crates/p2p", features = ["provisioning"] }
 execution = { version = "0.1.0", path = "../../crates/execution" }
 transaction = { version = "0.1.0", path = "../../crates/transaction" }
+testkit = { version = "0.1.0", path = "../../crates/testkit" }
 
 [lints]
 workspace = true

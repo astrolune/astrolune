@@ -200,13 +200,66 @@ standing after the second run contradicted it. What the second run does not
 establish is a clean four-leg suite, which the two debug failures denied, or
 reproducibility across two machines, which one run cannot supply at all.
 
+## Third hosted run, 38094212762, 2026-10-10
+
+The third run reduced the matrix to one failure, in one leg, in one test, and it
+was a third distinct cause rather than a recurrence of either above. Formatting,
+strict Clippy on both platforms, documentation, the fuzz compile-check, both
+release builds, both benchmark legs and workflow validation passed.
+`ubuntu-latest` release passed with 1 319 tests, `windows-latest` debug with 1 314
+and `windows-latest` release with 1 318. The whole run emitted no compiler, Clippy
+or rustdoc diagnostic. Both reproducibility legs also reported success, and both
+established nothing: no other successful run of the revision existed, so each took
+the early exit the comparison step documents and uploaded no verdict. That is the
+designed outcome rather than agreement, and `CI required checks` cannot tell the
+two apart.
+
+`ubuntu-latest` debug failed
+`governance_rpc_persists_only_valid_current_quorum_and_survives_restart`, whose
+daemon exited with `Address already in use (os error 98)` before printing its RPC
+address, leaving the test's `recv_timeout` to report `Disconnected`. The cause was
+in the test fixture, not the product: the test chose a peer address by binding
+port zero, reading the port, dropping the listener and passing the number to the
+daemon it then spawned. Dropping the listener returns the port to the kernel's
+automatic range while the test is still the only thing naming it, so any process
+on the runner that bound port zero or opened a connection in the window before the
+child bound could be handed the same port. The daemon failed closed, correctly.
+
+Twelve sites in `apps/daemon/tests/network.rs` chose addresses that way, across
+`--p2p-listen` and `--metrics-listen`. All twelve now reserve through
+`testkit::port`, which walks a window below every automatic range, claims each
+candidate with an operating-system lock on a file named for the port, probes it
+once, and holds the claim for the whole test instead of releasing it before the
+spawn. The module documents what that still does not exclude.
+
+One failing leg cost far more than one test. `cargo test` stops at the first
+failing binary, so the Linux debug leg ran 46 of its 140 test binaries and
+reported 416 passed where the other debug leg reported 1 314. The comparison job
+therefore refused on three findings, not one: the single named failure, and two
+cross-leg count drifts — 898 in `passed` and 94 in `suites`, both far above the 5%
+the matrix allows. Those two are the truncation's shadow and have no separate
+cause; the verdict naming all three in sorted order is what made that legible.
+
+The run also showed a dated fuse unrelated to any leg's result. All thirteen Rust
+jobs installed the pinned toolchain with `rustup show`, which auto-installs and
+warns that `auto-installation is deprecated for most rustup commands`. Every job
+would have failed at its second step on the day rustup removes it. The step now
+runs `rustup toolchain install`, which installs the toolchain `rust-toolchain.toml`
+selects without relying on the deprecated path.
+
+What this run does not establish: a clean four-leg suite, which the one failure
+denied; that the port race is closed, since a reservation narrows a window it
+cannot prove empty and only a run can show the test passing; or anything about two
+machines, which one run cannot supply.
+
 ## Clean four-leg run
 
-The repository owner reports that the `CI` workflow is now green on every job on
-GitHub-hosted runners, including all four `tests` legs, after the two root-caused
-debug failures above were fixed. The evidence that makes that an observation
-rather than a report is the run's own artifacts, and the exact figures are
-recorded here as soon as they are supplied.
+An earlier revision of this section recorded a repository-owner report that the
+`CI` workflow was green on every job, including all four `tests` legs, after the
+two root-caused debug failures were fixed. Run 38094212762 above contradicts that
+report on the revision it describes, which is exactly why the section required a
+run identifier before it counted as an observation. The report is withdrawn and
+the placeholders stand.
 
 **To be supplied, and invented by nothing in this repository**: the GitHub Actions
 run identifier `<run-id>`, its UTC date `<date>`, and the per-leg counts the four

@@ -126,10 +126,15 @@ thresholds early enough for the deployment's maintenance lead time. No universal
 disk threshold is established here; each deployment derives its own from its
 measured growth rate.
 
-New network directories use append-only history; automatic retention is not
-implemented. Existing archive formats keep their documented caps. Do not remove
-individual history files as a space-management procedure. Planned manual export
-and retained-history operations follow
+New network directories use append-only history. Automatic in-place retention is
+implemented but disabled by default: a node compacts its own finalized history
+only when launched with `--retain-blocks`, and
+[automated history retention](60-automated-history-retention.md) states the policy,
+the bounds, what the durable anchor does and does not authenticate, and the
+widening it accepts. Existing archive formats keep their documented caps and
+refuse automated retention. Do not remove individual history files as a
+space-management procedure. Planned manual export and externally pinned
+retained-history operations follow
 [pinned history retention](49-pinned-history-retention.md), including its stop and
 destination requirements.
 

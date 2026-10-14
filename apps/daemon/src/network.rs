@@ -62,6 +62,7 @@ pub(crate) fn run(options: &Options) -> Result<(), DaemonError> {
         }
     );
     println!("next_height: {}", node.request().height);
+    install_retention(options, &network, &mut node)?;
     if options.max_blocks == Some(0) {
         println!("Certified history and node-role recovery complete.");
         return Ok(());
@@ -121,6 +122,52 @@ pub(crate) fn run(options: &Options) -> Result<(), DaemonError> {
         let _ = worker.join();
     }
     result
+}
+
+/// Installs the configured automated retention policy, or leaves history whole.
+///
+/// The policy is installed after recovery and before any block is produced or
+/// imported, so the first commit of this run is already evaluated against it.
+///
+/// Two refusals happen here rather than later, because neither is visible to the
+/// layer that would otherwise hit it. The bounded legacy archive cannot retain in
+/// place and says so through storage. A rotating genesis-v2 profile that is not
+/// `PoTB` must be refused by this function specifically: `set_retention_policy`
+/// reaches a storage log that knows nothing about the network profile, so it would
+/// accept the policy and compact, and only the *next* startup would discover that
+/// `StaticNetwork::local_retention` refuses a self-compacted rotating directory
+/// for want of a committee history frontier that only an external pin carries.
+/// That is a node that shortens its history and then cannot recover from it, so
+/// the combination is refused before the first commit instead.
+fn install_retention(
+    options: &Options,
+    network: &StaticNetwork,
+    node: &mut PeerNode,
+) -> Result<(), DaemonError> {
+    if !options.retention.enabled {
+        return Ok(());
+    }
+    if network.rotating() && !network.potb() {
+        return Err(DaemonError::Config(
+            "automated retention needs a fixed-committee or PoTB profile; rotating \
+             genesis-v2 recovery requires an independently pinned committee frontier"
+                .into(),
+        ));
+    }
+    let policy = storage::RetentionPolicy::bounded(
+        options.retention.retained_blocks,
+        options.retention.interval_blocks,
+        options.retention.max_compaction_bytes,
+    )
+    .map_err(|error| DaemonError::Config(format!("invalid retention policy: {error:?}")))?;
+    node.set_retention_policy(policy).map_err(io_error)?;
+    println!(
+        "retention : {} blocks retained, one compaction per {} excess, {} MiB budget",
+        policy.retained_blocks(),
+        policy.interval_blocks(),
+        policy.max_compaction_bytes() / (1024 * 1024)
+    );
+    Ok(())
 }
 
 fn print_identity(options: &Options, network: &StaticNetwork, transport: &PeerTransport) {

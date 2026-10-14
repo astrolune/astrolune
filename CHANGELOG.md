@@ -6,7 +6,43 @@ All notable changes to AstroLune will be documented in this file. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- Install the automated history retention policy from the daemon. `--retain-blocks`
+  enables in-place retention and `--retention-interval`/`--retention-bytes` shape
+  it; every bound is checked before a directory is opened, the two shaping flags
+  are refused without the enabling one, and all three are refused without
+  `--validators` because the demonstration path authenticates no history to
+  shorten. `ObserverNode::set_retention_policy` joins the validator twin so both
+  roles install it through one seam, and the policy is installed after certified
+  recovery so the run's first commit already evaluates it. Two combinations are
+  refused before anything is shortened: a rotating genesis-v2 profile, whose
+  self-compacted directory only an externally pinned committee frontier can
+  recover, and `--checkpoint`, because pinned recovery takes precedence over a
+  directory's own anchor and that interaction is not qualified. Two integration
+  tests cover it — a three-validator quorum whose durable compaction record, floor
+  and pin-free recovery are checked, and the rotating refusal alongside PoTB
+  acceptance of the identical flag.
+
+- Reserve test ports through `testkit::port` instead of binding port zero and
+  releasing it before the child process binds. Candidates come from a window below
+  every operating-system automatic range, each is claimed with a file lock held for
+  the whole test and probed once before use.
+
 ### Fixed
+
+- Stop releasing a chosen peer port before the daemon that must bind it has
+  started. Twelve sites in the daemon network tests bound port zero only to learn
+  a port number, dropped the listener and passed the number to a spawned child, so
+  any process on the machine could be handed that port in between. One hosted run
+  lost a leg to it with `Address already in use`, and because `cargo test` stops at
+  the first failing binary that leg also reported a cross-leg count drift with no
+  separate cause.
+
+- Install the pinned toolchain in CI with `rustup toolchain install` rather than
+  relying on `rustup show` auto-installing it. All thirteen Rust jobs took the
+  deprecated path and were warned it is going away, so every one of them would
+  have failed at its second step once rustup removes it.
 
 - Clear the inherited non-blocking mode on accepted sockets, which Windows copies
   from a non-blocking listener and read/write timeouts do not reset. The daemon

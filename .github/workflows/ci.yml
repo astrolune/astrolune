@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - run: cargo fmt --all --check
 
   clippy:
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.profile }}
@@ -139,7 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
       - run: cargo doc --locked --workspace --all-features --no-deps
 
@@ -158,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.target }}
@@ -284,7 +284,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: crates/codec/fuzz
@@ -308,7 +308,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
-        run: rustup show
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: bench

@@ -10,7 +10,7 @@ use keystore::{DurableSigner, SigningContext};
 use rpc::json::{JsonValue, parse_json};
 use std::{
     io::{BufRead, BufReader},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
@@ -202,14 +202,11 @@ impl Fixture {
 #[test]
 fn observer_rpc_payment_gossip_and_restart_use_tls_without_any_consensus_seed() {
     let fixture = Fixture::new();
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
-    drop(reservations[4].take());
     let observer = fixture.start(5, &peers);
     let tx = payment();
     let submitted = call(
@@ -220,10 +217,8 @@ fn observer_rpc_payment_gossip_and_restart_use_tls_without_any_consensus_seed() 
     assert!(submitted.get("error").is_none(), "{submitted:?}");
     let mut validators = Vec::new();
     for index in 1..=3 {
-        drop(reservations[index - 1].take());
         validators.push(fixture.start(index, &peers));
     }
-    drop(reservations[3].take());
     await_payment(&[&observer, &validators[0], &validators[1], &validators[2]]);
     verify_account_proof(&fixture, &observer);
     drop(observer);
@@ -392,19 +387,15 @@ fn await_finalized_height(client: &rpc::TcpRpcClient, height: u64) {
 #[test]
 fn tls_quorum_payment_restart_and_late_join() {
     let fixture = Fixture::new();
-    let mut reservations: Vec<_> = (0..4)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..4).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
     let mut processes = Vec::new();
     for index in 1..=3 {
-        drop(reservations[index - 1].take());
         processes.push(fixture.start(index, &peers));
     }
-    drop(reservations[3].take());
     let tx = payment();
     let submitted = call(
         &processes[0].1,
@@ -567,14 +558,11 @@ fn corrupt_first_finalized(path: &std::path::Path) {
 #[test]
 fn corrupted_history_read_stops_observer_process() {
     let fixture = Fixture::new();
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|r| r.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
-    drop(reservations[4].take());
     let mut observer = fixture.start(5, &peers);
     let tx = payment();
     let result = call(
@@ -585,7 +573,6 @@ fn corrupted_history_read_stops_observer_process() {
     assert!(result.get("error").is_none());
     let mut validators = Vec::new();
     for index in 1..=3 {
-        drop(reservations[index - 1].take());
         validators.push(fixture.start(index, &peers));
     }
     await_payment(&[&observer]);
@@ -617,14 +604,11 @@ fn corrupted_history_read_stops_observer_process() {
 #[test]
 fn corrupted_history_read_over_rpc_stops_observer_process() {
     let fixture = Fixture::new();
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|r| r.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
-    drop(reservations[4].take());
     let mut observer = fixture.start(5, &peers);
     let tx = payment();
     let result = call(
@@ -635,7 +619,6 @@ fn corrupted_history_read_over_rpc_stops_observer_process() {
     assert!(result.get("error").is_none());
     let mut validators = Vec::new();
     for index in 1..=3 {
-        drop(reservations[index - 1].take());
         validators.push(fixture.start(index, &peers));
     }
     await_payment(&[&observer]);
@@ -744,19 +727,15 @@ fn metric(address: &str, name: &str) -> u64 {
 #[test]
 fn scoped_tls_discovery_builds_a_mesh_reuses_sessions_and_survives_bootstrap_loss() {
     let fixture = Fixture::new();
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|value| value.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
-    let mut metric_ports: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let metric_ports: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let metrics: Vec<_> = metric_ports
         .iter()
-        .map(|value| value.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
     let extra = |index: usize| {
         [
@@ -766,13 +745,9 @@ fn scoped_tls_discovery_builds_a_mesh_reuses_sessions_and_survives_bootstrap_los
             metrics[index - 1].as_str(),
         ]
     };
-    drop(reservations[4].take());
-    drop(metric_ports[4].take());
     let bootstrap = fixture.start_with(5, &peers, &[], &extra(5));
     let mut validators = Vec::new();
     for index in 1..=4 {
-        drop(reservations[index - 1].take());
-        drop(metric_ports[index - 1].take());
         validators.push(fixture.start_with(index, &peers, &[peers[4].clone()], &extra(index)));
     }
     let tx = payment();
@@ -834,16 +809,13 @@ fn scoped_tls_discovery_builds_a_mesh_reuses_sessions_and_survives_bootstrap_los
 #[test]
 fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     let fixture = Fixture::with_profile(2, 3);
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
     let mut processes = Vec::new();
     for index in 1..=4 {
-        drop(reservations[index - 1].take());
         processes.push(fixture.start(index, &peers));
     }
     let tx = payment();
@@ -890,7 +862,6 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
             .verify(&fixture.genesis, &fixture.keys, &key, 0)
             .is_err()
     );
-    drop(reservations[4].take());
     let observer = fixture.start(5, &peers);
     await_payment(&[&observer]);
     drop(observer);
@@ -931,16 +902,13 @@ fn tls_rotating_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
 fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
     let fixture = Fixture::with_activation(2, 3, true);
     let profile = potb_profile(&fixture.genesis);
-    let mut reservations: Vec<_> = (0..5)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
     let mut processes = Vec::new();
     for index in 1..=4 {
-        drop(reservations[index - 1].take());
         processes.push(fixture.start(index, &peers));
     }
     let tx = payment();
@@ -984,7 +952,6 @@ fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
             .verify(&fixture.genesis, &fixture.keys, &key, 0)
             .is_err()
     );
-    drop(reservations[4].take());
     let observer = fixture.start(5, &peers);
     await_payment(&[&observer]);
     drop(observer);
@@ -1027,14 +994,11 @@ fn tls_potb_profile_serves_verifiable_handoffs_and_recovers_all_roles() {
 #[test]
 fn unreached_heights_are_unavailable_rather_than_absent_retained_history() {
     let fixture = Fixture::new();
-    let reservations: Vec<_> = (0..5)
-        .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
-        .collect();
+    let reservations: Vec<_> = (0..5).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
-    drop(reservations);
     // Without configured peers this observer cannot leave its genesis anchor.
     let observer = fixture.start_with(5, &peers, &[], &[]);
     let client =
@@ -1074,9 +1038,8 @@ fn potb_profile(genesis: &Genesis) -> consensus::potb_transition::PotbConfigurat
 fn potb_rpc_authenticates_and_persists_pending_admission_without_claiming_finality() {
     let fixture = Fixture::with_activation(2, 3, true);
     let profile = potb_profile(&fixture.genesis);
-    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
-    let peers = vec![reserved.local_addr().unwrap().to_string()];
-    drop(reserved);
+    let reserved = testkit::port::reserve();
+    let peers = vec![reserved.address().to_string()];
     let process = fixture.start(1, &peers);
     let client =
         rpc::TcpRpcClient::new(process.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
@@ -1122,9 +1085,8 @@ fn potb_rpc_authenticates_and_persists_pending_admission_without_claiming_finali
 fn governance_rpc_persists_only_valid_current_quorum_and_survives_restart() {
     let fixture = Fixture::with_governance(2, 3, true, true);
     let profile = potb_support::governed(potb_profile(&fixture.genesis));
-    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
-    let peers = vec![reserved.local_addr().unwrap().to_string()];
-    drop(reserved);
+    let reserved = testkit::port::reserve();
+    let peers = vec![reserved.address().to_string()];
     let process = fixture.start(1, &peers);
     let client =
         rpc::TcpRpcClient::new(process.1.parse().unwrap(), Duration::from_secs(5)).unwrap();
@@ -1167,16 +1129,13 @@ fn governance_rpc_persists_only_valid_current_quorum_and_survives_restart() {
 fn daemon_retained_recovery_requires_both_descriptor_and_independent_pin() {
     let fixture = Fixture::with_governance(2, 3, true, true);
     let profile = potb_support::governed(potb_profile(&fixture.genesis));
-    let mut reservations: Vec<_> = (0..4)
-        .map(|_| Some(TcpListener::bind("127.0.0.1:0").unwrap()))
-        .collect();
+    let reservations: Vec<_> = (0..4).map(|_| testkit::port::reserve()).collect();
     let peers: Vec<_> = reservations
         .iter()
-        .map(|listener| listener.as_ref().unwrap().local_addr().unwrap().to_string())
+        .map(|reservation| reservation.address().to_string())
         .collect();
     let mut processes = Vec::new();
     for index in 1..=4 {
-        drop(reservations[index - 1].take());
         processes.push(fixture.start(index, &peers));
     }
     let client =
@@ -1232,4 +1191,154 @@ fn daemon_retained_recovery_requires_both_descriptor_and_independent_pin() {
     altered[40] ^= 1;
     std::fs::write(destination.join("checkpoint.bin"), altered).unwrap();
     assert!(!run(Some(point.id().to_string())).status.success());
+}
+
+/// Automated retention was reachable only from a library caller or the offline
+/// `retention-compact` command: `NetworkNode::set_retention_policy` had no
+/// caller in the workspace, so a running daemon could never shorten its own
+/// history however it was configured. This covers the flag that installs it,
+/// that a commit actually evaluates it, and that the shortened directory still
+/// recovers from its own durable anchor without an externally supplied pin.
+#[test]
+fn configured_retention_compacts_a_running_daemon_and_still_recovers_locally() {
+    let fixture = Fixture::new();
+    let reservations: Vec<_> = (0..4).map(|_| testkit::port::reserve()).collect();
+    let peers: Vec<_> = reservations
+        .iter()
+        .map(|reservation| reservation.address().to_string())
+        .collect();
+    // The smallest retained suffix and the smallest interval, so one short run
+    // crosses the floor instead of waiting for the documented defaults.
+    let retention = ["--retain-blocks", "8", "--retention-interval", "1"];
+    let mut processes = Vec::new();
+    for index in 1..=3 {
+        let seeds: Vec<_> = peers
+            .iter()
+            .enumerate()
+            .filter(|(seat, _)| *seat != index - 1)
+            .map(|(_, value)| value.clone())
+            .collect();
+        processes.push(fixture.start_with(index, &peers, &seeds, &retention));
+    }
+    assert!(
+        processes[0].0.stderr.is_none(),
+        "the daemon inherits stderr, so a refused policy would surface there"
+    );
+    let client =
+        rpc::TcpRpcClient::new(processes[0].1.parse().unwrap(), Duration::from_secs(5)).unwrap();
+    // Retention evaluates after a commit, so the floor can only move once the
+    // retained suffix plus one interval of excess has been published.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while client.chain_status().unwrap().finalized_height < 12 {
+        assert!(
+            Instant::now() < deadline,
+            "the quorum did not reach height 12"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(processes);
+    let directory = fixture.path.join("1/chain.bin");
+    let storage = storage::ChainStorage::open(&directory).unwrap();
+    // The head is read from the stopped directory, not from the RPC answer
+    // above: the quorum kept publishing until the processes died, so a height
+    // sampled before that would understate the floor the last commit chose.
+    let height = storage.checkpoint().map_or(0, |point| point.height);
+    let state = storage.retention_state();
+    assert!(height >= 12, "the stopped directory holds only height {height}");
+    // A policy is runtime configuration and is never persisted, so this reopened
+    // handle reports the default disabled one. What the directory does carry is
+    // the durable record of the compactions that policy caused, and only an
+    // installed policy can produce one.
+    assert_eq!(state.policy, storage::RetentionPolicy::disabled());
+    assert!(
+        state.compactions > 0,
+        "no commit evaluated a policy, so the flag never reached storage"
+    );
+    assert!(
+        state.self_compacted,
+        "no durable retention record was written"
+    );
+    let floor = state.retained_floor.expect("a compacted log has a floor");
+    assert!(floor > 0, "the retained floor never left genesis");
+    assert!(
+        floor <= height - 8,
+        "retained floor {floor} keeps more than the configured suffix of {height}"
+    );
+    assert!(state.last_error.is_none(), "{:?}", state.last_error);
+    // Continuity, not an external pin, is what authenticates this shortening:
+    // the same directory must still recover with no --checkpoint at all.
+    let recovery = Command::new(env!("CARGO_BIN_EXE_daemon"))
+        .args(["--blocks", "0"])
+        .arg("--validator-key")
+        .arg(fixture.path.join("1/validator.seed"))
+        .arg("--genesis")
+        .arg(fixture.path.join("genesis.bin"))
+        .arg("--validators")
+        .arg(fixture.path.join("validators.bin"))
+        .arg("--tls-dir")
+        .arg(fixture.path.join("1/tls"))
+        .arg("--data-dir")
+        .arg(fixture.path.join("1"))
+        .output()
+        .unwrap();
+    assert!(
+        recovery.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovery.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&recovery.stdout)
+            .contains("Certified history and node-role recovery complete.")
+    );
+}
+
+/// A rotating genesis-v2 directory that compacted itself could not be recovered:
+/// `StaticNetwork::local_retention` refuses a self-compacted rotating profile for
+/// want of a committee history frontier that only an external pin carries, and
+/// the storage log that installs a policy cannot see the profile at all. The
+/// daemon therefore has to refuse the combination before the first commit, or a
+/// node would shorten its history and then fail to start.
+#[test]
+fn rotating_profiles_refuse_automated_retention_before_shortening_anything() {
+    let rotating = Fixture::with_profile(2, 3);
+    let potb = Fixture::with_activation(2, 3, true);
+    let recover = |fixture: &Fixture, retain: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_daemon"));
+        command
+            .args(["--blocks", "0"])
+            .arg("--validator-key")
+            .arg(fixture.path.join("1/validator.seed"))
+            .arg("--genesis")
+            .arg(fixture.path.join("genesis.bin"))
+            .arg("--validators")
+            .arg(fixture.path.join("validators.bin"))
+            .arg("--tls-dir")
+            .arg(fixture.path.join("1/tls"))
+            .arg("--data-dir")
+            .arg(fixture.path.join("1"));
+        if retain {
+            command.args(["--retain-blocks", "8"]);
+        }
+        command.output().unwrap()
+    };
+    // The same directory and arguments recover without the flag, so the refusal
+    // is the policy and not the profile, the keys or the genesis.
+    assert!(recover(&rotating, false).status.success());
+    let refused = recover(&rotating, true);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("independently pinned committee frontier"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    // PoTB carries its history, policy and weights in the state snapshot, so it
+    // qualifies and the identical flag is accepted.
+    let accepted = recover(&potb, true);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert!(String::from_utf8_lossy(&accepted.stdout).contains("retention : 8 blocks retained"));
 }

@@ -121,6 +121,16 @@ impl PeerNode {
         }
     }
 
+    pub(super) fn set_retention_policy(
+        &mut self,
+        policy: storage::RetentionPolicy,
+    ) -> Result<(), NetworkNodeError> {
+        match self {
+            Self::Validator(node) => node.set_retention_policy(policy),
+            Self::Observer(node) => node.set_retention_policy(policy),
+        }
+    }
+
     pub(super) fn can_receive(&self) -> bool {
         match self {
             Self::Validator(node) => node.can_receive(),
