@@ -70,6 +70,8 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Ahead-of-time contract backend](58-ahead-of-time-contract-backend.md)
 - [Unbounded consensus safety and liveness argument](59-unbounded-consensus-argument.md)
 - [Automated history retention](60-automated-history-retention.md)
+- [Network architecture research and benchmark baseline (non-normative)](61-network-architecture-research.md)
+- [VeyraFold and LuneSeal research proposals (non-normative)](62-original-architecture-proposals.md)
 
 Legacy-shaped filenames such as `03-vm-and-gas.md`, `05-contract-languages.md`, and `06-deferred-services.md` are retained temporarily to preserve links. Their contents describe the current Rust architecture.
 
