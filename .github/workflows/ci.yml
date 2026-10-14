@@ -107,7 +107,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.7"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: suite-*
           path: target/suite-legs
@@ -223,7 +223,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14.7"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: qualification-${{ matrix.target }}
           path: target/qualification/this-run
