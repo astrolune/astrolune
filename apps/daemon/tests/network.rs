@@ -1244,7 +1244,10 @@ fn configured_retention_compacts_a_running_daemon_and_still_recovers_locally() {
     // sampled before that would understate the floor the last commit chose.
     let height = storage.checkpoint().map_or(0, |point| point.height);
     let state = storage.retention_state();
-    assert!(height >= 12, "the stopped directory holds only height {height}");
+    assert!(
+        height >= 12,
+        "the stopped directory holds only height {height}"
+    );
     // A policy is runtime configuration and is never persisted, so this reopened
     // handle reports the default disabled one. What the directory does carry is
     // the durable record of the compactions that policy caused, and only an
@@ -1265,6 +1268,8 @@ fn configured_retention_compacts_a_running_daemon_and_still_recovers_locally() {
         "retained floor {floor} keeps more than the configured suffix of {height}"
     );
     assert!(state.last_error.is_none(), "{:?}", state.last_error);
+    // Release the inspection handle's writer lock before the child reopens it.
+    drop(storage);
     // Continuity, not an external pin, is what authenticates this shortening:
     // the same directory must still recover with no --checkpoint at all.
     let recovery = Command::new(env!("CARGO_BIN_EXE_daemon"))

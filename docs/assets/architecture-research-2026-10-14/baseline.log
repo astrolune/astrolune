@@ -1,0 +1,235 @@
+   Compiling testkit v0.1.0 (D:\actual\astrolune-network\astrolune\crates\testkit)
+   Compiling runtime v0.1.0 (D:\actual\astrolune-network\astrolune\crates\runtime)
+   Compiling execution v0.1.0 (D:\actual\astrolune-network\astrolune\crates\execution)
+   Compiling state v0.1.0 (D:\actual\astrolune-network\astrolune\crates\state)
+    Finished `bench` profile [optimized] target(s) in 3.88s
+     Running unittests src\lib.rs (target\release\deps\execution-285a44888c0cd9a8.exe)
+
+running 35 tests
+test error::tests::execution_error_display ... ignored
+test error::tests::execution_error_from_state_error ... ignored
+test error::tests::execution_error_from_transaction_error ... ignored
+test executor::tests::executor_accepts_any_chain_id ... ignored
+test executor::tests::executor_accepts_pre_validated_transaction ... ignored
+test executor::tests::executor_empty_block ... ignored
+test executor::tests::executor_multiple_transactions_sequential ... ignored
+test executor::tests::executor_receipt_commitment_deterministic ... ignored
+test executor::tests::executor_single_transaction ... ignored
+test scheduler::tests::serial_scheduler_lease_from_access_list ... ignored
+test scheduler::tests::serial_scheduler_plan_one_per_wave ... ignored
+test snapshot_cache::tests::entry_and_byte_limits_bypass_without_changing_values ... ignored
+test snapshot_cache::tests::overlays_override_cached_values_and_absence_and_new_parents_are_fresh ... ignored
+test snapshot_cache::tests::repeated_values_and_absence_are_cached_but_errors_are_retried ... ignored
+test snapshot_cache::tests::workers_share_cached_reads_and_keep_the_same_budget ... ignored
+test tests::execution_error_display ... ignored
+test tests::execution_error_from_state_error ... ignored
+test tests::execution_error_from_transaction_error ... ignored
+test tests::executor_accepts_any_chain_id ... ignored
+test tests::executor_accepts_pre_validated_transaction ... ignored
+test tests::executor_empty_block ... ignored
+test tests::executor_multiple_transactions_sequential ... ignored
+test tests::executor_receipt_commitment_deterministic ... ignored
+test tests::executor_single_transaction ... ignored
+test tests::lane_conversion ... ignored
+test tests::serial_scheduler_lease_from_access_list ... ignored
+test tests::serial_scheduler_plan_one_per_wave ... ignored
+test wave::tests::lane_conversion ... ignored
+test worker_pool::tests::dropping_idle_workers_joins_them ... ignored
+test worker_pool::tests::oversized_batch_is_rejected_before_dispatch ... ignored
+test worker_pool::tests::result_buffer_reuses_its_allocation_across_varying_batches ... ignored
+test worker_pool::tests::task_error_drains_other_tasks_and_closes_pool ... ignored
+test worker_pool::tests::worker_panic_is_reported_without_escaping_thread_scope ... ignored
+test worker_pool::tests::workers_are_bounded_and_reused_across_batches ... ignored
+test worker_pool::tests::zero_workers_are_rejected ... ignored
+
+test result: ok. 0 passed; 0 failed; 35 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches\execution.rs (target\release\deps\execution-488e5c45413ec276.exe)
+benchmark suite: execution
+rounds: 7, warmup: 3, target round: 1000 us
+name                                                      median ns       min ns       max ns          ops/s
+plan/greedy/independent/8                                      1050         1030         1377         952380
+plan/greedy/dependent_chain/8                                   709          690          847        1410437
+plan/serial/8                                                   230          215          241        4347826
+plan/greedy/independent/32                                     5933         4962        17053         168548
+plan/greedy/dependent_chain/32                                 4578         3635         8246         218435
+plan/serial/32                                                  858          781          942        1165501
+plan/greedy/independent/128                                   27131        24950        34437          36858
+plan/greedy/dependent_chain/128                               19578        18718        22282          51077
+plan/serial/128                                                3367         3296         3476         297000
+lease/greedy/one_transaction                                    143          142          401        6993006
+payments/independent/8/session                               374050       350300       518750           2673
+payments/independent/8/serial_no_hint                        391800       384075       459700           2552
+payments/independent/8/serial                                402875       391575       479725           2482
+payments/independent/8/w1                                    396325       389750       483150           2523
+payments/independent/8/w2                                    473300       432950       501000           2112
+payments/independent/8/w4                                    511150       412500       621850           1956
+payments/independent/8/w8                                    580850       573250      1284300           1721
+payments/independent/8/w16                                   624850       552750       738800           1600
+payments/independent/32/session                             1424900      1377100      1838200            701
+payments/independent/32/serial_no_hint                      1626600      1508000      1856800            614
+payments/independent/32/serial                              1462600      1351000      1728000            683
+payments/independent/32/w1                                  1522300      1360700      1728900            656
+payments/independent/32/w2                                  1161800      1003200      1276800            860
+payments/independent/32/w4                                   777300       731750       795600           1286
+payments/independent/32/w8                                   808700       760650       891600           1236
+payments/independent/32/w16                                 1061000       915000      1112700            942
+payments/independent/128/session                            6088500      5805000      6297900            164
+payments/independent/128/serial_no_hint                     5665500      5557300      6208100            176
+payments/independent/128/serial                             5611300      5384300      6077800            178
+payments/independent/128/w1                                 5816400      5376900      6110800            171
+payments/independent/128/w2                                 3616900      3397900      3945800            276
+payments/independent/128/w4                                 2230400      2035900      2307100            448
+payments/independent/128/w8                                 2149400      2038100      2605900            465
+payments/independent/128/w16                                2117700      2052700      2373700            472
+payments/pool_floor/2tx/w1                                   168287       156375       226887           5942
+payments/pool_floor/2tx/w2                                   297625       268450       410275           3359
+payments/pool_floor/4tx/w1                                   250425       237900       271912           3993
+payments/pool_floor/4tx/w4                                   380600       367875       419175           2627
+payments/pool_floor/8tx/w1                                   399600       394350       459200           2502
+payments/pool_floor/8tx/w8                                   561800       542850       618300           1779
+payments/pool_floor/16tx/w1                                  707200       700900       796400           1414
+payments/pool_floor/16tx/w16                                 985200       918300      1093200           1015
+payments/chain/32tx_32w/serial                              1426800      1337600      1444900            700
+payments/chain/32tx_32w/w1                                  1406900      1367200      1861200            710
+payments/chain/32tx_32w/w8                                  1436800      1409900      1817600            695
+payments/chain/128tx_128w/serial                            5754100      5395800      6193800            173
+payments/chain/128tx_128w/w1                                5773000      5274400      6187900            173
+payments/chain/128tx_128w/w8                                6145500      5465700      6264700            162
+payments/shaped/44tx_16w/serial                             1830100      1770300      1995200            546
+payments/shaped/44tx_16w/w1                                 1876900      1800700      2023100            532
+payments/shaped/44tx_16w/w2                                 1473900      1448900      1557600            678
+payments/shaped/44tx_16w/w4                                 1248300      1191300      1489500            801
+payments/shaped/44tx_16w/w8                                 1235300      1173300      1391300            809
+payments/shaped/44tx_16w/w16                                1268500      1243500      1285600            788
+payments/shaped/42tx_21w/serial                             1781000      1710600      1826100            561
+payments/shaped/42tx_21w/w1                                 1772400      1723000      1892300            564
+payments/shaped/42tx_21w/w2                                 1562100      1522000      1601900            640
+payments/shaped/42tx_21w/w4                                 1562300      1486600      1704000            640
+payments/shaped/42tx_21w/w8                                 1564000      1508200      1686700            639
+payments/shaped/42tx_21w/w16                                1558400      1486100      1639800            641
+payments/rejected/32/serial                                 1242900      1219400      1270700            804
+payments/rejected/32/w4                                     1999300      1848900      2173900            500
+payments/rejected/32/w8                                     1978600      1866200      2068200            505
+payments/rejected/128/serial                                5209200      5061800      5484500            191
+payments/rejected/128/w4                                    7155200      6983300      7691700            139
+payments/rejected/128/w8                                    6972100      6849000      7122900            143
+contracts/independent/4tx_1w/uncached                        263025       259825       285275           3801
+contracts/independent/4tx_1w/serial                          269950       264550       294325           3704
+contracts/independent/4tx_1w/w1                              266375       262700       284550           3754
+contracts/independent/4tx_1w/w2                              345075       332100       372450           2897
+contracts/independent/4tx_1w/w4                              407225       401950       431500           2455
+contracts/independent/4tx_1w/w8                              409175       401300       429825           2443
+contracts/independent/4tx_1w/w16                             406600       397025       435100           2459
+contracts/shared_code/4tx_4w/uncached                        262325       260850       270625           3812
+contracts/shared_code/4tx_4w/serial                          264250       261375       264400           3784
+contracts/shared_code/4tx_4w/w1                              272325       264650       331625           3672
+contracts/shared_code/4tx_4w/w8                              275375       273175       282200           3631
+contracts/mixed_lanes/8tx_1w/serial                          442500       425525       459250           2259
+contracts/mixed_lanes/8tx_1w/w1                              425850       423350       445600           2348
+contracts/mixed_lanes/8tx_1w/w2                              456875       440050       472650           2188
+contracts/mixed_lanes/8tx_1w/w4                              455675       445100       519725           2194
+contracts/mixed_lanes/8tx_1w/w8                              583500       573300       615500           1713
+contracts/mixed_lanes/8tx_1w/w16                             596500       557200       624850           1676
+contracts/independent/16tx_1w/uncached                       819050       814350       881600           1220
+contracts/independent/16tx_1w/serial                         852000       847200       989100           1173
+contracts/independent/16tx_1w/w1                             849850       832850       932300           1176
+contracts/independent/16tx_1w/w2                             758650       704700       792000           1318
+contracts/independent/16tx_1w/w4                             613300       579500       654800           1630
+contracts/independent/16tx_1w/w8                             710100       685750       749150           1408
+contracts/independent/16tx_1w/w16                            972850       965900      1063950           1027
+contracts/shared_code/16tx_16w/uncached                      851600       814150       983600           1174
+contracts/shared_code/16tx_16w/serial                        850900       819150      1243750           1175
+contracts/shared_code/16tx_16w/w1                            832250       825050       897300           1201
+contracts/shared_code/16tx_16w/w8                            869500       862450       936850           1150
+contracts/mixed_lanes/32tx_1w/serial                        1501400      1478800      1605400            666
+contracts/mixed_lanes/32tx_1w/w1                            1704400      1481500      1806900            586
+contracts/mixed_lanes/32tx_1w/w2                            1147200      1123600      1224800            871
+contracts/mixed_lanes/32tx_1w/w4                             980150       855500      1025300           1020
+contracts/mixed_lanes/32tx_1w/w8                             973500       887900      1100900           1027
+contracts/mixed_lanes/32tx_1w/w16                           1210900      1121100      1432800            825
+{"schema":"astrolune.benchmark/1","suite":"execution","rounds":7,"target_round_us":1000,"measurements":[{"name":"plan/greedy/independent/8","batch":1024,"rounds":7,"minimum_ns":1030,"median_ns":1050,"mean_ns":1104,"maximum_ns":1377},{"name":"plan/greedy/dependent_chain/8","batch":2048,"rounds":7,"minimum_ns":690,"median_ns":709,"mean_ns":728,"maximum_ns":847},{"name":"plan/serial/8","batch":8192,"rounds":7,"minimum_ns":215,"median_ns":230,"mean_ns":228,"maximum_ns":241},{"name":"plan/greedy/independent/32","batch":256,"rounds":7,"minimum_ns":4962,"median_ns":5933,"mean_ns":7354,"maximum_ns":17053},{"name":"plan/greedy/dependent_chain/32","batch":512,"rounds":7,"minimum_ns":3635,"median_ns":4578,"mean_ns":5336,"maximum_ns":8246},{"name":"plan/serial/32","batch":2048,"rounds":7,"minimum_ns":781,"median_ns":858,"mean_ns":854,"maximum_ns":942},{"name":"plan/greedy/independent/128","batch":64,"rounds":7,"minimum_ns":24950,"median_ns":27131,"mean_ns":27888,"maximum_ns":34437},{"name":"plan/greedy/dependent_chain/128","batch":64,"rounds":7,"minimum_ns":18718,"median_ns":19578,"mean_ns":20185,"maximum_ns":22282},{"name":"plan/serial/128","batch":512,"rounds":7,"minimum_ns":3296,"median_ns":3367,"mean_ns":3362,"maximum_ns":3476},{"name":"lease/greedy/one_transaction","batch":8192,"rounds":7,"minimum_ns":142,"median_ns":143,"mean_ns":181,"maximum_ns":401},{"name":"payments/independent/8/session","batch":2,"rounds":7,"minimum_ns":350300,"median_ns":374050,"mean_ns":404021,"maximum_ns":518750},{"name":"payments/independent/8/serial_no_hint","batch":4,"rounds":7,"minimum_ns":384075,"median_ns":391800,"mean_ns":405821,"maximum_ns":459700},{"name":"payments/independent/8/serial","batch":4,"rounds":7,"minimum_ns":391575,"median_ns":402875,"mean_ns":415157,"maximum_ns":479725},{"name":"payments/independent/8/w1","batch":4,"rounds":7,"minimum_ns":389750,"median_ns":396325,"mean_ns":417650,"maximum_ns":483150},{"name":"payments/independent/8/w2","batch":2,"rounds":7,"minimum_ns":432950,"median_ns":473300,"mean_ns":469235,"maximum_ns":501000},{"name":"payments/independent/8/w4","batch":2,"rounds":7,"minimum_ns":412500,"median_ns":511150,"mean_ns":515021,"maximum_ns":621850},{"name":"payments/independent/8/w8","batch":2,"rounds":7,"minimum_ns":573250,"median_ns":580850,"mean_ns":720350,"maximum_ns":1284300},{"name":"payments/independent/8/w16","batch":2,"rounds":7,"minimum_ns":552750,"median_ns":624850,"mean_ns":635664,"maximum_ns":738800},{"name":"payments/independent/32/session","batch":1,"rounds":7,"minimum_ns":1377100,"median_ns":1424900,"mean_ns":1517085,"maximum_ns":1838200},{"name":"payments/independent/32/serial_no_hint","batch":1,"rounds":7,"minimum_ns":1508000,"median_ns":1626600,"mean_ns":1635571,"maximum_ns":1856800},{"name":"payments/independent/32/serial","batch":1,"rounds":7,"minimum_ns":1351000,"median_ns":1462600,"mean_ns":1530814,"maximum_ns":1728000},{"name":"payments/independent/32/w1","batch":1,"rounds":7,"minimum_ns":1360700,"median_ns":1522300,"mean_ns":1523714,"maximum_ns":1728900},{"name":"payments/independent/32/w2","batch":1,"rounds":7,"minimum_ns":1003200,"median_ns":1161800,"mean_ns":1149742,"maximum_ns":1276800},{"name":"payments/independent/32/w4","batch":2,"rounds":7,"minimum_ns":731750,"median_ns":777300,"mean_ns":774814,"maximum_ns":795600},{"name":"payments/independent/32/w8","batch":2,"rounds":7,"minimum_ns":760650,"median_ns":808700,"mean_ns":812042,"maximum_ns":891600},{"name":"payments/independent/32/w16","batch":1,"rounds":7,"minimum_ns":915000,"median_ns":1061000,"mean_ns":1029728,"maximum_ns":1112700},{"name":"payments/independent/128/session","batch":1,"rounds":7,"minimum_ns":5805000,"median_ns":6088500,"mean_ns":6044571,"maximum_ns":6297900},{"name":"payments/independent/128/serial_no_hint","batch":1,"rounds":7,"minimum_ns":5557300,"median_ns":5665500,"mean_ns":5751271,"maximum_ns":6208100},{"name":"payments/independent/128/serial","batch":1,"rounds":7,"minimum_ns":5384300,"median_ns":5611300,"mean_ns":5680557,"maximum_ns":6077800},{"name":"payments/independent/128/w1","batch":1,"rounds":7,"minimum_ns":5376900,"median_ns":5816400,"mean_ns":5817357,"maximum_ns":6110800},{"name":"payments/independent/128/w2","batch":1,"rounds":7,"minimum_ns":3397900,"median_ns":3616900,"mean_ns":3614114,"maximum_ns":3945800},{"name":"payments/independent/128/w4","batch":1,"rounds":7,"minimum_ns":2035900,"median_ns":2230400,"mean_ns":2208785,"maximum_ns":2307100},{"name":"payments/independent/128/w8","batch":1,"rounds":7,"minimum_ns":2038100,"median_ns":2149400,"mean_ns":2214957,"maximum_ns":2605900},{"name":"payments/independent/128/w16","batch":1,"rounds":7,"minimum_ns":2052700,"median_ns":2117700,"mean_ns":2159542,"maximum_ns":2373700},{"name":"payments/pool_floor/2tx/w1","batch":8,"rounds":7,"minimum_ns":156375,"median_ns":168287,"mean_ns":178953,"maximum_ns":226887},{"name":"payments/pool_floor/2tx/w2","batch":4,"rounds":7,"minimum_ns":268450,"median_ns":297625,"mean_ns":312975,"maximum_ns":410275},{"name":"payments/pool_floor/4tx/w1","batch":8,"rounds":7,"minimum_ns":237900,"median_ns":250425,"mean_ns":252460,"maximum_ns":271912},{"name":"payments/pool_floor/4tx/w4","batch":4,"rounds":7,"minimum_ns":367875,"median_ns":380600,"mean_ns":389360,"maximum_ns":419175},{"name":"payments/pool_floor/8tx/w1","batch":4,"rounds":7,"minimum_ns":394350,"median_ns":399600,"mean_ns":409878,"maximum_ns":459200},{"name":"payments/pool_floor/8tx/w8","batch":2,"rounds":7,"minimum_ns":542850,"median_ns":561800,"mean_ns":570835,"maximum_ns":618300},{"name":"payments/pool_floor/16tx/w1","batch":2,"rounds":7,"minimum_ns":700900,"median_ns":707200,"mean_ns":732378,"maximum_ns":796400},{"name":"payments/pool_floor/16tx/w16","batch":1,"rounds":7,"minimum_ns":918300,"median_ns":985200,"mean_ns":978128,"maximum_ns":1093200},{"name":"payments/chain/32tx_32w/serial","batch":1,"rounds":7,"minimum_ns":1337600,"median_ns":1426800,"mean_ns":1396714,"maximum_ns":1444900},{"name":"payments/chain/32tx_32w/w1","batch":1,"rounds":7,"minimum_ns":1367200,"median_ns":1406900,"mean_ns":1494000,"maximum_ns":1861200},{"name":"payments/chain/32tx_32w/w8","batch":1,"rounds":7,"minimum_ns":1409900,"median_ns":1436800,"mean_ns":1518657,"maximum_ns":1817600},{"name":"payments/chain/128tx_128w/serial","batch":1,"rounds":7,"minimum_ns":5395800,"median_ns":5754100,"mean_ns":5715600,"maximum_ns":6193800},{"name":"payments/chain/128tx_128w/w1","batch":1,"rounds":7,"minimum_ns":5274400,"median_ns":5773000,"mean_ns":5730928,"maximum_ns":6187900},{"name":"payments/chain/128tx_128w/w8","batch":1,"rounds":7,"minimum_ns":5465700,"median_ns":6145500,"mean_ns":5974500,"maximum_ns":6264700},{"name":"payments/shaped/44tx_16w/serial","batch":1,"rounds":7,"minimum_ns":1770300,"median_ns":1830100,"mean_ns":1843014,"maximum_ns":1995200},{"name":"payments/shaped/44tx_16w/w1","batch":1,"rounds":7,"minimum_ns":1800700,"median_ns":1876900,"mean_ns":1876942,"maximum_ns":2023100},{"name":"payments/shaped/44tx_16w/w2","batch":1,"rounds":7,"minimum_ns":1448900,"median_ns":1473900,"mean_ns":1484542,"maximum_ns":1557600},{"name":"payments/shaped/44tx_16w/w4","batch":1,"rounds":7,"minimum_ns":1191300,"median_ns":1248300,"mean_ns":1277814,"maximum_ns":1489500},{"name":"payments/shaped/44tx_16w/w8","batch":1,"rounds":7,"minimum_ns":1173300,"median_ns":1235300,"mean_ns":1248514,"maximum_ns":1391300},{"name":"payments/shaped/44tx_16w/w16","batch":1,"rounds":7,"minimum_ns":1243500,"median_ns":1268500,"mean_ns":1262628,"maximum_ns":1285600},{"name":"payments/shaped/42tx_21w/serial","batch":1,"rounds":7,"minimum_ns":1710600,"median_ns":1781000,"mean_ns":1763528,"maximum_ns":1826100},{"name":"payments/shaped/42tx_21w/w1","batch":1,"rounds":7,"minimum_ns":1723000,"median_ns":1772400,"mean_ns":1778642,"maximum_ns":1892300},{"name":"payments/shaped/42tx_21w/w2","batch":1,"rounds":7,"minimum_ns":1522000,"median_ns":1562100,"mean_ns":1563071,"maximum_ns":1601900},{"name":"payments/shaped/42tx_21w/w4","batch":1,"rounds":7,"minimum_ns":1486600,"median_ns":1562300,"mean_ns":1566314,"maximum_ns":1704000},{"name":"payments/shaped/42tx_21w/w8","batch":1,"rounds":7,"minimum_ns":1508200,"median_ns":1564000,"mean_ns":1576400,"maximum_ns":1686700},{"name":"payments/shaped/42tx_21w/w16","batch":1,"rounds":7,"minimum_ns":1486100,"median_ns":1558400,"mean_ns":1555257,"maximum_ns":1639800},{"name":"payments/rejected/32/serial","batch":1,"rounds":7,"minimum_ns":1219400,"median_ns":1242900,"mean_ns":1240228,"maximum_ns":1270700},{"name":"payments/rejected/32/w4","batch":1,"rounds":7,"minimum_ns":1848900,"median_ns":1999300,"mean_ns":2008014,"maximum_ns":2173900},{"name":"payments/rejected/32/w8","batch":1,"rounds":7,"minimum_ns":1866200,"median_ns":1978600,"mean_ns":1984371,"maximum_ns":2068200},{"name":"payments/rejected/128/serial","batch":1,"rounds":7,"minimum_ns":5061800,"median_ns":5209200,"mean_ns":5215885,"maximum_ns":5484500},{"name":"payments/rejected/128/w4","batch":1,"rounds":7,"minimum_ns":6983300,"median_ns":7155200,"mean_ns":7247071,"maximum_ns":7691700},{"name":"payments/rejected/128/w8","batch":1,"rounds":7,"minimum_ns":6849000,"median_ns":6972100,"mean_ns":6969285,"maximum_ns":7122900},{"name":"contracts/independent/4tx_1w/uncached","batch":4,"rounds":7,"minimum_ns":259825,"median_ns":263025,"mean_ns":266478,"maximum_ns":285275},{"name":"contracts/independent/4tx_1w/serial","batch":4,"rounds":7,"minimum_ns":264550,"median_ns":269950,"mean_ns":274564,"maximum_ns":294325},{"name":"contracts/independent/4tx_1w/w1","batch":4,"rounds":7,"minimum_ns":262700,"median_ns":266375,"mean_ns":268242,"maximum_ns":284550},{"name":"contracts/independent/4tx_1w/w2","batch":4,"rounds":7,"minimum_ns":332100,"median_ns":345075,"mean_ns":349875,"maximum_ns":372450},{"name":"contracts/independent/4tx_1w/w4","batch":4,"rounds":7,"minimum_ns":401950,"median_ns":407225,"mean_ns":410925,"maximum_ns":431500},{"name":"contracts/independent/4tx_1w/w8","batch":4,"rounds":7,"minimum_ns":401300,"median_ns":409175,"mean_ns":412510,"maximum_ns":429825},{"name":"contracts/independent/4tx_1w/w16","batch":4,"rounds":7,"minimum_ns":397025,"median_ns":406600,"mean_ns":409978,"maximum_ns":435100},{"name":"contracts/shared_code/4tx_4w/uncached","batch":4,"rounds":7,"minimum_ns":260850,"median_ns":262325,"mean_ns":264214,"maximum_ns":270625},{"name":"contracts/shared_code/4tx_4w/serial","batch":4,"rounds":7,"minimum_ns":261375,"median_ns":264250,"mean_ns":263389,"maximum_ns":264400},{"name":"contracts/shared_code/4tx_4w/w1","batch":4,"rounds":7,"minimum_ns":264650,"median_ns":272325,"mean_ns":286089,"maximum_ns":331625},{"name":"contracts/shared_code/4tx_4w/w8","batch":4,"rounds":7,"minimum_ns":273175,"median_ns":275375,"mean_ns":275800,"maximum_ns":282200},{"name":"contracts/mixed_lanes/8tx_1w/serial","batch":4,"rounds":7,"minimum_ns":425525,"median_ns":442500,"mean_ns":440767,"maximum_ns":459250},{"name":"contracts/mixed_lanes/8tx_1w/w1","batch":4,"rounds":7,"minimum_ns":423350,"median_ns":425850,"mean_ns":428103,"maximum_ns":445600},{"name":"contracts/mixed_lanes/8tx_1w/w2","batch":4,"rounds":7,"minimum_ns":440050,"median_ns":456875,"mean_ns":457828,"maximum_ns":472650},{"name":"contracts/mixed_lanes/8tx_1w/w4","batch":4,"rounds":7,"minimum_ns":445100,"median_ns":455675,"mean_ns":465710,"maximum_ns":519725},{"name":"contracts/mixed_lanes/8tx_1w/w8","batch":2,"rounds":7,"minimum_ns":573300,"median_ns":583500,"mean_ns":589257,"maximum_ns":615500},{"name":"contracts/mixed_lanes/8tx_1w/w16","batch":2,"rounds":7,"minimum_ns":557200,"median_ns":596500,"mean_ns":594464,"maximum_ns":624850},{"name":"contracts/independent/16tx_1w/uncached","batch":2,"rounds":7,"minimum_ns":814350,"median_ns":819050,"mean_ns":828150,"maximum_ns":881600},{"name":"contracts/independent/16tx_1w/serial","batch":2,"rounds":7,"minimum_ns":847200,"median_ns":852000,"mean_ns":887100,"maximum_ns":989100},{"name":"contracts/independent/16tx_1w/w1","batch":2,"rounds":7,"minimum_ns":832850,"median_ns":849850,"mean_ns":862100,"maximum_ns":932300},{"name":"contracts/independent/16tx_1w/w2","batch":2,"rounds":7,"minimum_ns":704700,"median_ns":758650,"mean_ns":754907,"maximum_ns":792000},{"name":"contracts/independent/16tx_1w/w4","batch":2,"rounds":7,"minimum_ns":579500,"median_ns":613300,"mean_ns":617428,"maximum_ns":654800},{"name":"contracts/independent/16tx_1w/w8","batch":2,"rounds":7,"minimum_ns":685750,"median_ns":710100,"mean_ns":714135,"maximum_ns":749150},{"name":"contracts/independent/16tx_1w/w16","batch":2,"rounds":7,"minimum_ns":965900,"median_ns":972850,"mean_ns":999150,"maximum_ns":1063950},{"name":"contracts/shared_code/16tx_16w/uncached","batch":2,"rounds":7,"minimum_ns":814150,"median_ns":851600,"mean_ns":864528,"maximum_ns":983600},{"name":"contracts/shared_code/16tx_16w/serial","batch":2,"rounds":7,"minimum_ns":819150,"median_ns":850900,"mean_ns":908935,"maximum_ns":1243750},{"name":"contracts/shared_code/16tx_16w/w1","batch":2,"rounds":7,"minimum_ns":825050,"median_ns":832250,"mean_ns":841685,"maximum_ns":897300},{"name":"contracts/shared_code/16tx_16w/w8","batch":2,"rounds":7,"minimum_ns":862450,"median_ns":869500,"mean_ns":878564,"maximum_ns":936850},{"name":"contracts/mixed_lanes/32tx_1w/serial","batch":1,"rounds":7,"minimum_ns":1478800,"median_ns":1501400,"mean_ns":1522342,"maximum_ns":1605400},{"name":"contracts/mixed_lanes/32tx_1w/w1","batch":1,"rounds":7,"minimum_ns":1481500,"median_ns":1704400,"mean_ns":1655000,"maximum_ns":1806900},{"name":"contracts/mixed_lanes/32tx_1w/w2","batch":1,"rounds":7,"minimum_ns":1123600,"median_ns":1147200,"mean_ns":1168457,"maximum_ns":1224800},{"name":"contracts/mixed_lanes/32tx_1w/w4","batch":2,"rounds":7,"minimum_ns":855500,"median_ns":980150,"mean_ns":951707,"maximum_ns":1025300},{"name":"contracts/mixed_lanes/32tx_1w/w8","batch":1,"rounds":7,"minimum_ns":887900,"median_ns":973500,"mean_ns":991928,"maximum_ns":1100900},{"name":"contracts/mixed_lanes/32tx_1w/w16","batch":1,"rounds":7,"minimum_ns":1121100,"median_ns":1210900,"mean_ns":1224885,"maximum_ns":1432800}]}
+     Running unittests src\lib.rs (target\release\deps\state-edbea1ca9296a5ae.exe)
+
+running 31 tests
+test lease::tests::normalization_sorts_and_preserves_strongest_access ... ignored
+test lease::tests::reads_share_but_writes_conflict ... ignored
+test persistent::tests::commit_persists_to_disk ... ignored
+test persistent::tests::commit_rejects_stale_parent ... ignored
+test persistent::tests::delete_through_commit ... ignored
+test persistent::tests::open_creates_new_file ... ignored
+test persistent::tests::open_loads_existing_file ... ignored
+test persistent::tests::root_deterministic ... ignored
+test persistent::tests::snapshot_isolation ... ignored
+test tests::diff_apply_delete ... ignored
+test tests::diff_apply_to_empty ... ignored
+test tests::diff_merge ... ignored
+test tests::diff_put_and_delete ... ignored
+test tests::diff_sort_canonical ... ignored
+test tests::empty_state ... ignored
+test tests::lease_covers_read_access ... ignored
+test tests::lease_has_writes ... ignored
+test tests::lease_write_keys ... ignored
+test tests::state_change_key ... ignored
+test tests::state_commit_and_snapshot ... ignored
+test tests::state_commit_rejects_stale_parent ... ignored
+test tests::state_delete_through_commit ... ignored
+test tests::state_diff_encode_delete ... ignored
+test tests::state_diff_encode_deterministic ... ignored
+test tests::state_diff_encode_empty ... ignored
+test tests::state_diff_encode_put ... ignored
+test tests::state_diff_encode_sorted_canonical ... ignored
+test tests::state_error_display ... ignored
+test tests::state_multiple_diffs_in_one_commit ... ignored
+test tests::state_root_changes_on_same_data ... ignored
+test tests::state_snapshot_isolation ... ignored
+
+test result: ok. 0 passed; 0 failed; 31 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches\state.rs (target\release\deps\state-4443ea2572a0c4ec.exe)
+benchmark suite: state
+rounds: 7, warmup: 3, target round: 1000 us
+name                                                      median ns       min ns       max ns          ops/s
+state_root/recompute/16                                        8339         8276         8755         119918
+state_root/overlay_copy_only/16                                1065         1049         1103         938967
+commit/prepare/16/payment                                      8617         8353         9925         116049
+snapshot/handle/16                                               31           31           38       32258064
+snapshot/export/16                                              423          417          520        2364066
+snapshot/import/16                                             9111         9051         9435         109757
+read/account/16                                                 100           99          103       10000000
+prove/membership/16                                            7043         6964         7112         141984
+verify/membership/16                                           1128         1120         1159         886524
+prove/absence/16                                              14231        14050        15070          70269
+verify/absence/16                                              2254         2227         2301         443655
+state_root/recompute/256                                     135350       131787       137750           7388
+state_root/overlay_copy_only/256                              15781        15564        18055          63367
+commit/prepare/256/payment                                   140012       131700       145312           7142
+snapshot/handle/256                                              32           32           33       31250000
+snapshot/export/256                                            2715         2682         2907         368324
+snapshot/import/256                                          148512       147875       160487           6733
+read/account/256                                                123          121          130        8130081
+prove/membership/256                                         112012       110350       114725           8927
+verify/membership/256                                          1829         1783         1860         546746
+prove/absence/256                                            229275       225500       246962           4361
+verify/absence/256                                             3636         3592         4420         275027
+state_root/recompute/4096                                   2445100      2369700      2514600            408
+state_root/overlay_copy_only/4096                            351550       343875       412300           2844
+commit/prepare/4096/payment                                 2368000      2339900      2460200            422
+snapshot/handle/4096                                             31           30           31       32258064
+snapshot/export/4096                                         179012       168675       202287           5586
+snapshot/import/4096                                        2816100      2701600      2901800            355
+read/account/4096                                               145          144          165        6896551
+prove/membership/4096                                       1849300      1839200      1978900            540
+verify/membership/4096                                         2494         2455         2888         400962
+prove/absence/4096                                          3767700      3720900      3903100            265
+verify/absence/4096                                            5004         4938         5053         199840
+commit/prepare/4096/1_changes                               2310900      2223700      2773500            432
+commit/prepare/4096/2_changes                               2257300      2212400      2425700            443
+commit/prepare/4096/16_changes                              2294300      2187600      2460700            435
+commit/prepare/4096/256_changes                             2388800      2350500      2497400            418
+diff/commitment/2_changes                                       401          400          460        2493765
+diff/commitment/64_changes                                     6418         6298         6746         155811
+diff/commitment/512_changes                                   47584        47306        48240          21015
+absence_proof/to_bytes/4096                                     354          353          361        2824858
+absence_proof/from_bytes/4096                                   208          205          246        4807692
+{"schema":"astrolune.benchmark/1","suite":"state","rounds":7,"target_round_us":1000,"measurements":[{"name":"state_root/recompute/16","batch":128,"rounds":7,"minimum_ns":8276,"median_ns":8339,"mean_ns":8397,"maximum_ns":8755},{"name":"state_root/overlay_copy_only/16","batch":1024,"rounds":7,"minimum_ns":1049,"median_ns":1065,"mean_ns":1068,"maximum_ns":1103},{"name":"commit/prepare/16/payment","batch":128,"rounds":7,"minimum_ns":8353,"median_ns":8617,"mean_ns":8778,"maximum_ns":9925},{"name":"snapshot/handle/16","batch":32768,"rounds":7,"minimum_ns":31,"median_ns":31,"mean_ns":32,"maximum_ns":38},{"name":"snapshot/export/16","batch":2048,"rounds":7,"minimum_ns":417,"median_ns":423,"mean_ns":435,"maximum_ns":520},{"name":"snapshot/import/16","batch":128,"rounds":7,"minimum_ns":9051,"median_ns":9111,"mean_ns":9172,"maximum_ns":9435},{"name":"read/account/16","batch":16384,"rounds":7,"minimum_ns":99,"median_ns":100,"mean_ns":100,"maximum_ns":103},{"name":"prove/membership/16","batch":256,"rounds":7,"minimum_ns":6964,"median_ns":7043,"mean_ns":7034,"maximum_ns":7112},{"name":"verify/membership/16","batch":1024,"rounds":7,"minimum_ns":1120,"median_ns":1128,"mean_ns":1132,"maximum_ns":1159},{"name":"prove/absence/16","batch":64,"rounds":7,"minimum_ns":14050,"median_ns":14231,"mean_ns":14322,"maximum_ns":15070},{"name":"verify/absence/16","batch":512,"rounds":7,"minimum_ns":2227,"median_ns":2254,"mean_ns":2257,"maximum_ns":2301},{"name":"state_root/recompute/256","batch":8,"rounds":7,"minimum_ns":131787,"median_ns":135350,"mean_ns":134892,"maximum_ns":137750},{"name":"state_root/overlay_copy_only/256","batch":128,"rounds":7,"minimum_ns":15564,"median_ns":15781,"mean_ns":16317,"maximum_ns":18055},{"name":"commit/prepare/256/payment","batch":8,"rounds":7,"minimum_ns":131700,"median_ns":140012,"mean_ns":137846,"maximum_ns":145312},{"name":"snapshot/handle/256","batch":32768,"rounds":7,"minimum_ns":32,"median_ns":32,"mean_ns":32,"maximum_ns":33},{"name":"snapshot/export/256","batch":512,"rounds":7,"minimum_ns":2682,"median_ns":2715,"mean_ns":2755,"maximum_ns":2907},{"name":"snapshot/import/256","batch":8,"rounds":7,"minimum_ns":147875,"median_ns":148512,"mean_ns":150539,"maximum_ns":160487},{"name":"read/account/256","batch":16384,"rounds":7,"minimum_ns":121,"median_ns":123,"mean_ns":124,"maximum_ns":130},{"name":"prove/membership/256","batch":8,"rounds":7,"minimum_ns":110350,"median_ns":112012,"mean_ns":112239,"maximum_ns":114725},{"name":"verify/membership/256","batch":512,"rounds":7,"minimum_ns":1783,"median_ns":1829,"mean_ns":1822,"maximum_ns":1860},{"name":"prove/absence/256","batch":8,"rounds":7,"minimum_ns":225500,"median_ns":229275,"mean_ns":231812,"maximum_ns":246962},{"name":"verify/absence/256","batch":512,"rounds":7,"minimum_ns":3592,"median_ns":3636,"mean_ns":3793,"maximum_ns":4420},{"name":"state_root/recompute/4096","batch":1,"rounds":7,"minimum_ns":2369700,"median_ns":2445100,"mean_ns":2436657,"maximum_ns":2514600},{"name":"state_root/overlay_copy_only/4096","batch":4,"rounds":7,"minimum_ns":343875,"median_ns":351550,"mean_ns":365239,"maximum_ns":412300},{"name":"commit/prepare/4096/payment","batch":1,"rounds":7,"minimum_ns":2339900,"median_ns":2368000,"mean_ns":2394142,"maximum_ns":2460200},{"name":"snapshot/handle/4096","batch":32768,"rounds":7,"minimum_ns":30,"median_ns":31,"mean_ns":30,"maximum_ns":31},{"name":"snapshot/export/4096","batch":8,"rounds":7,"minimum_ns":168675,"median_ns":179012,"mean_ns":181099,"maximum_ns":202287},{"name":"snapshot/import/4096","batch":1,"rounds":7,"minimum_ns":2701600,"median_ns":2816100,"mean_ns":2802657,"maximum_ns":2901800},{"name":"read/account/4096","batch":8192,"rounds":7,"minimum_ns":144,"median_ns":145,"mean_ns":149,"maximum_ns":165},{"name":"prove/membership/4096","batch":1,"rounds":7,"minimum_ns":1839200,"median_ns":1849300,"mean_ns":1872985,"maximum_ns":1978900},{"name":"verify/membership/4096","batch":512,"rounds":7,"minimum_ns":2455,"median_ns":2494,"mean_ns":2542,"maximum_ns":2888},{"name":"prove/absence/4096","batch":1,"rounds":7,"minimum_ns":3720900,"median_ns":3767700,"mean_ns":3786814,"maximum_ns":3903100},{"name":"verify/absence/4096","batch":256,"rounds":7,"minimum_ns":4938,"median_ns":5004,"mean_ns":5000,"maximum_ns":5053},{"name":"commit/prepare/4096/1_changes","batch":1,"rounds":7,"minimum_ns":2223700,"median_ns":2310900,"mean_ns":2379857,"maximum_ns":2773500},{"name":"commit/prepare/4096/2_changes","batch":1,"rounds":7,"minimum_ns":2212400,"median_ns":2257300,"mean_ns":2284400,"maximum_ns":2425700},{"name":"commit/prepare/4096/16_changes","batch":1,"rounds":7,"minimum_ns":2187600,"median_ns":2294300,"mean_ns":2322585,"maximum_ns":2460700},{"name":"commit/prepare/4096/256_changes","batch":1,"rounds":7,"minimum_ns":2350500,"median_ns":2388800,"mean_ns":2411085,"maximum_ns":2497400},{"name":"diff/commitment/2_changes","batch":4096,"rounds":7,"minimum_ns":400,"median_ns":401,"mean_ns":414,"maximum_ns":460},{"name":"diff/commitment/64_changes","batch":256,"rounds":7,"minimum_ns":6298,"median_ns":6418,"mean_ns":6450,"maximum_ns":6746},{"name":"diff/commitment/512_changes","batch":32,"rounds":7,"minimum_ns":47306,"median_ns":47584,"mean_ns":47648,"maximum_ns":48240},{"name":"absence_proof/to_bytes/4096","batch":4096,"rounds":7,"minimum_ns":353,"median_ns":354,"mean_ns":355,"maximum_ns":361},{"name":"absence_proof/from_bytes/4096","batch":8192,"rounds":7,"minimum_ns":205,"median_ns":208,"mean_ns":214,"maximum_ns":246}]}

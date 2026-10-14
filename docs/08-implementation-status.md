@@ -44,6 +44,11 @@ The repository now runs a **certified reference network** for native payments an
 | DNS | bounded on-chain registry, ownership/lease transitions, confusable-name reservations, transaction preparation and certified-proof TCP resolver implemented/tested |
 | CLI and daemon | CLI genesis verification; local daemon with file-backed block/state recovery, genesis activation, strict arguments, startup failure propagation, and durable RPC head; signed native payments and committed account/submission RPC implemented/tested; opt-in certified fixed-committee network, devnet provisioning, and standalone TLS identity provisioning implemented/tested; default local mode retains demonstration finality |
 
+The [persistent version-1 state backend](63-incremental-state.md) implements
+incremental existing-key updates and cached membership/absence paths, with
+flat-reference differential tests. Topology changes still rebuild the tree;
+production disk indexing and distributed performance qualification remain open.
+
 ## 8.3 Removed architecture
 
 The current design removes:

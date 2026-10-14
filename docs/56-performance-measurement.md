@@ -2,6 +2,10 @@
 
 # 56. Local performance measurement
 
+The figures below are historical measurements of their stated implementations.
+For the subsequent persistent-state backend, updated benchmark labels, and
+before/after evidence, see [document 63](63-incremental-state.md).
+
 `crates/testkit/src/bench.rs` is a bounded measurement harness, and each
 benchmarked crate carries `benches/` targets that use it. A benchmark run
 records integer nanosecond statistics for one operation on one machine. The

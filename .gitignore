@@ -8,7 +8,6 @@
 /crates/codec/fuzz/corpus/
 # The fuzz lockfile is committed: CI compile-checks that package with --locked and
 # the advisory review covers both lockfiles, so its resolution must be reproducible.
-*.log
 .env
 .env.*
 !.env.example
@@ -19,4 +18,3 @@ Thumbs.db
 editorial/
 .github/__pycache__
 docs/assets/banner-prompt.txt
-docs/assets/architecture-research-2026-10-14

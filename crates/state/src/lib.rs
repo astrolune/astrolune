@@ -18,6 +18,7 @@ pub mod lease;
 pub mod memory;
 pub mod persistent;
 pub mod snapshot;
+mod tree;
 mod value_proof;
 pub use value_proof::StateValueProof;
 

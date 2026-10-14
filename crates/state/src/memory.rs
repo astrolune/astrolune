@@ -3,20 +3,17 @@
 
 //! Immutable shared snapshots and atomic, bounded state transitions.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
-
 use types::{Hash256, StateKey};
 
 use crate::{
     StateAbsenceProof, StateDatabase, StateDiff, StateError, StateProof, StateSnapshot, commitment,
-    snapshot,
+    snapshot, tree::Tree,
 };
 
-/// Reference state database; snapshots share immutable entries until the next commit.
+/// Version-1 state database; immutable snapshots share unchanged Merkle subtrees.
 #[derive(Clone, Debug)]
 pub struct InMemoryState {
-    data: Arc<BTreeMap<StateKey, Vec<u8>>>,
+    data: Tree,
     root: Hash256,
 }
 
@@ -25,7 +22,7 @@ impl InMemoryState {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            data: Arc::new(BTreeMap::new()),
+            data: Tree::default(),
             root: commitment::empty_root(),
         }
     }
@@ -45,13 +42,13 @@ impl InMemoryState {
     /// Returns whether the state has no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.data.len() == 0
     }
 
     /// Borrows an entry from this state version.
     #[must_use]
     pub fn get(&self, key: &StateKey) -> Option<&[u8]> {
-        self.data.get(key).map(Vec::as_slice)
+        self.data.get(key)
     }
 
     /// Prepares an isolated transition, preserving transaction and duplicate-write order.
@@ -59,12 +56,14 @@ impl InMemoryState {
         if parent != self.root {
             return Err(StateError::StaleSnapshot);
         }
-        let data = snapshot::stage(&self.data, diffs)?;
-        let root = commitment::compute_root(&data);
-        Ok(Self {
-            data: Arc::new(data),
-            root,
-        })
+        let data = match self.data.prepare(diffs)? {
+            Some(data) => data,
+            // Inserting or deleting a leaf can shift every subsequent v1 index.
+            // Preserve the original, ordered bound checks before rebuilding.
+            None => Tree::from_map(snapshot::stage(self.data.to_map(), diffs)?),
+        };
+        let root = data.hash();
+        Ok(Self { data, root })
     }
 
     /// Publishes changes only when their computed root matches the proposal.
@@ -85,7 +84,7 @@ impl InMemoryState {
     /// Exports the complete canonical snapshot, bounded by `MAX_SNAPSHOT_BYTES`.
     #[must_use]
     pub fn export_snapshot(&self) -> Vec<u8> {
-        snapshot::encode(&self.data, self.root)
+        snapshot::encode(self.data.len(), self.data.entries(), self.root)
     }
 
     /// Loads a canonical snapshot and verifies it against an independently trusted root.
@@ -99,10 +98,7 @@ impl InMemoryState {
 
     pub(crate) fn decode_snapshot(bytes: &[u8]) -> Result<Self, StateError> {
         let (data, root) = snapshot::decode(bytes)?;
-        Ok(Self {
-            data: Arc::new(data),
-            root,
-        })
+        Ok(Self { data, root })
     }
 }
 
@@ -118,15 +114,15 @@ impl StateSnapshot for InMemoryState {
     }
 
     fn get(&self, key: &StateKey) -> Result<Option<Vec<u8>>, StateError> {
-        Ok(self.data.get(key).cloned())
+        Ok(self.data.get(key).map(<[u8]>::to_vec))
     }
 
     fn prove(&self, key: &StateKey) -> Result<Option<StateProof>, StateError> {
-        Ok(commitment::prove(&self.data, key))
+        Ok(self.data.prove(key))
     }
 
     fn prove_absence(&self, key: &StateKey) -> Result<Option<StateAbsenceProof>, StateError> {
-        commitment::prove_absence(&self.data, key)
+        self.data.prove_absence(key)
     }
 }
 

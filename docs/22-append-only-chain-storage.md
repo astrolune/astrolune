@@ -66,7 +66,7 @@ Stop the node before backing up or restoring the directory. Keep `chain.bin` and
 | Deltas | 1,048,576 diffs and total operations per batch; existing key/value bounds apply |
 | Transaction/certificate | Existing archive structural bounds; network applies its stricter wire limits |
 | Height index | Memory grows with retained block count |
-| Recovery | Streaming and certificate verification are linear in records; the state replay layered on top recomputes a whole-state root per transition, so startup cost grows with blocks times accounts, not with blocks alone |
+| Recovery | Streaming and certificate verification are linear in records; [incremental state replay](63-incremental-state.md) updates existing-key paths, while transitions that insert/delete keys still rebuild the whole tree, so worst-case startup cost can grow with blocks times accounts |
 | Historical snapshots | Replayed on demand; latest snapshot reads current committed state |
 | Pruning / replacing history | Explicitly unsupported by the log; snapshot import requires an empty store |
 | Signing journal | [Protected journals roll over](23-signing-journal-rollover.md) after 100,000 decisions at fixed size; raw version-1 journals retain their bound |

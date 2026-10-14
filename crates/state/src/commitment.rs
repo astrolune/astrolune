@@ -3,12 +3,15 @@
 
 //! Count-bound Merkle commitments over lexicographically sorted state entries.
 
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 use crypto::blake2s::domain_hash;
 use types::{Hash256, StateKey, domain};
 
-use crate::{MAX_STATE_ENTRIES, MAX_STATE_KEY_BYTES, MAX_STATE_VALUE_BYTES, StateError};
+#[cfg(test)]
+use crate::StateError;
+use crate::{MAX_STATE_ENTRIES, MAX_STATE_KEY_BYTES, MAX_STATE_VALUE_BYTES};
 
 /// An authenticated entry bordering a range of absent keys.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -119,6 +122,7 @@ pub fn empty_root() -> Hash256 {
     root_hash(0, Hash256::ZERO)
 }
 
+#[cfg(test)]
 pub(crate) fn compute_root(data: &BTreeMap<StateKey, Vec<u8>>) -> Hash256 {
     let mut level: Vec<_> = data.iter().map(|(k, v)| leaf_hash(k, v)).collect();
     while level.len() > 1 {
@@ -130,11 +134,13 @@ pub(crate) fn compute_root(data: &BTreeMap<StateKey, Vec<u8>>) -> Hash256 {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn prove(data: &BTreeMap<StateKey, Vec<u8>>, key: &StateKey) -> Option<StateProof> {
     let index = data.keys().position(|candidate| candidate == key)?;
     Some(proof_at(data, index))
 }
 
+#[cfg(test)]
 pub(crate) fn prove_absence(
     data: &BTreeMap<StateKey, Vec<u8>>,
     key: &StateKey,
@@ -166,6 +172,7 @@ pub(crate) fn prove_absence(
     }))
 }
 
+#[cfg(test)]
 fn proof_at(data: &BTreeMap<StateKey, Vec<u8>>, index: usize) -> StateProof {
     let mut proof = StateProof {
         index: index as u64,
@@ -184,6 +191,7 @@ fn proof_at(data: &BTreeMap<StateKey, Vec<u8>>, index: usize) -> StateProof {
     proof
 }
 
+#[cfg(test)]
 fn next_level(level: &[Hash256]) -> Vec<Hash256> {
     level
         .chunks(2)
@@ -197,7 +205,7 @@ fn next_level(level: &[Hash256]) -> Vec<Hash256> {
         .collect()
 }
 
-fn leaf_hash(key: &StateKey, value: &[u8]) -> Hash256 {
+pub(crate) fn leaf_hash(key: &StateKey, value: &[u8]) -> Hash256 {
     // Fixed-width lengths separate keys from values even when bytes share prefixes.
     let mut bytes = Vec::with_capacity(16 + key.len() + value.len());
     bytes.extend_from_slice(&(key.len() as u64).to_le_bytes());
@@ -207,14 +215,14 @@ fn leaf_hash(key: &StateKey, value: &[u8]) -> Hash256 {
     domain_hash(domain::STATE_LEAF, &bytes)
 }
 
-fn node_hash(left: Hash256, right: Hash256) -> Hash256 {
+pub(crate) fn node_hash(left: Hash256, right: Hash256) -> Hash256 {
     let mut bytes = [0; 64];
     bytes[..32].copy_from_slice(left.as_bytes());
     bytes[32..].copy_from_slice(right.as_bytes());
     domain_hash(domain::STATE_NODE, &bytes)
 }
 
-fn root_hash(count: u64, top: Hash256) -> Hash256 {
+pub(crate) fn root_hash(count: u64, top: Hash256) -> Hash256 {
     let mut bytes = [0; 40];
     bytes[..8].copy_from_slice(&count.to_le_bytes());
     bytes[8..].copy_from_slice(top.as_bytes());

@@ -10,15 +10,15 @@
 //! `crates/state/tests`, not here.
 //!
 //! Generation and verification are recorded separately because they are paid by
-//! different parties: a prover rebuilds the tree, while a client only walks one
-//! path. Comparing the two columns is the point of the sweep.
+//! different parties: the prover uses retained Merkle nodes, while a client
+//! hashes one authentication path. Both costs are measured independently.
 //!
 //! What this does NOT establish: an asymptotic bound of any kind, since three
 //! sizes cannot distinguish one growth curve from another; the cost of a tree
 //! whose keys or values are unevenly sized; block or network throughput; memory
 //! residency of retained snapshots; or a figure comparable to a different
-//! machine, allocator or toolchain. Every overlay figure includes allocating
-//! and freeing the prepared copy, so it is not a measurement of hashing alone.
+//! machine, allocator or toolchain. Every transition figure includes allocating
+//! and freeing changed paths, so it is not a measurement of hashing alone.
 
 use codec::CanonicalEncode;
 use state::{
@@ -117,9 +117,8 @@ fn populated(count: u64) -> InMemoryState {
 
 /// Returns the same entries as [`populated`] in a plain ordered map.
 ///
-/// This exists only as a copy baseline. A prepared transition clones the entry
-/// map before hashing anything, and the state engine does not expose its own
-/// map, so the separable part of an overlay figure is measured here instead.
+/// This is the old flat-map copy baseline. It is no longer a component of an
+/// update-only prepared transition, which shares unchanged Merkle subtrees.
 fn entry_map(count: u64) -> BTreeMap<StateKey, Vec<u8>> {
     (0..count).map(account_entry).collect()
 }
@@ -133,12 +132,12 @@ fn bench_tree(suite: &mut Suite, count: u64) {
     let bytes = state.export_snapshot();
     let address = address_at(count / 2);
 
-    // A transition with no changes: the staged-size scan, the overlay copy and
-    // a complete root recomputation over `count` leaves.
-    suite.bench(format!("state_root/recompute/{count}"), || {
+    // No changes share the existing tree. The former state_root/recompute label
+    // would incorrectly imply that this still performs a complete rehash.
+    suite.bench(format!("commit/prepare/{count}/unchanged"), || {
         state.prepare(root, &[])
     });
-    // The overlay copy on its own, so the hashing share above is separable.
+    // Historical flat-map baseline, not an isolated cost of the current backend.
     suite.bench(format!("state_root/overlay_copy_only/{count}"), || {
         entries.clone()
     });
@@ -206,6 +205,29 @@ fn bench_change_counts(suite: &mut Suite) {
     }
 }
 
+/// Separates clustered updates from scattered paths and topology rebuilds.
+fn bench_update_shapes(suite: &mut Suite) {
+    let state = populated(LARGEST_TREE);
+    let root = state.root();
+    let mut scattered = StateDiff::new();
+    for index in 0..256 {
+        scattered.put(account_key(address_at(index * 16)), vec![7; 16]);
+    }
+    let mut insert = StateDiff::new();
+    insert.put(gap_key_at(0), vec![7; 16]);
+    let mut delete = StateDiff::new();
+    delete.delete(account_key(address_at(0)));
+    for (name, diff) in [
+        ("scattered_256", scattered),
+        ("insert_existing_gap", insert),
+        ("delete_first", delete),
+    ] {
+        suite.bench(format!("commit/prepare/{LARGEST_TREE}/{name}"), || {
+            state.prepare(root, std::slice::from_ref(&diff))
+        });
+    }
+}
+
 /// Records the ordered diff commitment over a swept change count.
 ///
 /// The commitment binds the operation sequence rather than the resulting
@@ -253,6 +275,7 @@ fn main() {
         bench_proofs(&mut suite, count);
     }
     bench_change_counts(&mut suite);
+    bench_update_shapes(&mut suite);
     bench_diff_commitment(&mut suite);
     bench_proof_transport(&mut suite);
     suite.report();

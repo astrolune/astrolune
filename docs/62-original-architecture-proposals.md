@@ -159,6 +159,10 @@ from the complete verified transaction plan have finished.
 
 ### Prerequisites for the first version
 
+The persistent state and cached Merkle foundation has since been implemented in
+[document 63](63-incremental-state.md). Early execution-driven sealing remains a
+research proposal and is not implemented by that backend change.
+
 Persistent/COW state and the cached Merkle levels from stage P1 are required;
 hashing optimization alone would leave full-map cloning and size scanning in
 place. The first version supports only a fixed set of existing keys. Insertions,

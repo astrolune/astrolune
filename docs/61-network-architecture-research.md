@@ -11,6 +11,10 @@ mechanisms to adopt, and experiment designs. It introduces no changes to Rust co
 or network rules. Original candidates are described in
 [document 62](62-original-architecture-proposals.md).
 
+Subsequent implementation: the state-backend portion of P1 is described in
+[document 63](63-incremental-state.md). The observations and measurements below
+remain the research baseline at the revision stated above.
+
 ## Implications for the project
 
 State and execution costs come first, followed by data propagation and finality.

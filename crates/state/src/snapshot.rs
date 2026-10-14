@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use codec::{DecodeError, Decoder};
 use types::{Hash256, StateKey};
 
-use crate::{StateChange, StateDiff, StateError, commitment};
+use crate::{StateChange, StateDiff, StateError, tree::Tree};
 
 /// Maximum number of entries in the reference state backend.
 pub const MAX_STATE_ENTRIES: usize = 1_048_576;
@@ -20,14 +20,13 @@ pub const MAX_STATE_VALUE_BYTES: usize = 1_048_576;
 pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 const MAGIC: &[u8; 8] = b"ASTSTATE";
 const VERSION: u16 = 1;
-const HEADER_BYTES: usize = 8 + 2 + 8 + 32;
+pub(crate) const HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 
 pub(crate) fn stage(
-    data: &BTreeMap<StateKey, Vec<u8>>,
+    mut next: BTreeMap<StateKey, Vec<u8>>,
     diffs: &[StateDiff],
 ) -> Result<BTreeMap<StateKey, Vec<u8>>, StateError> {
-    let mut next = data.clone();
-    let mut size = encoded_size(data)?;
+    let mut size = encoded_size(&next)?;
     for diff in diffs {
         for change in &diff.changes {
             if change.key().len() > MAX_STATE_KEY_BYTES {
@@ -62,13 +61,17 @@ pub(crate) fn stage(
     Ok(next)
 }
 
-pub(crate) fn encode(data: &BTreeMap<StateKey, Vec<u8>>, root: Hash256) -> Vec<u8> {
+pub(crate) fn encode<'a>(
+    count: usize,
+    entries: impl IntoIterator<Item = (&'a StateKey, &'a [u8])>,
+    root: Hash256,
+) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_le_bytes());
-    bytes.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(count as u64).to_le_bytes());
     bytes.extend_from_slice(root.as_bytes());
-    for (key, value) in data {
+    for (key, value) in entries {
         bytes.extend_from_slice(&(key.len() as u64).to_le_bytes());
         bytes.extend_from_slice(key.as_bytes());
         bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
@@ -77,7 +80,7 @@ pub(crate) fn encode(data: &BTreeMap<StateKey, Vec<u8>>, root: Hash256) -> Vec<u
     bytes
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<(BTreeMap<StateKey, Vec<u8>>, Hash256), StateError> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<(Tree, Hash256), StateError> {
     if bytes.len() > MAX_SNAPSHOT_BYTES {
         return Err(StateError::LimitExceeded);
     }
@@ -106,7 +109,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<(BTreeMap<StateKey, Vec<u8>>, Hash2
         let value = read_bytes(&mut decoder, MAX_STATE_VALUE_BYTES)?.to_vec();
         data.insert(key, value);
     }
-    if commitment::compute_root(&data) != root {
+    let data = Tree::from_map(data);
+    if data.hash() != root {
         return Err(StateError::RootMismatch);
     }
     Ok((data, root))
@@ -125,7 +129,7 @@ fn bounded_length(decoder: &mut Decoder<'_>, max: usize) -> Result<usize, StateE
     Ok(length)
 }
 
-fn entry_size(key: &StateKey, value: &[u8]) -> usize {
+pub(crate) fn entry_size(key: &StateKey, value: &[u8]) -> usize {
     16 + key.len() + value.len()
 }
 
