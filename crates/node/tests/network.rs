@@ -22,6 +22,9 @@ use types::{AccountState, Address, Hash256, Resources, Transaction, ValidatorId}
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+// These tests check eventual background progress, not runner I/O performance.
+const BACKGROUND_COMPLETION_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[test]
 fn double_vote_proofs_are_durable_bounded_and_never_count_forged_accusations() {
     let fixture = Fixture::new(4);
@@ -290,10 +293,15 @@ fn background_catchup_matches_serial_with_bounded_queued_exchanges() {
     let background_fixture = Fixture::new(1);
     let mut source = source_fixture.open(1);
     source.submit_transaction(transfer()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // Freeze consensus time: slow durable writes must not trigger round changes.
+    let now = Instant::now();
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     while source.request().height < 4 {
-        assert!(Instant::now() < deadline);
-        source.tick(Instant::now()).unwrap();
+        assert!(
+            Instant::now() < deadline,
+            "source production did not finish"
+        );
+        source.tick(now).unwrap();
     }
     let mut serial = serial_fixture.open(1);
     let mut background = background_fixture.open(1);
@@ -344,7 +352,7 @@ fn background_catchup_matches_serial_with_bounded_queued_exchanges() {
     assert_eq!(background.request(), request);
     background.respond(request).unwrap();
     background_observer.respond(request).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     loop {
         assert!(Instant::now() < deadline, "queued catchup did not finish");
         assert_eq!(background.poll_execution().unwrap(), 0);
@@ -398,24 +406,25 @@ fn background_production_keeps_captured_candidate_and_recovers_after_three_heigh
     let mut serial = serial_fixture.open(1);
     let mut background = background_fixture.open(1);
     background.enable_execution_pipeline().unwrap();
+    let now = Instant::now();
     // Start an empty candidate, then change admission while detached work owns its snapshot.
-    background.tick(Instant::now()).unwrap();
+    background.tick(now).unwrap();
     // The serial reference chooses the same empty first candidate before admission.
-    serial.tick(Instant::now()).unwrap();
+    serial.tick(now).unwrap();
     serial.submit_transaction(transfer()).unwrap();
     background.submit_transaction(transfer()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     while serial.request().height < 4 || background.request().height < 4 {
         assert!(
             Instant::now() < deadline,
             "background production did not finish"
         );
         if serial.request().height < 4 {
-            serial.tick(Instant::now()).unwrap();
+            serial.tick(now).unwrap();
         }
         if background.request().height < 4 {
             assert_eq!(background.poll_execution().unwrap(), 0);
-            background.tick(Instant::now()).unwrap();
+            background.tick(now).unwrap();
         }
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -436,7 +445,8 @@ fn background_production_keeps_captured_candidate_and_recovers_after_three_heigh
     let mut recovered = background_fixture.open(1);
     assert_eq!(recovered.storage().checkpoint().copied(), checkpoint);
     recovered.enable_execution_pipeline().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let now = Instant::now();
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     while recovered.request().height < 5 || serial.request().height < 5 {
         assert!(
             Instant::now() < deadline,
@@ -444,10 +454,10 @@ fn background_production_keeps_captured_candidate_and_recovers_after_three_heigh
         );
         if recovered.request().height < 5 {
             assert_eq!(recovered.poll_execution().unwrap(), 0);
-            recovered.tick(Instant::now()).unwrap();
+            recovered.tick(now).unwrap();
         }
         if serial.request().height < 5 {
-            serial.tick(Instant::now()).unwrap();
+            serial.tick(now).unwrap();
         }
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -470,8 +480,9 @@ fn background_production_progresses_during_continuous_admission() {
     let transactions: Vec<_> = (100..=179).map(transfer_from).collect();
     let mut node = fixture.open(1);
     node.enable_execution_pipeline().unwrap();
-    node.tick(Instant::now()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let now = Instant::now();
+    node.tick(now).unwrap();
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     for tx in transactions {
         assert!(
             Instant::now() < deadline,
@@ -480,7 +491,7 @@ fn background_production_progresses_during_continuous_admission() {
         // Every collection observes a newer admission sequence than its captured job.
         node.submit_transaction(tx).unwrap();
         assert_eq!(node.poll_execution().unwrap(), 0);
-        node.tick(Instant::now()).unwrap();
+        node.tick(now).unwrap();
         if node.request().height > 1 {
             let (first, _) = node.storage().read_finalized(1).unwrap().unwrap();
             assert_eq!(first.transactions, []);
@@ -501,7 +512,8 @@ fn background_production_gets_a_turn_with_a_nonempty_receive_backlog() {
         &vec![NetworkMessage::Transaction(transfer()); 512],
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let now = Instant::now();
+    let deadline = Instant::now() + BACKGROUND_COMPLETION_TIMEOUT;
     while node.request().height == 1 {
         assert!(
             Instant::now() < deadline,
@@ -512,7 +524,7 @@ fn background_production_gets_a_turn_with_a_nonempty_receive_backlog() {
         }
         // Refill faster than the bounded message budget can drain the mailbox.
         node.poll_execution().unwrap();
-        node.tick(Instant::now()).unwrap();
+        node.tick(now).unwrap();
         std::thread::sleep(Duration::from_millis(1));
     }
     let (first, _) = node.storage().read_finalized(1).unwrap().unwrap();

@@ -106,6 +106,7 @@ impl SnapshotSource for Chunks {
 
 #[test]
 fn restarts_preserve_bodies_certificates_and_historical_snapshots() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut history = Vec::new();
     for _ in 0..6 {
@@ -146,6 +147,7 @@ fn restarts_preserve_bodies_certificates_and_historical_snapshots() {
 
 #[test]
 fn rejected_or_failed_updates_preserve_disk_and_memory() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut storage = FileBackedStorage::open(fixture.path()).unwrap();
     let first = batch(storage.state(), None);
@@ -181,6 +183,7 @@ fn rejected_or_failed_updates_preserve_disk_and_memory() {
 
 #[test]
 fn snapshot_import_is_durable_and_atomic() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let source_fixture = Fixture::new();
     let destination_fixture = Fixture::new();
     let mut source = FileBackedStorage::open(source_fixture.path()).unwrap();
@@ -225,6 +228,7 @@ fn snapshot_import_is_durable_and_atomic() {
 
 #[test]
 fn corrupt_archive_fails_closed_and_pending_bytes_do_not_replace_it() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut storage = FileBackedStorage::open(fixture.path()).unwrap();
     let next = batch(storage.state(), None);
@@ -286,6 +290,7 @@ fn process_probe() {
 
 #[test]
 fn process_lock_and_abrupt_exit_recovery() {
+    let _fork_lock = testkit::fork_lock::spawning_child();
     let fixture = Fixture::new();
     let storage = FileBackedStorage::open(fixture.path()).unwrap();
     child(&fixture, "locked");
@@ -298,6 +303,7 @@ fn process_lock_and_abrupt_exit_recovery() {
 
 #[test]
 fn rename_failure_retains_the_published_version_for_retry() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut storage = FileBackedStorage::open(fixture.path()).unwrap();
     let next = batch(storage.state(), None);
@@ -318,6 +324,7 @@ fn rename_failure_retains_the_published_version_for_retry() {
 
 #[test]
 fn unsupported_transaction_version_cannot_publish_an_unrecoverable_archive() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut storage = FileBackedStorage::open(fixture.path()).unwrap();
     let before = fs::read(fixture.path()).unwrap();
@@ -334,6 +341,7 @@ fn unsupported_transaction_version_cannot_publish_an_unrecoverable_archive() {
 
 #[test]
 fn legacy_empty_archive_is_rejected_without_rewriting() {
+    let _fork_lock = testkit::fork_lock::holding_file_lock();
     let fixture = Fixture::new();
     let mut legacy = b"ASTSTORE".to_vec();
     legacy.extend_from_slice(&1_u16.to_le_bytes());
