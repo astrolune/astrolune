@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   tests:
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: ${{ matrix.profile }}
       - uses: actions/setup-python@v7
@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo doc --locked --workspace --all-features --no-deps
 
   build:
@@ -159,7 +159,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: ${{ matrix.target }}
       - uses: actions/setup-python@v7
@@ -285,7 +285,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: crates/codec/fuzz
       - name: Compile-check the workspace-excluded fuzz package
@@ -309,7 +309,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install pinned Rust toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: bench
       - uses: actions/setup-python@v7
