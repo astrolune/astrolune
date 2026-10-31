@@ -1204,6 +1204,7 @@ dependencies = [
 name = "trocto-runtime"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "trocto-compiler",
 ]
 

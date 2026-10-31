@@ -14,5 +14,8 @@ repository.workspace = true
 [dependencies]
 trocto-compiler = { version = "0.1.0", path = "../trocto-compiler" }
 
+[target.'cfg(windows)'.build-dependencies]
+cc = "=1.5.1"
+
 [lints]
 workspace = true

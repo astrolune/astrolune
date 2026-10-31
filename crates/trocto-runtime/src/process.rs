@@ -300,6 +300,12 @@ pub(crate) fn bounded_command(
                     terminate_tree(&mut child.0);
                     status = Some(code == 0);
                 }
+                #[cfg(windows)]
+                if status.is_none() && child.0.try_wait()?.is_some() {
+                    // A bootstrap failure must not masquerade as a timeout.
+                    // Re-read after exit to avoid racing the atomic publication.
+                    status = Some(std::fs::read_to_string(marker)?.parse::<u32>() == Ok(0));
+                }
             } else {
                 status = child.0.try_wait()?.map(|status| status.success());
             }
@@ -352,10 +358,13 @@ fn supervise(original: &Command) -> Result<Supervised, NativeError> {
     #[cfg(windows)]
     let (mut command, status) = {
         use std::os::windows::process::CommandExt;
-        let root = std::env::var_os("SystemRoot")
-            .ok_or_else(|| NativeError::Io("Windows system root unavailable".into()))?;
-        let script = directory.path.join("compiler-supervisor.ps1");
-        std::fs::write(&script, include_str!("compiler-supervisor.ps1"))?;
+        let executable = directory.path.join("compiler-supervisor.exe");
+        std::fs::write(
+            &executable,
+            include_bytes!(concat!(env!("OUT_DIR"), "/compiler-supervisor.exe")),
+        )?;
+        let status = directory.path.join("status");
+        std::fs::write(&status, [])?;
         let request = directory.path.join("arguments.bin");
         let mut bytes = Vec::new();
         for argument in std::iter::once(original.get_program()).chain(original.get_args()) {
@@ -370,24 +379,13 @@ fn supervise(original: &Command) -> Result<Supervised, NativeError> {
             bytes.extend_from_slice(argument.as_bytes());
         }
         std::fs::write(&request, bytes)?;
-        let mut command = Command::new(
-            PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-        );
+        let mut command = Command::new(windows_path(&executable));
         command
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-            ])
-            .arg(windows_path(&script))
-            .arg("-Request")
             .arg(windows_path(&request))
+            .arg(windows_path(&status))
             .stdin(Stdio::null());
         command.creation_flags(0x0800_0000);
-        (command, None)
+        (command, Some(status))
     };
     command
         .env_clear()
@@ -431,52 +429,100 @@ mod tests {
         assert!(second.path.is_dir());
     }
 
-    fn platform_command() -> Command {
-        #[cfg(unix)]
-        {
-            Command::new("/bin/sh")
-        }
-        #[cfg(windows)]
-        {
-            Command::new(
-                PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-                    .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            )
+    fn fixture_command(directory: &Path, mode: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        configure(&mut command, directory, Path::new("clang")).unwrap();
+        command
+            .args([
+                "--exact",
+                "process::tests::compiler_process_fixture",
+                "--nocapture",
+            ])
+            .env("TROCTO_TEST_COMPILER_MODE", mode);
+        command
+    }
+
+    #[test]
+    fn compiler_process_fixture() {
+        let Ok(mode) = std::env::var("TROCTO_TEST_COMPILER_MODE") else {
+            return;
+        };
+        match mode.as_str() {
+            "complete" => {}
+            "sleep" => std::thread::sleep(Duration::from_secs(30)),
+            "flood" => {
+                use std::io::Write;
+                let mut output = std::io::stdout().lock();
+                loop {
+                    if output
+                        .write_all(&[b'x'; 1024])
+                        .and_then(|()| output.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+            "descendant" => {
+                let mut child = Command::new(std::env::current_exe().unwrap());
+                child
+                    .args([
+                        "--exact",
+                        "process::tests::compiler_process_fixture",
+                        "--nocapture",
+                    ])
+                    .env("TROCTO_TEST_COMPILER_MODE", "sleep")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit());
+                #[allow(
+                    clippy::zombie_processes,
+                    reason = "this fixture deliberately leaves an inherited-pipe descendant for the supervisor to terminate"
+                )]
+                let _descendant = child.spawn().unwrap();
+                // Child::drop deliberately leaves this sleeping process and its
+                // inherited stdout alive; the supervisor must retire its tree.
+            }
+            _ => panic!("unknown compiler fixture mode"),
         }
     }
     #[test]
     fn compiler_descendant_inherited_pipes_end_when_direct_compiler_exits() {
         let directory = BuildDirectory::new().unwrap();
-        let mut command = platform_command();
-        configure(&mut command, &directory.path, Path::new("clang")).unwrap();
-        #[cfg(unix)]
-        command.args(["-c", "sleep 30 & printf 'compiler-done\\n'"]);
-        #[cfg(windows)]
-        command.args(["-NoProfile","-NonInteractive","-Command","Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/ping.exe') -ArgumentList @('-n','30','127.0.0.1') -NoNewWindow | Out-Null; [Console]::WriteLine('compiler-done')"]);
+        let command = fixture_command(&directory.path, "descendant");
         let start = Instant::now();
         let result = bounded_command(command, Duration::from_secs(5)).unwrap();
         assert!(result.success);
         assert!(start.elapsed() < Duration::from_secs(3));
     }
+
+    #[test]
+    fn parallel_compiler_completion_is_atomic() {
+        std::thread::scope(|scope| {
+            let mut children = Vec::new();
+            for _ in 0..4 {
+                children.push(scope.spawn(|| {
+                    for _ in 0..4 {
+                        let directory = BuildDirectory::new().unwrap();
+                        let result = bounded_command(
+                            fixture_command(&directory.path, "complete"),
+                            Duration::from_secs(5),
+                        )
+                        .unwrap();
+                        assert!(result.success, "{result:?}");
+                    }
+                }));
+            }
+            for child in children {
+                child.join().unwrap();
+            }
+        });
+    }
     #[test]
     fn compiler_timeout_and_diagnostic_limit_join_owned_readers() {
         for flood in [false, true] {
             let directory = BuildDirectory::new().unwrap();
-            let mut command = platform_command();
-            configure(&mut command, &directory.path, Path::new("clang")).unwrap();
-            #[cfg(unix)]
-            command.args(["-c", if flood { "yes x" } else { "sleep 30" }]);
-            #[cfg(windows)]
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                if flood {
-                    "1..10000 | ForEach-Object { [Console]::WriteLine('xxxxxxxx') }"
-                } else {
-                    "Start-Sleep -Seconds 30"
-                },
-            ]);
+            let command = fixture_command(&directory.path, if flood { "flood" } else { "sleep" });
             let start = Instant::now();
             let result = bounded_command(
                 command,

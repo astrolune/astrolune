@@ -109,7 +109,12 @@ context `6`, and capability bounds `7`.
 ## Native isolation and lifecycle
 
 Supported native workers target x86-64 Linux and Windows with LLVM **22.1.8** and
-lld. Linux establishes seccomp with pipe-only reads/writes, restricted syscalls
+lld. Native Windows builds use MSVC to build and embed the fixed compiler
+supervisor; the ordinary Rust build does not require native LLVM. The supervisor
+assigns the compiler's job and exact inherited standard handles before resuming
+its first thread. Completion is published through an atomic status-file rename
+after closing the owned job. This removes PowerShell and dynamic `Add-Type`
+compilation from runtime startup. Linux establishes seccomp with pipe-only reads/writes, restricted syscalls
 and process/CPU/stack/address-space limits. Windows launches workers in a
 capability-free AppContainer and a job with process/memory quotas. Startup checks
 the isolation identity and performs file, network, process and memory enforcement
