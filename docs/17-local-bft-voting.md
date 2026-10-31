@@ -4,7 +4,7 @@
 
 ## Implemented boundary
 
-`consensus::LocalBft` implements local prevote/precommit decisions for one trusted height and committee. It owns a protected `DurableSigner` and records every outgoing vote together with its committee and lock before returning the signature. `BftFinalityEngine` remains the separate bounded collector of authenticated evidence. The voting design is informed by [The latest gossip on BFT consensus](https://arxiv.org/abs/1807.04938); this implementation does not claim a complete implementation or proof of that protocol.
+`consensus::LocalBft` implements local prevote/precommit decisions for one trusted height and committee. It owns a protected `DurableSigner` and records every outgoing vote together with its committee and lock before returning the signature. `BftFinalityEngine` remains the separate bounded collector of authenticated evidence. The rules and limits described below define this voting path.
 
 The caller supplies independently trusted committee membership, keys, weights, chain ID, genesis commitment, and height. The low-level `prevote` callback must authenticate the designated proposer and validate the available block body, parent, capacity, and deterministic execution. The newer [signed-proposal API and reference participant](18-signed-proposals-and-participants.md) authenticate proposer statements before execution callbacks; the latter then only check availability and execution. A quorum alone never substitutes for that validation. `BlockProducer::validate_proposal` provides read-only execution checks against the producer's current state; it does not authenticate a proposer. Header-only callers must obtain and validate the corresponding complete proposal themselves.
 

@@ -4,15 +4,15 @@
 
 Date: October 15, 2026. Status: **planned / research hypothesis**.
 These are non-normative experiment designs, not implemented network properties.
-For context, the baseline, and the adoption plan, see
+For context, the baseline, and the development plan, see
 [document 61](61-network-architecture-research.md).
 
 ## What could qualify as an original contribution
 
 The names are provisional. Targeted searches for `"VeyraFold"` and
 `"LuneSeal" consensus blockchain` returned no matches; this does not establish
-global name uniqueness. This review cannot establish the absence of an equivalent
-mechanism across all networks.
+global name uniqueness or algorithmic originality. Those claims require a
+separate review of equivalent mechanisms.
 
 Novelty must rest on a verifiable algorithmic distinction. Prefix scans, dependency
 DAGs, incremental Merkle trees, memoization, and pipelining are already known.
@@ -116,16 +116,14 @@ such an operation's amount/output may depend on the preceding call's result.
 
 The candidate is a bounded algebraic executor for **complete AstroLune
 native-payment semantics**, combining prefix feasibility, reserve-versus-fee
-handling, nonces, per-transaction effects, and reference error replay. This is more
-specific than renaming Block-STM: successful supported segments have no VM
+handling, nonces, per-transaction effects, and reference error replay. Successful
+supported segments compute account transitions directly, without a VM
 speculate/abort/reexecute loop.
 
-The closest mandatory comparison is
-[RapidLane / deferred objects](https://arxiv.org/abs/2405.06117), which combines
-deferred operations with optimistic execution. Comparison with prefix-scan/escrow
-transaction algorithms outside blockchains is also required. If an equivalent
-composition with the same conditions and results already exists, the mechanism
-should be documented as an adaptation and the novelty claim withdrawn.
+The review must distinguish this complete composition from ordinary prefix scans,
+escrow accounting, and speculative transaction execution. If the same conditions
+and results follow from an established mechanism, the originality claim must be
+withdrawn. The reference executor remains the correctness oracle.
 
 ### Experiment and stopping conditions
 
@@ -210,18 +208,16 @@ If T3 later writes to A, seal A waits for T3 even if T0 finished much earlier.
 Computing hash(A) may overlap with T2, but the long contract may still determine
 the block's overall latency. Completing a seal does not establish finality.
 
-### Distinction and mandatory comparisons
+### Distinction and baseline requirements
 
 The proposed contribution is a **shared frontier of completed writes and ready
 commitment subtrees, with exact v1 equivalence and rollback of the whole attempt**,
 not a new Merkle hash, a new tree, or a new name for ordinary incremental updates.
 
-The closest directions are
-[AlDBaran](https://arxiv.org/abs/2508.10493),
-[MonadDb](https://docs.monad.xyz/monad-arch/execution/monaddb), and dependency-driven
-execution. Comparison with an ordinary incremental backend **without** early seals
-is essential: otherwise all gains could be incorrectly attributed to LuneSeal
-when a conventional cache actually produced them.
+Compare the proposal with the same incremental backend after all execution has
+finished, with early sealing disabled. This isolates the effect of coupling
+execution readiness to commitment readiness: ordinary cache reuse must not be
+credited to LuneSeal.
 
 ### Experiment and stopping conditions
 
@@ -245,12 +241,12 @@ when a conventional cache actually produced them.
 
 | Idea | Why it is not claimed as an original invention |
 |---|---|
-| Read/write access lists and parallel waves | Sealevel and other execution systems already use this principle |
-| MVCC, DAG scheduling, selective replay | Established in Block-STM and other transactional systems |
-| Prioritizing transactions that unblock others | Investigated, for example, in [NEMO](https://arxiv.org/abs/2510.15122) |
-| Finding executable portions of a dependency graph | Covered by recent work, including [Lantern](https://arxiv.org/abs/2609.03315) |
-| Caching results with read/context-set validation | Related to [Forerunner](https://www.microsoft.com/en-us/research/wp-content/uploads/2021/09/3477132.3483564.pdf) |
-| Incremental Merkle trees, prefetching, historical proof stores | Already researched and used, including in AlDBaran and MonadDb |
+| Read/write access lists and parallel waves | Established dependency and concurrency control |
+| MVCC, DAG scheduling, selective replay | Established transaction-processing techniques |
+| Prioritizing transactions that unblock others | A scheduling policy requiring correctness and workload evaluation |
+| Finding executable portions of a dependency graph | Dependency analysis rather than a new consensus mechanism |
+| Caching results with read/context-set validation | Memoization with explicit validity conditions |
+| Incremental Merkle trees, prefetching, historical proof stores | Established state-storage and commitment techniques |
 | Caching a verified VRF transition | Already implemented in AstroLune itself |
 
 ## Next-stage plan
@@ -265,6 +261,6 @@ when a conventional cache actually produced them.
 5. Only after positive results, propose enabling the default path, complete the
    full platform/recovery/compatibility gates, and run distributed benchmarks.
 
-This document delivers two research experiment specifications. Implementation,
-performance advantage, and the absence of equivalent mechanisms in other networks
-have not yet been established.
+This document delivers two research experiment specifications. Implementation
+and performance advantage remain to be established. Any originality claim also
+requires a separate review.

@@ -1,14 +1,14 @@
 <!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
-# 61. High-Performance Network Architectures and the AstroLune Development Plan
+# 61. AstroLune Architecture Research and Development Plan
 
 Research dates: October 14–15, 2026, Europe/Moscow. Source revision:
 `cfd94fd640051855bf6a1c3e6c445b815e817b99`.
 
 **Status: research document, not a normative protocol change.**
-This stage provides a comparative analysis, local measurements, decisions on which
-mechanisms to adopt, and experiment designs. It introduces no changes to Rust code
-or network rules. Original candidates are described in
+This stage assesses AstroLune architecture, records local measurements, and
+defines development priorities and experiment designs. It introduces no changes
+to Rust code or network rules. Original candidates are described in
 [document 62](62-original-architecture-proposals.md).
 
 Subsequent implementation: the state-backend portion of P1 is described in
@@ -24,7 +24,7 @@ for these existing mechanisms would not create a technical advantage.
 
 The practical sequence is: reproducible benchmark environment → incremental state
 and removal of unnecessary dependencies → execution without global wave barriers →
-original experimental mechanisms → distributed comparison. There is no reason to
+original experimental mechanisms → distributed qualification. There is no reason to
 change PoTB for branding or remove checks to increase TPS.
 
 PoTB is a short, distinctive name worth retaining. Under the current
@@ -32,61 +32,22 @@ PoTB is a short, distinctive name worth retaining. Under the current
 and BFT with prevote/precommit follow. The system's name should not obscure this
 separation. New execution mechanisms do not need to be named Proof-of-something.
 
-## Distinctive architectures in other networks
+## Architectural directions for AstroLune
 
-Here, “distinctive” describes a characteristic architecture, not proof of global
-priority. Whitepaper versions, deployed implementations, and activation plans
-differ. Promotional TPS figures are not used to rank networks.
+Each direction is evaluated against AstroLune transaction semantics, PoTB weights,
+VRF selection, certified finality, and durable publication. A faster processing
+stage is useful only when it preserves these guarantees and improves the complete
+execution path.
 
-| Network / direction | Architectural idea | What it accelerates and what limits it | Decision for AstroLune |
-|---|---|---|---|
-| Solana: Sealevel | Explicit read/write access; concurrent execution of independent transactions | Removes false read–read dependencies; writes to the same account remain dependent | Adopt more precise access classification; access lists already exist |
-| Solana: Turbine, Alpenglow | Erasure-coded propagation; Alpenglow separates Votor and Rotor | Reduces leader load and voting latency; changes the failure model and availability requirements | Investigate transport separately; do not transplant voting thresholds into PoTB |
-| TON | Dynamic shardchain splitting/merging and asynchronous messages between shards | Distributes state and computation; a cross-contract operation may require several messages | Adopt locality and bounded queues; defer full sharding |
-| TON: Catchain 2.0 / Simplex | Leader slots, notarization/finalization, and skip handling | Shortens agreement; correctness depends on precise rules and configuration | Use as input to separate BFT research, not as a drop-in replacement |
-| Aptos | Block-STM: speculative execution, state versions, dependency detection, and retries | Does not require precise access lists in advance; conflicts cause extra work | Adopt targeted conflict handling if profiling justifies the complexity |
-| Sui | Objects with explicit ownership/sharing; Mysticeti DAG consensus | The object model exposes independence; shared objects remain contention points | Adopt application data-design principles; no full state-model migration is needed |
-| Monad | Parallel execution, consensus/execution overlap, and specialized MonadDb | Overlaps computation and I/O; delayed execution requires its own reserve-balance rules | Adopt local overlap and state engineering; defer the delayed-root protocol |
-| NEAR | Nightshade and stateless validation with witnesses | Distributes load across shards and reduces state requirements for validators; witnesses consume bandwidth | Revisit after scaling a single validator and measuring the network |
-| Avalanche | Snowman: repeated subsampled polling and a probabilistic safety model | Reduces communication in the common case; uses a different finality model | Do not substitute it for PoTB certificates with a >2/3 quorum |
-| Ethereum | Separation of execution and data availability, blobs / the DAS direction | Scales data availability for rollups; does not directly accelerate L1 execution | Separate DA and execution metrics; do not adopt the full stack now |
-| Eclipse / AlDBaran | Specialized state commitments, separating the hot path from historical proofs | Reduces state-update cost; proof formats and persistence need separate verification | A high-priority reference for the state backend; updates/s are not network TPS |
-
-Primary sources for the table:
-
-- [Solana: Sealevel](https://solana.com/news/sealevel---parallel-processing-thousands-of-smart-contracts).
-- [Anza: Alpenglow, Votor, and Rotor](https://www.anza.xyz/blog/alpenglow-a-new-consensus-for-solana).
-- [TON: sharding](https://docs.ton.org/foundations/shards),
-  [Simplex](https://docs.ton.org/foundations/whitepapers/simplex),
-  [configuration](https://docs.ton.org/foundations/config).
-- [Aptos: execution](https://aptos.dev/network/blockchain/execution),
-  [Block-STM research](https://arxiv.org/abs/2203.06871).
-- [Sui: consensus](https://www.docs.sui.io/develop/sui-architecture/consensus),
-  [current transaction lifecycle](https://docs.sui.io/develop/transactions/transaction-lifecycle).
-- [Monad: parallel execution](https://docs.monad.xyz/monad-arch/execution/parallel-execution),
-  [asynchronous execution](https://docs.monad.xyz/monad-arch/consensus/asynchronous-execution),
-  [MonadDb](https://docs.monad.xyz/monad-arch/execution/monaddb).
-- [NEAR: Nightshade 2.0 and stateless validation](https://www.near.org/blog/nightshade-2-launches-on-near-mainnet-introducing-stateless-validation).
-- [Avalanche: consensus protocols](https://build.avax.network/docs/nodes/architecture/consensus).
-- [Ethereum: danksharding](https://ethereum.org/roadmap/danksharding/).
-- [AlDBaran: the authors' research](https://arxiv.org/abs/2508.10493).
-
-### Corrections to common summaries
-
-1. The 2019 Sealevel article explains the principle; it is not a reference for
-   current TPS or the complete implementation of a deployed Solana client. Anza's
-   Alpenglow latency estimates are based on simulation without computation
-   overhead. The materials reviewed here are not treated as confirmation that
-   Alpenglow has been activated on mainnet.
-2. TON cannot be described solely through legacy Catchain: official materials
-   include Simplex and parameter 30. The specific masterchain/shardchain mode
-   depends on configuration; code or a parameter's existence does not establish
-   activation everywhere.
-3. Current Sui documentation explicitly states that Mysticeti sequences all
-   transactions. The historical consensus-bypass path for owned objects must not
-   be presented as an unconditional description of the current path.
-4. Snowman is the current reference for Avalanche's Primary Network; the old
-   description of X-Chain as a DAG does not reflect its linearization.
+| Direction | Potential benefit and limit | Development decision |
+|---|---|---|
+| Precise read/write access | Independent reads can run together; writes to the same key remain ordered | Refine access classification where verified call semantics establish it |
+| Bounded coded propagation | Reduces repeated transmission; missing fragments and withholding require explicit recovery | Measure compact-exchange fallback and leader bandwidth before adding coding |
+| State locality and bounded queues | Reduces working-set and scheduling costs; cross-region operations still need ordered effects | Improve locality within the current state model before considering partitioning |
+| Targeted conflict handling | Avoids unnecessary global replay; speculation can add work under contention | Preserve the serial error order and require workload evidence before activation |
+| Execution and storage overlap | Hides some computation and I/O latency; staged results must remain private | Keep exact-context checks and publish only through the certified durable commit |
+| Cached state commitments | Reuses unchanged subtrees; insertion and deletion affect sorted-leaf positions | Preserve existing roots and proof formats, with explicit fallback |
+| Separate propagation and execution metrics | Identifies the actual bottleneck; bandwidth alone does not establish executed throughput | Measure successful finalized user operations and every completion stage |
 
 ## What the code actually implements
 
@@ -97,7 +58,7 @@ Primary sources for the table:
 | Contracts | [contract.rs](../crates/execution/src/contract.rs): calls read the code key, deployment writes it; `ArtifactCache` is already used | Access can be refined where semantics establish it; no need to reinvent the AOT cache |
 | State | [memory.rs](../crates/state/src/memory.rs), [snapshot.rs](../crates/state/src/snapshot.rs), [commitment.rs](../crates/state/src/commitment.rs): map copying, size scanning, and full Merkle rehashing | Cost depends on the entire state, not just changed keys |
 | Commitments | Sorted leaves; proofs include the index and leaf count | Insertions/deletions shift positions; replacing the structure with a Patricia trie would change roots and proofs |
-| Transport | [Document 54](54-compact-blocks-and-execution-pipeline.md): optional compact exchange with full 32-byte IDs and bounded fallback | Already implemented, but not Turbine/Rotor; measure reconstruction hit rate first |
+| Transport | [Document 54](54-compact-blocks-and-execution-pipeline.md): optional compact exchange with full 32-byte IDs and bounded fallback | Already implemented; measure reconstruction hit rate and fallback cost first |
 | Overlap | [producer/pipeline.rs](../crates/node/src/producer/pipeline.rs): detached execution, exact-context reuse, private staged state | Cache hits do not replace certificate verification or final durable publication |
 | Rotation | [Document 40](40-live-vrf-network.md): a verified batch and next-committee cache already exist | Simple “PoTB/VRF caching” would not be a new mechanism |
 | Limits | Producer defaults to 256 tx/block; reference state is limited to 1,048,576 entries and a 64 MiB snapshot | Larger throughput/state experiments require coordinated limit changes, not a single constant edit |
@@ -148,7 +109,7 @@ $env:ASTROLUNE_BENCH_TARGET_US = '1000'
 rustup run 1.99.0 cargo bench --locked -p state -p execution
 ```
 
-## Adoption priorities
+## Development priorities
 
 These are selected directions for the next stage, not optimizations already implemented.
 
@@ -168,21 +129,20 @@ require a separate versioned proposal. Deriving a read-only code key from verifi
 Call semantics may be possible without changing the format. Even then,
 differential tests must come first, including deploy→call and call→later conflict.
 
-Do not adopt yet: global TON/NEAR sharding, Sui's object model, replacing PoTB with
-Mysticeti/Snowman, Monad's delayed state roots, or unrestricted JIT enabled by
-relaxing the unsafe policy. These are separate architectural migrations with
-different obligations.
+Global state partitioning, a new ownership model, changes to finality rules,
+and delayed state roots require separate versioned designs and qualification.
+The current plan prioritizes the existing protocol and state model. Runtime
+optimizations must continue to satisfy the unsafe-code policy.
 
-## Evaluating a “fastest network” claim
+## Distributed performance qualification
 
-The claim must specify the workload class and conditions. One leaderboard cannot
-combine transfers, contended contracts, DA bandwidth, and finality latency.
+Every result must specify its workload and conditions. Transfers, contended
+contracts, data propagation, and finality latency need separate measurements.
 
 The primary metric is **unique, successfully executed user transactions with
 verifiable finalized receipts and completed durable publication per second,
 subject to a p99 bound and a stable queue**. Count votes, retries, rejected
-transactions, and internal messages separately. For TON, also distinguish messages,
-account transactions, and completed user operations.
+transactions, and internal messages separately.
 
 Minimum experiment matrix:
 
@@ -211,16 +171,16 @@ experiment protocol, not a completed run. Publish per-transaction p50/p95/p99,
 goodput, queue growth, abort/replay rate, CPU, peak RSS, bytes/tx, fsync latency,
 confidence intervals across independent repeats, and all configurations.
 
-Comparisons with other clients require matching operation semantics and completion
-guarantees. Where that is impossible, publish explicitly separate profiles.
-Do not compare AstroLune local execution with another network's WAN finality.
+Comparisons between AstroLune configurations require matching operation semantics
+and completion guarantees. Publish local execution and distributed finalized
+throughput as separate profiles.
 At 256 tx/block, the theoretical ceiling is
 `256 / mean finalized-block interval`; increasing the limit alone does not reduce
 computation, transmission, or durable commit costs.
 
 ## Outcome of this stage
 
-The comparison and local baseline are complete. Applicable mechanisms to adopt
-and two specific research designs have been selected. Their implementation,
-novelty validation, external audit, and a winning distributed comparison remain
-outstanding.
+The architecture assessment and local baseline are complete. Development
+priorities and two specific research designs have been selected. Further
+implementation, novelty validation, external audit, and distributed qualification
+remain outstanding.

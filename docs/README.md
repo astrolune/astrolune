@@ -70,7 +70,7 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Ahead-of-time contract backend](58-ahead-of-time-contract-backend.md)
 - [Unbounded consensus safety and liveness argument](59-unbounded-consensus-argument.md)
 - [Automated history retention](60-automated-history-retention.md)
-- [Network architecture research and benchmark baseline (non-normative)](61-network-architecture-research.md)
+- [AstroLune architecture research and benchmark baseline (non-normative)](61-network-architecture-research.md)
 - [VeyraFold and LuneSeal research proposals (non-normative)](62-original-architecture-proposals.md)
 - [Persistent version-1 state and incremental commitments](63-incremental-state.md)
 
