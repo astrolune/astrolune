@@ -13,7 +13,7 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 | [00-overview.md](00-overview.md) | goals, scope, principles, terminology |
 | [01-consensus-potb.md](01-consensus-potb.md) | PoTB, weighted VRF committees, rotation, BFT finality |
 | [02-architecture.md](02-architecture.md) | Rust workspace, node pipeline, P2P, adaptive capacity |
-| [03-vm-and-gas.md](03-vm-and-gas.md) | deterministic Rust runtime, AOT/JIT, lanes, metering |
+| [03-vm-and-gas.md](03-vm-and-gas.md) | versioned contract runtimes, native LLVM development, lanes, metering |
 | [04-state-and-transactions.md](04-state-and-transactions.md) | transactions, leasing, parallel scheduling, snapshots, state commit |
 | [05-contract-languages.md](05-contract-languages.md) | Rust smart-contract model and SDK boundary |
 | [06-deferred-services.md](06-deferred-services.md) | AstroLune DNS |
@@ -72,6 +72,7 @@ For a concise source-tree map, read [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 - [Automated history retention](60-automated-history-retention.md)
 - [AstroLune architecture research and benchmark baseline (non-normative)](61-network-architecture-research.md)
 - [VeyraFold and LuneSeal research proposals (non-normative)](62-original-architecture-proposals.md)
+- [Trocto language and native LLVM development runtime](64-trocto-native-llvm.md)
 - [Persistent version-1 state and incremental commitments](63-incremental-state.md)
 
 Legacy-shaped filenames such as `03-vm-and-gas.md`, `05-contract-languages.md`, and `06-deferred-services.md` are retained temporarily to preserve links. Their contents describe the current Rust architecture.
@@ -94,12 +95,12 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** express protocol r
 
 ## Explicit scope decisions
 
-- All first-party implementation is Rust.
+- Node, compiler, and runtime orchestration are implemented in Rust; the native LLVM worker uses a fixed generated host harness.
 - PoTB remains the primary consensus-weight model.
 - Weighted VRF selection and partial committee rotation are required.
 - Finality uses prevote/precommit and voting power strictly greater than two thirds.
 - Consensus orders transactions; execution independently verifies state transitions.
-- Contracts use a deterministic Rust subset; custom languages and ALVM are removed.
+- Trocto (`.tc`) is the contract-language development direction; native LLVM qualification and a new deployment profile precede validator activation.
 - AstroLune DNS is an ecosystem service.
 - General-purpose user storage or file sharing is outside scope; validator-local chain persistence remains required.
 

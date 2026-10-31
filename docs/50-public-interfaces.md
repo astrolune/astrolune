@@ -35,8 +35,9 @@ not validate or execute WASM and are not alternatives to the active `WasmRuntime
 reserved declaration with no implementation, and none is possible while
 `unsafe_code` is forbidden workspace-wide. Its `Aot` class is now reported by a
 real backend, `AotBackend`, and names when translation happened rather than any
-native code generation; no backend in this workspace emits machine code, and the
-interpreter profiles are asserted never to report it. `FullNodeService` similarly
+native code generation; this WebAssembly backend emits no machine code, and the interpreter profiles
+are asserted never to report it. The separate Trocto native development interface
+is specified in [document 64](64-trocto-native-llvm.md). `FullNodeService` similarly
 remains a local demonstration, as specified in the implementation status.
 
 ## Naming rules

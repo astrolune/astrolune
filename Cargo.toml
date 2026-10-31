@@ -26,6 +26,8 @@ members = [
     "crates/telemetry",
     "crates/testkit",
     "crates/transaction",
+    "crates/trocto-compiler",
+    "crates/trocto-runtime",
     "crates/types",
     "services/dns",
     "tests/integration",

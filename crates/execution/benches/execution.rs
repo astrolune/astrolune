@@ -349,6 +349,22 @@ fn contract_code() -> Vec<u8> {
     .expect("benchmark contract text is well formed")
 }
 
+/// Copies an input-selected key and value into one declared local state entry.
+fn disjoint_contract_code() -> Vec<u8> {
+    wat::parse_str(
+        r#"(module
+        (import "astrolune_v2" "input_copy" (func $input (param i32 i32 i32) (result i32)))
+        (import "astrolune_v2" "state_put" (func $put (param i32 i32 i32 i32) (result i32)))
+        (import "astrolune_v2" "output" (func $output (param i32 i32) (result i32)))
+        (memory (export "memory") 1 1)
+        (func (export "call") (result i32)
+          (drop (call $input (i32.const 0) (i32.const 16) (i32.const 2)))
+          (drop (call $put (i32.const 16) (i32.const 1) (i32.const 17) (i32.const 1)))
+          (drop (call $output (i32.const 17) (i32.const 1))) (i32.const 0)))"#,
+    )
+    .expect("disjoint benchmark contract text is well formed")
+}
+
 /// Returns the deterministic address of the contract attributed to `index`.
 fn installed(pool: &[Account], index: usize) -> Address {
     contract_address(CHAIN_ID, pool[index].address, 0)
@@ -356,10 +372,20 @@ fn installed(pool: &[Account], index: usize) -> Address {
 
 /// Builds one signed call declaring one contract-local key.
 fn contract_call(pool: &[Account], sender: usize, target: Address, input: u8) -> Transaction {
+    contract_call_with_key(pool, sender, target, b"k", &[input])
+}
+
+fn contract_call_with_key(
+    pool: &[Account],
+    sender: usize,
+    target: Address,
+    key: &[u8],
+    input: &[u8],
+) -> Transaction {
     let mut keys = vec![
         account_key(pool[sender].address),
         contract_code_key(target),
-        contract_state_key(target, b"k"),
+        contract_state_key(target, key),
     ];
     keys.sort();
     keys.dedup();
@@ -379,8 +405,8 @@ fn contract_call(pool: &[Account], sender: usize, target: Address, input: u8) ->
                 public_key: pool[sender].public_key,
                 action: ContractAction::Call {
                     address: target,
-                    input: vec![input],
-                    keys: vec![b"k".to_vec()],
+                    input: input.to_vec(),
+                    keys: vec![key.to_vec()],
                 },
             }
             .to_bytes(),
@@ -398,13 +424,23 @@ fn independent_calls(pool: &[Account], count: usize) -> Vec<Transaction> {
 
 /// Builds `count` calls from distinct senders to one shared contract.
 ///
-/// Every call declares the shared code key, which the planner treats as a
-/// write, so a hot contract plans as one singleton wave per call however many
-/// workers are available.
+/// Every call writes the same local key, so this workload remains one singleton
+/// wave per call even though its immutable code can be read concurrently.
 fn shared_calls(pool: &[Account], count: usize) -> Vec<Transaction> {
     let target = installed(pool, 0);
     (0..count)
         .map(|index| contract_call(pool, index, target, 1))
+        .collect()
+}
+
+/// Distinct senders and state keys share exactly one immutable contract module.
+fn shared_disjoint_calls(pool: &[Account], count: usize) -> Vec<Transaction> {
+    let target = installed(pool, CONTRACTS);
+    (0..count)
+        .map(|index| {
+            let key = u8::try_from(index).expect("contract count fits one key byte");
+            contract_call_with_key(pool, index, target, &[key], &[key, 1])
+        })
         .collect()
 }
 
@@ -441,6 +477,10 @@ fn parent(pool: &[Account]) -> InMemoryState {
     for index in 0..CONTRACTS {
         diff.put(contract_code_key(installed(pool, index)), code.clone());
     }
+    diff.put(
+        contract_code_key(installed(pool, CONTRACTS)),
+        disjoint_contract_code(),
+    );
     state
         .commit(state.root(), &[diff])
         .expect("parent state commits");
@@ -654,6 +694,18 @@ fn bench_contracts(suite: &mut Suite, pool: &[Account], database: &mut ReplaySta
             suite.bench(format!("contracts/shared_code/{plan}/w{workers}"), || {
                 execute_signed_parallel(database, &batch, root, CONTEXT, CAPACITY, workers)
             });
+        }
+
+        let batch = shared_disjoint_calls(pool, count);
+        let plan = shape(&batch);
+        suite.bench(format!("contracts/shared_disjoint/{plan}/serial"), || {
+            execute_signed(database, &batch, root, CONTEXT, CAPACITY)
+        });
+        for workers in WORKER_COUNTS {
+            suite.bench(
+                format!("contracts/shared_disjoint/{plan}/w{workers}"),
+                || execute_signed_parallel(database, &batch, root, CONTEXT, CAPACITY, workers),
+            );
         }
 
         let batch = mixed_lanes(pool, count);

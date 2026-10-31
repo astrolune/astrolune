@@ -9,8 +9,8 @@
 targets = []
 all-features = true
 # cargo-deny resolves only what cargo would compile, and prunes every
-# dev-dependency edge regardless of `exclude-dev`. Its graph is therefore 121 of
-# the 158 packages in Cargo.lock. The omitted 37 are enumerated, licence-checked
+# dev-dependency edge regardless of `exclude-dev`. Its graph is therefore 123 of
+# the 160 packages in Cargo.lock. The omitted 37 are enumerated, licence-checked
 # and bounded by .github/scripts/check-license-coverage.py against
 # .github/scripts/deny-coverage-baseline.json; see
 # docs/51-dependency-and-security-review.md.

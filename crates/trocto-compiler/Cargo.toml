@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Ankerin
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "trocto-compiler"
+description = "Bounded Trocto frontend and checked LLVM code generation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+types = { version = "0.1.0", path = "../types" }
+
+[lints]
+workspace = true

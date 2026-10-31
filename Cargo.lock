@@ -124,6 +124,8 @@ dependencies = [
  "proc-macro2",
  "runtime",
  "toml",
+ "trocto-compiler",
+ "trocto-runtime",
  "types",
  "wat",
 ]
@@ -1185,6 +1187,20 @@ dependencies = [
  "crypto",
  "testkit",
  "types",
+]
+
+[[package]]
+name = "trocto-compiler"
+version = "0.1.0"
+dependencies = [
+ "types",
+]
+
+[[package]]
+name = "trocto-runtime"
+version = "0.1.0"
+dependencies = [
+ "trocto-compiler",
 ]
 
 [[package]]

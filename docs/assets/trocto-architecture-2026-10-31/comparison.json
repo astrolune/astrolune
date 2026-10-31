@@ -1,0 +1,280 @@
+{
+  "after_scheduler_sha256": "9ad98c5889b559f626c47d75853788577e7885a7417939582262ef577c67f4ab",
+  "before_scheduler_sha256": "56dcb9e43620cad80d449b733a0fc692826d252ff1dc2c894cbdfc283e502cfb",
+  "compiler": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.0\nLLVM version: 23.1.1",
+  "copyright": "Copyright (c) 2026 Ankerin",
+  "host": "Windows-10-10.0.26200-SP0",
+  "license": "MIT",
+  "limits": "One Windows host, non-isolated background load, seven rounds; no network TPS or statistical significance claim.",
+  "logical_processors": 8,
+  "measurements": [
+    {
+      "after": {
+        "batch": 2,
+        "maximum_ns": 1041450,
+        "mean_ns": 931807,
+        "median_ns": 876650,
+        "minimum_ns": 847000,
+        "name": "contracts/shared_disjoint/16tx_1w/serial",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1156500,
+        "mean_ns": 946735,
+        "median_ns": 871150,
+        "minimum_ns": 848000,
+        "name": "contracts/shared_disjoint/16tx_16w/serial",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.994,
+      "workload": "contracts/shared_disjoint/16tx/serial"
+    },
+    {
+      "after": {
+        "batch": 1,
+        "maximum_ns": 1200800,
+        "mean_ns": 916342,
+        "median_ns": 867400,
+        "minimum_ns": 858100,
+        "name": "contracts/shared_disjoint/16tx_1w/w1",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1047700,
+        "mean_ns": 893107,
+        "median_ns": 845650,
+        "minimum_ns": 839900,
+        "name": "contracts/shared_disjoint/16tx_16w/w1",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.975,
+      "workload": "contracts/shared_disjoint/16tx/w1"
+    },
+    {
+      "after": {
+        "batch": 1,
+        "maximum_ns": 967500,
+        "mean_ns": 816857,
+        "median_ns": 788500,
+        "minimum_ns": 769900,
+        "name": "contracts/shared_disjoint/16tx_1w/w16",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1016100,
+        "mean_ns": 911842,
+        "median_ns": 890050,
+        "minimum_ns": 886900,
+        "name": "contracts/shared_disjoint/16tx_16w/w16",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.129,
+      "workload": "contracts/shared_disjoint/16tx/w16"
+    },
+    {
+      "after": {
+        "batch": 2,
+        "maximum_ns": 875650,
+        "mean_ns": 757578,
+        "median_ns": 756050,
+        "minimum_ns": 705500,
+        "name": "contracts/shared_disjoint/16tx_1w/w2",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1085750,
+        "mean_ns": 922628,
+        "median_ns": 896800,
+        "minimum_ns": 880250,
+        "name": "contracts/shared_disjoint/16tx_16w/w2",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.186,
+      "workload": "contracts/shared_disjoint/16tx/w2"
+    },
+    {
+      "after": {
+        "batch": 2,
+        "maximum_ns": 748650,
+        "mean_ns": 582250,
+        "median_ns": 539400,
+        "minimum_ns": 517500,
+        "name": "contracts/shared_disjoint/16tx_1w/w4",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1091150,
+        "mean_ns": 931492,
+        "median_ns": 888750,
+        "minimum_ns": 879300,
+        "name": "contracts/shared_disjoint/16tx_16w/w4",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.648,
+      "workload": "contracts/shared_disjoint/16tx/w4"
+    },
+    {
+      "after": {
+        "batch": 2,
+        "maximum_ns": 633650,
+        "mean_ns": 584135,
+        "median_ns": 588850,
+        "minimum_ns": 549500,
+        "name": "contracts/shared_disjoint/16tx_1w/w8",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 2,
+        "maximum_ns": 1049950,
+        "mean_ns": 933950,
+        "median_ns": 898300,
+        "minimum_ns": 890850,
+        "name": "contracts/shared_disjoint/16tx_16w/w8",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.526,
+      "workload": "contracts/shared_disjoint/16tx/w8"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 385375,
+        "mean_ns": 318546,
+        "median_ns": 297000,
+        "minimum_ns": 286925,
+        "name": "contracts/shared_disjoint/4tx_1w/serial",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 364450,
+        "mean_ns": 312907,
+        "median_ns": 304325,
+        "minimum_ns": 281500,
+        "name": "contracts/shared_disjoint/4tx_4w/serial",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.025,
+      "workload": "contracts/shared_disjoint/4tx/serial"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 365525,
+        "mean_ns": 296914,
+        "median_ns": 283825,
+        "minimum_ns": 282650,
+        "name": "contracts/shared_disjoint/4tx_1w/w1",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 302375,
+        "mean_ns": 287471,
+        "median_ns": 285525,
+        "minimum_ns": 282000,
+        "name": "contracts/shared_disjoint/4tx_4w/w1",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 1.006,
+      "workload": "contracts/shared_disjoint/4tx/w1"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 403175,
+        "mean_ns": 342682,
+        "median_ns": 334200,
+        "minimum_ns": 325550,
+        "name": "contracts/shared_disjoint/4tx_1w/w16",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 355150,
+        "mean_ns": 300328,
+        "median_ns": 291050,
+        "minimum_ns": 290225,
+        "name": "contracts/shared_disjoint/4tx_4w/w16",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.871,
+      "workload": "contracts/shared_disjoint/4tx/w16"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 452700,
+        "mean_ns": 393792,
+        "median_ns": 413850,
+        "minimum_ns": 338300,
+        "name": "contracts/shared_disjoint/4tx_1w/w2",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 387525,
+        "mean_ns": 317728,
+        "median_ns": 306075,
+        "minimum_ns": 291125,
+        "name": "contracts/shared_disjoint/4tx_4w/w2",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.74,
+      "workload": "contracts/shared_disjoint/4tx/w2"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 394950,
+        "mean_ns": 361114,
+        "median_ns": 364600,
+        "minimum_ns": 336525,
+        "name": "contracts/shared_disjoint/4tx_1w/w4",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 411600,
+        "mean_ns": 322896,
+        "median_ns": 298825,
+        "minimum_ns": 293775,
+        "name": "contracts/shared_disjoint/4tx_4w/w4",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.82,
+      "workload": "contracts/shared_disjoint/4tx/w4"
+    },
+    {
+      "after": {
+        "batch": 4,
+        "maximum_ns": 380950,
+        "mean_ns": 341957,
+        "median_ns": 332850,
+        "minimum_ns": 322750,
+        "name": "contracts/shared_disjoint/4tx_1w/w8",
+        "rounds": 7
+      },
+      "before": {
+        "batch": 4,
+        "maximum_ns": 359450,
+        "mean_ns": 309271,
+        "median_ns": 291750,
+        "minimum_ns": 291150,
+        "name": "contracts/shared_disjoint/4tx_4w/w8",
+        "rounds": 7
+      },
+      "median_ratio_before_over_after": 0.877,
+      "workload": "contracts/shared_disjoint/4tx/w8"
+    }
+  ],
+  "method": "Isolated local HEAD source copy with identical new benchmark fixtures; only scheduler.rs changed between sequential runs. Explicitly refreshed source mtime and verified recompilation and 16-to-1 wave change.",
+  "rounds": 7,
+  "source_revision": "04e9e039f8f6994145d1b7efc82e6085ffb2439d",
+  "target_round_us": 1000
+}

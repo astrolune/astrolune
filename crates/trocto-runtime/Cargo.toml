@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Ankerin
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "trocto-runtime"
+description = "Experimental native LLVM worker runtime for checked Trocto programs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+trocto-compiler = { version = "0.1.0", path = "../trocto-compiler" }
+
+[lints]
+workspace = true

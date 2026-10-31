@@ -1,54 +1,69 @@
 <!-- Copyright (c) 2026 Ankerin. SPDX-License-Identifier: MIT -->
 
-# 5. Rust Smart Contracts
+# 5. Trocto Contract Language
 
-## 5.1 Decision
+## 5.1 Direction and current implementation
 
-Rust is the only first-party smart-contract source language in the current architecture. Earlier custom languages and their custom VM are removed. This reduces duplicated compiler work and lets the project use established Rust parsing, tooling, testing, formatting, and developer knowledge.
+Trocto (`.tc`) is the source-language direction for new AstroLune contracts. Its
+compiler emits LLVM IR and native code through a pinned LLVM toolchain. The first
+local implementation provides immutable integer expressions, checked arithmetic,
+a reference evaluator, deterministic fuel, and a native worker. See
+[Trocto and the native LLVM runtime](64-trocto-native-llvm.md) for syntax, limits,
+commands, and activation requirements.
 
-The source language decision does not mean arbitrary Rust is deterministic or safe. Contracts use a restricted SDK and compile profile targeting a canonical runtime format.
+Existing signed deployments use the versioned WebAssembly ABI-v2 profile and
+restricted Rust tooling described in [document 29](29-parallel-payments-and-wasm.md).
+A new source language does not silently change the semantics of deployed code.
+Trocto stateful execution and consensus activation require a separate profile.
 
 ## 5.2 Build pipeline
 
 ```text
-Rust contract source
-  -> pinned Rust toolchain and AstroLune SDK
-  -> restricted target artifact
-  -> canonicalization and validation
-  -> deterministic metering instrumentation
-  -> deployment container
-  -> interpreter/AOT/JIT execution with differential verification
+Trocto source (.tc)
+  -> bounded parsing and type checking
+  -> immutable checked instruction program
+  -> deterministic metering and LLVM IR
+  -> pinned native compilation
+  -> isolated native execution and conformance verification
 ```
 
-A deployment records source metadata separately from canonical executable bytes. Consensus identifies code by canonical code hash, runtime ABI version, and metering version.
+Source identity, language version, metering version, compiler identity, and native
+artifact provenance have separate roles. Native bytes are local derived artifacts;
+validators must independently establish source semantics and accepted execution.
 
-## 5.3 SDK surface
+## 5.3 Safety model
 
-The SDK provides deterministic types and host calls for caller identity, contract address, block context, state reads/writes, events, hashing, signature verification, value transfer, and contract calls. Host APIs use explicit byte slices, bounded outputs, and typed errors.
+The initial subset has only immutable `u64` values and checked integer operations.
+It rejects pointers, references, allocation, arbitrary calls, imports, recursion,
+loops, and floating point. It avoids mutable aliasing and dangling references by
+not exposing them. Ownership and borrowing for richer values remain to be designed.
 
-The SDK does not expose networking, files, clocks, random devices, threads, environment variables, process functions, or direct operating-system allocation.
+A native process is a development boundary, not a production sandbox. Untrusted
+execution requires operating-system restrictions, bounded resources, hostile-input
+qualification, and independent review. No current Trocto command activates a
+validator runtime profile.
 
-## 5.4 Compatibility and upgrades
+## 5.4 Host ABI and state
 
-Runtime, ABI, serialization, standard library, and metering schedules are independently versioned. Existing deployed code keeps its declared versions. Nodes may cache compiled native artifacts, but must be able to regenerate or discard them without changing results.
+The initial native function consumes one integer and returns one integer plus
+charged fuel. State, events, caller identity, value transfer, hashing, and nested
+contract calls are subsequent host-ABI work. Those APIs must expose explicit
+capabilities, bounded byte values, typed errors, and staged effects.
 
-Contract upgradeability is an application pattern, not implicit code replacement. Immutable deployments plus an explicitly authorized proxy or migration contract are preferred because upgrade authority remains visible.
+The contract language must not expose networking, files, clocks, random devices,
+threads, environment variables, process functions, or unrestricted allocation.
 
-## 5.5 Tooling targets
+## 5.5 Compatibility and upgrades
 
-Planned tooling includes:
+Language, runtime, ABI, serialization, standard library, and metering schedules
+are independently versioned. Existing deployments retain their declared versions.
+Compiled artifacts may be regenerated or discarded without changing results.
+Source authorization and upgrade authority must remain explicit.
 
-- `cargo astrolune` build, validate, test, deploy, and verify commands;
-- a deterministic local runtime;
-- state-access-list generation and inspection;
-- resource reports by compute, memory, I/O, and bandwidth;
-- reproducible build metadata;
-- source verification;
-- contract fuzzing and property testing;
-- interpreter/AOT/JIT differential tests.
+## 5.6 Qualification
 
-## 5.6 Security rules
-
-Contract authors must use checked arithmetic or explicit wrapping operations, validate authorization, bound user-controlled loops and output, avoid unbounded state growth, and declare state access accurately. The runtime enforces lease and resource limits even if a contract is incorrect.
-
-No compiler or SDK release becomes consensus-supported until reproducible artifacts and cross-platform conformance vectors exist.
+Frontend bounds and rejection tests, arithmetic/fuel conformance, native/reference
+differential tests, reproducible compilation, supported-platform execution,
+resource isolation, state rollback, and historical replay are required milestones.
+A compiler or SDK release becomes consensus-supported only after its new runtime
+profile and conformance vectors have been reviewed and qualified.

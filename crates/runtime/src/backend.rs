@@ -16,8 +16,8 @@ pub enum BackendKind {
     ///
     /// Reported by [`crate::AotBackend`] only, and asserted never to be
     /// reported by an interpreter profile. It states when translation happened
-    /// and nothing about native code generation; no backend in this workspace
-    /// emits native machine code.
+    /// and nothing about native code generation; this legacy backend interface
+    /// does not include the separate Trocto native development worker.
     Aot,
     /// Reserved just-in-time class; no implementation is provided, and none is
     /// possible while `unsafe_code` is forbidden workspace-wide.

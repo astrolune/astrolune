@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 
 use execution::{ExecutionScheduler, GreedyScheduler, SerialScheduler};
+use state::{AccessMode, AccessRequest, StateLease};
+use transaction::{ContractAction, ContractPayload, contract_code_key};
 use types::{Address, Resources, StateKey, Transaction};
 
 fn transaction(sender: u8, keys: &[u8]) -> Transaction {
@@ -24,6 +26,160 @@ fn transaction(sender: u8, keys: &[u8]) -> Transaction {
         resource_limit: Resources::ZERO,
         payload: Vec::new(),
         signature: [0; 64],
+    }
+}
+
+fn contract_call(sender: u8, code: u8, keys: &[u8]) -> (Transaction, StateLease) {
+    let target = Address([code; 32]);
+    let code_key = contract_code_key(target);
+    let mut tx = transaction(sender, keys);
+    tx.lane = types::TransactionLane::Contracts;
+    tx.access_list.push(code_key.clone());
+    tx.payload = ContractPayload {
+        public_key: [sender; 32],
+        action: ContractAction::Call {
+            address: target,
+            input: Vec::new(),
+            keys: Vec::new(),
+        },
+    }
+    .to_bytes();
+    let lease = StateLease::new(tx.access_list.iter().map(|key| AccessRequest {
+        key: key.clone(),
+        mode: if key == &code_key {
+            AccessMode::Read
+        } else {
+            AccessMode::Write
+        },
+    }));
+    (tx, lease)
+}
+
+#[test]
+fn only_a_canonical_call_can_share_its_exact_code_key() {
+    let (call, expected) = contract_call(1, 9, &[1]);
+    assert_eq!(GreedyScheduler.lease(&call), expected);
+    let mut duplicated = call.clone();
+    duplicated.access_list.reverse();
+    duplicated
+        .access_list
+        .extend(call.access_list.iter().cloned());
+    assert_eq!(GreedyScheduler.lease(&duplicated), expected);
+
+    let mut foreign_code = call.clone();
+    let extra = contract_code_key(Address([8; 32]));
+    foreign_code.access_list.push(extra.clone());
+    assert!(
+        GreedyScheduler
+            .lease(&foreign_code)
+            .covers(&extra, AccessMode::Write)
+    );
+
+    for mutation in 0..5 {
+        let mut malformed = call.clone();
+        match mutation {
+            0 => {
+                malformed.payload.pop();
+            }
+            1 => malformed.payload.push(0),
+            2 => malformed.payload[0] ^= 1,
+            3 => malformed.payload[41..73].fill(0),
+            _ => malformed.lane = types::TransactionLane::Payments,
+        }
+        assert_eq!(
+            GreedyScheduler.lease(&malformed),
+            SerialScheduler.lease(&malformed)
+        );
+    }
+    let mut deploy = call;
+    deploy.payload = ContractPayload {
+        public_key: [1; 32],
+        action: ContractAction::Deploy(vec![0; 100_000]),
+    }
+    .to_bytes();
+    assert_eq!(
+        GreedyScheduler.lease(&deploy),
+        SerialScheduler.lease(&deploy)
+    );
+}
+
+#[test]
+fn a_writer_waits_for_the_highest_prior_reader_wave() {
+    let writer_a = transaction(1, &[1]);
+    let (reader_after_a, _) = contract_call(2, 9, &[1]);
+    let (independent_reader, _) = contract_call(3, 9, &[2]);
+    let mut writer_code = transaction(4, &[]);
+    writer_code.access_list = vec![contract_code_key(Address([9; 32]))];
+    let (reader_after_writer, _) = contract_call(5, 9, &[3]);
+    let plan = GreedyScheduler.plan(&[
+        writer_a,
+        reader_after_a,
+        independent_reader,
+        writer_code,
+        reader_after_writer,
+    ]);
+    assert_eq!(
+        plan.waves
+            .iter()
+            .map(|wave| &wave.transaction_indexes)
+            .collect::<Vec<_>>(),
+        vec![&vec![0, 2], &vec![1], &vec![3], &vec![4]]
+    );
+}
+
+#[test]
+fn generated_read_write_plans_match_an_independent_pairwise_oracle() {
+    for seed in 0u64..512 {
+        let mut random = seed;
+        let mut next = || {
+            random = random
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            (random >> 32) as usize
+        };
+        let entries: Vec<_> = (0..seed % 33)
+            .map(|_| {
+                let sender = u8::try_from(next() % 5 + 1).unwrap();
+                let code = u8::try_from(next() % 3 + 10).unwrap();
+                let key = u8::try_from(next() % 4).unwrap();
+                if next() % 3 == 0 {
+                    let mut tx = transaction(sender, &[key]);
+                    tx.access_list.push(contract_code_key(Address([code; 32])));
+                    let expected = SerialScheduler.lease(&tx);
+                    (tx, expected)
+                } else {
+                    contract_call(sender, code, &[key])
+                }
+            })
+            .collect();
+        let transactions: Vec<_> = entries.iter().map(|(tx, _)| tx.clone()).collect();
+        let mut positions: Vec<usize> = Vec::new();
+        for (index, (tx, expected)) in entries.iter().enumerate() {
+            assert_eq!(GreedyScheduler.lease(tx), *expected);
+            let wave = entries[..index]
+                .iter()
+                .enumerate()
+                .filter(|(_, (earlier, lease))| {
+                    earlier.sender == tx.sender || lease.conflicts_with(expected)
+                })
+                .map(|(index, _)| positions[index] + 1)
+                .max()
+                .unwrap_or(0);
+            positions.push(wave);
+        }
+        let plan = GreedyScheduler.plan(&transactions);
+        let mut actual = vec![usize::MAX; transactions.len()];
+        for (wave, group) in plan.waves.iter().enumerate() {
+            for &index in &group.transaction_indexes {
+                assert_eq!(
+                    actual[index],
+                    usize::MAX,
+                    "duplicate transaction, seed {seed}"
+                );
+                actual[index] = wave;
+            }
+        }
+        assert_eq!(actual, positions, "seed {seed}");
     }
 }
 

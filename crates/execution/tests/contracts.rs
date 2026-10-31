@@ -6,8 +6,8 @@
 use codec::CanonicalEncode;
 use crypto::blake2s::{ed25519_public_key, ed25519_sign};
 use execution::{
-    ExecutionError, SignedSession, TransactionOutput, execute_signed, execute_signed_parallel,
-    payment_resources,
+    ExecutionError, ExecutionScheduler, GreedyScheduler, SignedSession, TransactionOutput,
+    execute_signed, execute_signed_parallel, payment_resources,
 };
 use state::{
     InMemoryState, StateAbsenceProof, StateDatabase, StateDiff, StateError, StateProof,
@@ -55,6 +55,34 @@ fn code() -> Vec<u8> {
           (drop (call $output (i32.const 16) (i32.const 1))) (i32.const 0)))"#,
     )
     .unwrap()
+}
+
+fn disjoint_code() -> Vec<u8> {
+    wat::parse_str(
+        r#"(module
+        (import "astrolune_v2" "input_copy" (func $input (param i32 i32 i32) (result i32)))
+        (import "astrolune_v2" "state_put" (func $put (param i32 i32 i32 i32) (result i32)))
+        (import "astrolune_v2" "output" (func $output (param i32 i32) (result i32)))
+        (memory (export "memory") 1 1)
+        (func (export "call") (result i32)
+          (drop (call $input (i32.const 0) (i32.const 16) (i32.const 2)))
+          (drop (call $put (i32.const 16) (i32.const 1) (i32.const 17) (i32.const 1)))
+          (if (i32.eq (i32.load8_u (i32.const 17)) (i32.const 255)) (then unreachable))
+          (drop (call $output (i32.const 17) (i32.const 1))) (i32.const 0)))"#,
+    )
+    .unwrap()
+}
+
+fn disjoint_call(seed: u8, nonce: u64, target: Address, key: u8, value: u8) -> Transaction {
+    contract(
+        seed,
+        nonce,
+        ContractAction::Call {
+            address: target,
+            input: vec![key, value],
+            keys: vec![vec![key]],
+        },
+    )
 }
 fn sign(mut tx: Transaction, seed: u8) -> Transaction {
     tx.signature = ed25519_sign(&[seed; 32], signing_hash(&tx).as_bytes());
@@ -504,6 +532,103 @@ fn mixed_waves_match_serial_and_isolate_contract_state() {
                 balance: 1_000_000 - fees
             }
         );
+    }
+}
+
+#[test]
+fn shared_code_with_disjoint_state_runs_in_parallel_and_matches_every_serial_effect() {
+    let mut initial = funded();
+    execute_uncached(
+        &mut initial,
+        &[contract(1, 0, ContractAction::Deploy(disjoint_code()))],
+    )
+    .unwrap();
+    let target = contract_address(7, address(1), 0);
+    let transactions: Vec<_> = (0u8..3)
+        .flat_map(|round| {
+            (1u8..=3).map(move |seed| {
+                disjoint_call(
+                    seed,
+                    u64::from(round) + u64::from(seed == 1),
+                    target,
+                    seed,
+                    10 * round + seed,
+                )
+            })
+        })
+        .collect();
+    let plan = GreedyScheduler.plan(&transactions);
+    assert_eq!(plan.waves.len(), 3);
+    assert!(
+        plan.waves
+            .iter()
+            .all(|wave| wave.transaction_indexes.len() == 3)
+    );
+    let parent = initial.root();
+    let mut serial = initial.clone();
+    let expected =
+        execute_signed(&mut serial, &transactions, parent, context(), capacity()).unwrap();
+    for workers in [2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        assert_eq!(
+            execute_signed_parallel(
+                &mut parallel,
+                &transactions,
+                parent,
+                context(),
+                capacity(),
+                workers
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(parallel.root(), serial.root());
+        for seed in 1..=3 {
+            assert_eq!(
+                parallel.get(&contract_state_key(target, &[seed])),
+                Some([20 + seed].as_slice())
+            );
+        }
+    }
+    // A late trap must discard earlier private writes; an earlier resource
+    // refusal remains the canonical first error regardless of worker completion.
+    for resource_first in [false, true] {
+        let mut bad = transactions.clone();
+        bad[8] = disjoint_call(3, 2, target, 3, 255);
+        if resource_first {
+            bad[0].resource_limit.compute = 101;
+            bad[0] = sign(bad[0].clone(), 1);
+        }
+        let mut reference = initial.clone();
+        let error =
+            execute_signed(&mut reference, &bad, parent, context(), capacity()).unwrap_err();
+        assert_eq!(
+            error,
+            if resource_first {
+                ExecutionError::ResourceLimit
+            } else {
+                ExecutionError::Trap
+            }
+        );
+        for workers in [2, 3, 8, 32] {
+            let mut parallel = initial.clone();
+            assert_eq!(
+                execute_signed_parallel(
+                    &mut parallel,
+                    &bad,
+                    parent,
+                    context(),
+                    capacity(),
+                    workers
+                )
+                .unwrap_err(),
+                error
+            );
+            assert_eq!(parallel.root(), parent);
+            for seed in 1..=3 {
+                assert_eq!(parallel.get(&contract_state_key(target, &[seed])), None);
+            }
+        }
     }
 }
 

@@ -5,7 +5,8 @@
 
 use state::{AccessMode, StateLease};
 use std::collections::BTreeMap;
-use types::Transaction;
+use transaction::{ContractAction, ContractPayload, contract_code_key};
+use types::{StateKey, Transaction, TransactionLane};
 
 use crate::wave::{ExecutionPlan, ExecutionWave};
 
@@ -47,24 +48,62 @@ impl ExecutionScheduler for SerialScheduler {
 
 /// Places each transaction in the earliest wave after its conflicting predecessors.
 ///
-/// Declared keys are conservatively treated as writes until transactions encode
-/// access modes. Transactions from the same sender stay ordered for nonce and
+/// A canonical contract call reads its immutable code key. All other declared
+/// keys remain writes, including deployment code and unknown payloads. Readers
+/// can share a wave, while read/write and write/write dependencies retain block
+/// order. Transactions from the same sender also stay ordered for nonce and
 /// balance effects, even when their declared keys differ.
 pub struct GreedyScheduler;
 
+#[derive(Clone, Copy)]
+struct KeyHistory {
+    writer: Option<usize>,
+    last_access: usize,
+}
+
+fn read_only_code(transaction: &Transaction) -> Option<StateKey> {
+    if transaction.lane != TransactionLane::Contracts
+        // The canonical header is eight bytes plus a 32-byte public key. Avoid
+        // copying a deployment's potentially large code merely to classify it.
+        || !transaction.payload.starts_with(b"ALCON002")
+        || transaction.payload.get(40) != Some(&1)
+    {
+        return None;
+    }
+    match ContractPayload::decode(&transaction.payload).ok()?.action {
+        ContractAction::Call { address, .. } => Some(contract_code_key(address)),
+        ContractAction::Deploy(_) => None,
+    }
+}
+
+fn access_mode(key: &StateKey, read_only: Option<&StateKey>) -> AccessMode {
+    if read_only == Some(key) {
+        AccessMode::Read
+    } else {
+        AccessMode::Write
+    }
+}
+
 impl ExecutionScheduler for GreedyScheduler {
     fn plan(&self, transactions: &[Transaction]) -> ExecutionPlan {
-        let mut last_key_wave = BTreeMap::new();
+        let mut key_history: BTreeMap<&StateKey, KeyHistory> = BTreeMap::new();
         let mut last_sender_wave = BTreeMap::new();
         let mut waves: Vec<ExecutionWave> = Vec::new();
 
         for (index, transaction) in transactions.iter().enumerate() {
+            let read_only = read_only_code(transaction);
             // Planning only needs key equality; borrow the original keys instead
             // of cloning and normalizing a lease for every transaction.
             let predecessor = transaction
                 .access_list
                 .iter()
-                .filter_map(|key| last_key_wave.get(key).copied())
+                .filter_map(|key| {
+                    let history = key_history.get(key)?;
+                    match access_mode(key, read_only.as_ref()) {
+                        AccessMode::Read => history.writer,
+                        AccessMode::Write => Some(history.last_access),
+                    }
+                })
                 .chain(last_sender_wave.get(&transaction.sender).copied())
                 .max();
             let wave = predecessor.map_or(0, |previous| previous + 1);
@@ -77,7 +116,21 @@ impl ExecutionScheduler for GreedyScheduler {
             // Update only after all predecessors are read so duplicate keys
             // cannot make a transaction depend on itself.
             for key in &transaction.access_list {
-                last_key_wave.insert(key, wave);
+                let write = access_mode(key, read_only.as_ref()) == AccessMode::Write;
+                key_history
+                    .entry(key)
+                    .and_modify(|history| {
+                        // A later independent reader can occupy an earlier wave.
+                        // A future writer must still wait for every prior reader.
+                        history.last_access = history.last_access.max(wave);
+                        if write {
+                            history.writer = Some(wave);
+                        }
+                    })
+                    .or_insert(KeyHistory {
+                        writer: write.then_some(wave),
+                        last_access: wave,
+                    });
             }
             last_sender_wave.insert(transaction.sender, wave);
         }
@@ -85,7 +138,16 @@ impl ExecutionScheduler for GreedyScheduler {
     }
 
     fn lease(&self, transaction: &Transaction) -> StateLease {
-        SerialScheduler.lease(transaction)
+        let read_only = read_only_code(transaction);
+        StateLease::new(
+            transaction
+                .access_list
+                .iter()
+                .map(|key| state::AccessRequest {
+                    key: key.clone(),
+                    mode: access_mode(key, read_only.as_ref()),
+                }),
+        )
     }
 }
 

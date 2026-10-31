@@ -42,7 +42,7 @@ AstroLune is a modular blockchain node implemented as a Rust workspace. It is bu
 | Finality | Proposal, prevote, and precommit with > ⅔ voting power | Certified fixed or genesis-v2 rotating daemon network |
 | Execution | Deterministic state transitions with parallel scheduling | Parallel signed payments and ABI-v2 contract waves |
 | Persistence | Snapshots, archives, genesis, accounts, and recovery | Append-only chain log, atomic publication, verified replay recovery |
-| Contracts | Restricted deterministic Rust runtime boundary | Metered integer WebAssembly; signed deployment and calls |
+| Contracts | Trocto source and native LLVM development | Checked `.tc` frontend and native worker; existing signed deployments use ABI-v2 WebAssembly |
 | Ecosystem | AstroLune DNS registry and resolution | On-chain ownership/leases and certified-proof resolver |
 
 ## Design pillars
@@ -54,7 +54,7 @@ AstroLune is a modular blockchain node implemented as a Rust workspace. It is bu
 | **Fast finality** | Proposal, prevote, and precommit require voting power strictly above two thirds. |
 | **Separated execution** | Consensus fixes order; deterministic execution independently computes state transitions. |
 | **Parallel performance** | State leasing, execution waves, optimistic replay, lanes, batching, locality, and prefetch are designed as separate concerns. |
-| **Deterministic contracts** | Restricted Rust source targets a versioned canonical runtime; the interpreter and the ahead-of-time backend are qualified to agree field for field, including charged compute. |
+| **Deterministic contracts** | Trocto development checks native LLVM results against explicit integer and fuel semantics; signed runtime profiles preserve deployment identity and historical behavior. |
 | **Lean networking** | Bounded binary P2P frames and compact-block reconstruction keep the network surface explicit. |
 | **Independent services** | DNS registry and resolution remain separate from validator signing authority. |
 

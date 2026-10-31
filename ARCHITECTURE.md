@@ -9,7 +9,7 @@ This document is the short repository map. The detailed engineering specificatio
 1. **Foundation:** `codec` and `types` define bounded canonical bytes and shared values.
 2. **Chain configuration and security:** `genesis`, `crypto`, and `keystore` define chain identity, cryptographic providers, and key isolation.
 3. **Protocol:** `transaction` and `consensus` define admission and finalized ordering.
-4. **State and execution:** `state`, `runtime`, and `execution` define snapshots, Rust contract semantics, scheduling, and diffs.
+4. **State and execution:** `state`, `runtime`, and `execution` define snapshots, active contract semantics, scheduling, and diffs. `trocto-compiler` and `trocto-runtime` provide the native LLVM development path.
 5. **Node policy and persistence:** `mempool`, `storage`, and `sync` remain outside core validity rules where possible.
 6. **Transport and orchestration:** `p2p`, `rpc`, `config`, `telemetry`, and `node` connect bounded subsystems.
 7. **Products:** `daemon`, `cli`, `cargo-contract`, DNS are executable integration surfaces.

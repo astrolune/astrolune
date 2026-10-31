@@ -19,9 +19,9 @@
       "0.262.0"
     ]
   },
-  "graph_packages": 121,
+  "graph_packages": 123,
   "license": "MIT",
-  "locked_packages": 158,
+  "locked_packages": 160,
   "measured_on": "2026-10-31",
   "uncovered": [
     {
