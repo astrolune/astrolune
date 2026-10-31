@@ -50,8 +50,17 @@ impl Fixture {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        process.stdin.take().unwrap().write_all(password).unwrap();
-        process.wait_with_output().unwrap()
+        let password_write = process.stdin.take().unwrap().write_all(password);
+        let output = process.wait_with_output().unwrap();
+        if let Err(error) = password_write {
+            // Invalid inputs can be rejected before the command reads its password.
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+            assert!(
+                !output.status.success(),
+                "command closed stdin without reading the password"
+            );
+        }
+        output
     }
     fn sign(&self, recipient: Address) -> Output {
         self.command(&[
