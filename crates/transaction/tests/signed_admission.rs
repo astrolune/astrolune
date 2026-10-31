@@ -92,6 +92,39 @@ fn admits_valid_signature_without_mutating_account_state() {
 }
 
 #[test]
+fn native_contract_payload_is_signed_and_key_mismatch_is_rejected() {
+    let validator = validator(account(), MAX_RESOURCES, PRICES);
+    for action in [
+        transaction::ContractAction::DeployTrocto(b"fn call(input: u64) -> u64 { input }".to_vec()),
+        transaction::ContractAction::CallTrocto {
+            address: Address([9; 32]),
+            input: vec![0; 8],
+            keys: vec![],
+        },
+    ] {
+        let mut tx = signed_transaction();
+        tx.lane = types::TransactionLane::Contracts;
+        tx.payload = transaction::ContractPayload {
+            public_key: ed25519_public_key(&SEED),
+            action: action.clone(),
+        }
+        .to_bytes();
+        tx.signature = ed25519_sign(&SEED, signing_hash(&tx).as_bytes());
+        assert!(validator.validate(tx.clone(), context()).is_ok());
+        tx.payload = transaction::ContractPayload {
+            public_key: [0; 32],
+            action,
+        }
+        .to_bytes();
+        tx.signature = ed25519_sign(&SEED, signing_hash(&tx).as_bytes());
+        assert_eq!(
+            validator.validate(tx, context()),
+            Err(TransactionError::UnsupportedPayload)
+        );
+    }
+}
+
+#[test]
 fn signatures_and_ids_bind_every_transaction_field() {
     let original = signed_transaction();
     let mut variants = vec![original.clone(); 17];

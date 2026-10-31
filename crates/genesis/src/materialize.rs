@@ -45,8 +45,8 @@ impl Genesis {
                 vec![2],
             );
         }
-        if self.runtime_version == 2 {
-            diff.put(runtime_key(), 2u32.to_le_bytes().to_vec());
+        if self.runtime_version >= 2 {
+            diff.put(runtime_key(), self.runtime_version.to_le_bytes().to_vec());
         }
         for validator in &self.validators {
             diff.put(

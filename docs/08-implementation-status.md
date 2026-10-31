@@ -4,7 +4,7 @@
 
 ## 8.1 Current baseline
 
-As of 2026-10-08, this repository contains a Rust 2024 workspace with:
+As of 2026-11-01, this repository contains a Rust 2024 workspace with:
 
 - canonical shared types and bounded decoder primitives;
 - standard BLAKE2s-256 and strict Ed25519 backends, canonical transaction commitments, and state-aware signed admission;
@@ -14,6 +14,7 @@ As of 2026-10-08, this repository contains a Rust 2024 workspace with:
 - authenticated double-vote evidence, bounded durable validator evidence outboxes, offline evidence CLI verification, experimental deterministic scoring and an explicit PoTB producer profile with canonical inclusion, active age weights, quorum admission and authenticated recovery, with daemon activation and RPC/CLI/DNS verification;
 - bounded finalized-block history RPC for read-only explorers, alongside status and account reads;
 - an allocation-free Rust contract SDK with tested wasm32 host bindings and bounded offline source-package reconstruction;
+- a bounded Trocto `.tc` compiler, typed scalar/control/state profiles, pinned LLVM native workers with OS isolation, reference/native comparison and explicit genesis runtime profile 3;
 - an on-chain DNS registry with owner-authorized leases and a certified-proof resolver;
 - operator CLI with genesis verification, validator/devnet provisioning and a native-payment wallet, a network-capable daemon, and pinned Rust contract build/source verification tools;
 - CI, dependency-policy automation, contribution templates, project governance documents, and engineering specifications;
@@ -36,11 +37,11 @@ The repository now runs a **certified reference network** for native payments an
 | Transactions | canonical signing/ID commitments and state-aware signed validator implemented/tested; native signed payment transitions and fixed reference fees implemented/tested; version-1 envelope, inclusive expiry, signed lane/prices, and expiry eviction implemented/tested |
 | Mempool | bounded in-memory reference admission and deterministic selection implemented/tested |
 | State and storage | bounded Merkle state, membership and absence proofs, immutable snapshots, atomic transitions, file-backed state and whole-chain archive recovery, and authenticated snapshot exchange implemented/tested; daemon block/state restart recovery implemented/tested; native payment account transitions implemented/tested; append-only block/delta logs with disk history reads, atomic head publication and replay recovery are implemented/tested for new network directories; bounded recent transaction indexing and certified receipt recovery are implemented/tested; bounded historical state indexing is implemented; explicit pinned physical retention and [automated in-place retention](60-automated-history-retention.md) with a durable local anchor and daemon activation are implemented/tested |
-| Runtime and execution | signed serial/parallel payments and ABI-v2 contract waves, bounded integer WebAssembly interpreter, staged writes/events and atomic publication; worker-count/error equivalence tested; explicit rotating-producer VRF system lane reserves resources and commits atomically; genesis-v2 daemon activation is implemented; quorum capacity/fee governance is implemented; alternate engine configurations are qualified across the backend seam and lazy compilation is a measured, pinned prohibition because its deferred translation is charged to the call's fuel; an [ahead-of-time backend](58-ahead-of-time-contract-backend.md) that completes translation before a call's budget exists, with a bounded generational artifact cache, is implemented/tested on the live contract path; native Trocto development is described in [document 64](64-trocto-native-llvm.md); in-process JIT and SIMD are outside the active runtime profile |
+| Runtime and execution | signed serial/parallel payments and ABI-v2 contract waves, bounded integer WebAssembly interpreter, staged writes/events and atomic publication; worker-count/error equivalence tested; explicit rotating-producer VRF system lane reserves resources and commits atomically; genesis-v2 daemon activation is implemented; quorum capacity/fee governance is implemented; alternate engine configurations are qualified across the backend seam, with lazy compilation prohibited because deferred translation is charged to call fuel; the bounded [ahead-of-time backend](58-ahead-of-time-contract-backend.md) completes translation before the call budget and is implemented/tested on the historical contract path; [Trocto native execution](64-trocto-native-llvm.md) adds pinned LLVM 22.1.8, Linux/Windows x86-64 OS-isolated persistent workers, bounded artifact/worker pools and complete value/fuel/state/write/event comparison with reference semantics under genesis runtime profile 3; readiness-driven dependency dispatch preserves canonical ordering with immutable declared-key views; infrastructure failures remain local, with no native-to-reference execution fallback; in-process JIT and SIMD are outside the active runtime profile |
 | Sync, P2P, RPC, and node | node demonstration pipeline with staged proposal execution, atomic commit, retry preservation, and canonical transaction/receipt leaves; genesis-backed native payment admission/execution and daemon RPC implemented/tested; genesis-free admission and finality remain demonstrations; explicit producer certified proposal/commit APIs and a reference round-robin participant coordinate signed proposals, evidence, timeout events, and recovery; certified validator and non-voting observer networking over mutual TLS 1.3, transaction gossip, available-value persistence, full-history certificate authentication, sequential catch-up, scoped private-network discovery, bounded reusable sessions and authenticated observer export implemented/tested |
 | Configuration | pure validation and debug redaction baseline |
 | Telemetry | bounded fixed-cardinality operational counters and optional loopback Prometheus endpoint implemented/tested; measurements never enter consensus |
-| Contracts | pinned Rust builds and artifact tools; signed deployment/calls under genesis profile 2, fee/nonce transitions and certified restart/catch-up tested; allocation-free SDK host bindings implemented/tested; bounded offline source packages and exact artifact reconstruction implemented/tested |
+| Contracts | historical pinned Rust/ABI-v2 builds, signed deployment/calls under genesis runtime profile 2, fee/nonce transitions, SDK host bindings and bounded offline source reconstruction implemented/tested; [Trocto](64-trocto-native-llvm.md) `.tc` and `.tcp` source tooling, language/metering profiles 1/1 and 2/2, typed Copy scalars, control flow, state capabilities, events and signed profile-3 deployment/calls implemented; historical ABI-v2 calls retain their behavior under profile 3; aggregate ownership/borrowing and independent compiler/runtime security review remain open |
 | DNS | bounded on-chain registry, ownership/lease transitions, confusable-name reservations, transaction preparation and certified-proof TCP resolver implemented/tested |
 | CLI and daemon | CLI genesis verification; local daemon with file-backed block/state recovery, genesis activation, strict arguments, startup failure propagation, and durable RPC head; signed native payments and committed account/submission RPC implemented/tested; opt-in certified fixed-committee network, devnet provisioning, and standalone TLS identity provisioning implemented/tested; default local mode retains demonstration finality |
 
@@ -56,7 +57,7 @@ The current design removes:
 - C and C++ as node implementation languages; the Trocto native worker uses a fixed generated host harness;
 - the C ABI as the primary module boundary;
 - ALVM and its custom instruction set;
-- the earlier Regol and Kreep contract designs; Trocto now has the development profile in [document 64](64-trocto-native-llvm.md);
+- the earlier Regol and Kreep contract designs; Trocto now has bounded language profiles and explicitly activated native execution in [document 64](64-trocto-native-llvm.md);
 - a general-purpose off-chain user storage/share service;
 - claims that VRF is intentionally absent;
 - historical implementation claims not represented by this Rust repository.
@@ -82,6 +83,22 @@ Implemented reference state commitments, membership and absence proofs, bounded 
 ### M3 — deterministic runtime
 
 Pinned Rust contract toolchain, target selection, validator, interpreter, host ABI, resource metering, SDK, reproducible artifacts, source verification, and differential execution.
+
+Historical ABI-v2 WebAssembly execution and its Rust SDK/source tools remain
+implemented. [Trocto](64-trocto-native-llvm.md) adds checked `.tc` source and `.tcp`
+packages, typed `u64`/`bool` Copy scalars, mutable lexical locals, branches,
+short-circuit logic, fuel-bounded loops, literal/dynamic state capabilities and
+events. Pinned LLVM 22.1.8 compiles checked IR into persistent Linux/Windows x86-64
+workers with OS isolation and bounded pools. The stateful native ABI compares
+every value, fuel count, state slot, write flag and event against the independent
+reference evaluator before publishing private effects. Signed deployment/calls,
+fees, receipts and historical ABI-v2 compatibility are implemented under explicit
+genesis runtime profile 3.
+
+These implementations and conformance checks do not complete Rust-style aggregate
+ownership/borrowing, independent compiler/runtime security review or production
+qualification. Native artifacts are local derived data; independent-machine
+reproducibility remains an external release gate.
 
 ### M4 — parallel execution
 
@@ -182,7 +199,7 @@ Before production implementation, resolve:
 2. Alternative availability policies beyond the implemented complete-roster private-network profile.
 3. Rotating weighted BFT lock, unlock, timeout, and handoff rules.
 4. Versioned activation of future protocol changes; current encoding/hash compatibility is fixed by the [literal corpus](41-protocol-compatibility.md).
-5. Cross-platform contract artifact qualification; bounded offline source reconstruction, ABI-v2 WebAssembly, its host SDK and Rust 1.99.0 builds are implemented.
+5. Cross-platform contract artifact qualification and independent compiler/runtime review; bounded offline source reconstruction, historical ABI-v2 WebAssembly/Rust tooling and Trocto's pinned LLVM, OS-isolated stateful ABI and genesis runtime profile 3 are implemented. Aggregate ownership/borrowing requires a new language profile.
 6. Production state indexing and concrete durable chain database engine; the reference Merkle commitment is specified.
 7. Transaction ordering, anti-MEV policy and lane borrowing; versioned fee governance is implemented.
 8. Adaptive-capacity observation, manipulation resistance, and activation.

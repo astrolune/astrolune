@@ -80,7 +80,7 @@ impl Genesis {
         if self.chain_id == 0 || self.runtime_version == 0 {
             return Err(GenesisError::InvalidIdentity);
         }
-        if self.runtime_version > 2 {
+        if self.runtime_version > 3 {
             return Err(GenesisError::UnsupportedVersion);
         }
         if self.validators.len() > MAX_GENESIS_VALIDATORS

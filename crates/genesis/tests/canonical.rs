@@ -313,3 +313,34 @@ fn rotating_activation_is_explicit_in_genesis_bytes_and_materialized_state() {
         Some([2].as_slice())
     );
 }
+
+#[test]
+fn native_runtime_profile_is_explicit_and_preserves_historical_state() {
+    let base = fixture();
+    assert!(
+        base.materialize()
+            .unwrap()
+            .get(&genesis::runtime_key())
+            .is_none()
+    );
+    let mut roots = vec![base.materialize().unwrap().root()];
+    for version in [2u32, 3] {
+        let mut genesis = base.clone();
+        genesis.runtime_version = version;
+        let encoded = genesis.to_bytes();
+        assert_eq!(Genesis::decode(&encoded).unwrap(), genesis);
+        let state = genesis.materialize().unwrap();
+        assert_eq!(
+            state.get(&genesis::runtime_key()),
+            Some(version.to_le_bytes().as_slice())
+        );
+        assert!(!roots.contains(&state.root()));
+        roots.push(state.root());
+    }
+    let mut unsupported = base;
+    unsupported.runtime_version = 4;
+    assert_eq!(
+        unsupported.validate(),
+        Err(GenesisError::UnsupportedVersion)
+    );
+}

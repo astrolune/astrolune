@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
-//! Validates, builds, and runs bounded WebAssembly contract artifacts.
+//! Checks, packages, builds and executes Trocto and historical ABI-v2 contracts.
 
 #![forbid(unsafe_code)]
 

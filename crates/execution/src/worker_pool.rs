@@ -10,6 +10,103 @@ use std::{
 
 use crate::ExecutionError;
 
+struct ReadyWorker<'scope, T> {
+    requests: Option<SyncSender<T>>,
+    handle: Option<ScopedJoinHandle<'scope, ()>>,
+    busy: bool,
+}
+
+/// Completion-order pool with one in-flight job per bounded retained worker.
+pub(crate) struct ReadyWorkerPool<'scope, T, R> {
+    workers: Vec<ReadyWorker<'scope, T>>,
+    results: Receiver<(usize, Result<R, ExecutionError>)>,
+}
+
+impl<'scope, T: Send + 'scope, R: Send + 'scope> ReadyWorkerPool<'scope, T, R> {
+    pub(crate) fn new<'env, F>(
+        scope: &'scope Scope<'scope, 'env>,
+        count: usize,
+        run: &'scope F,
+    ) -> Result<Self, ExecutionError>
+    where
+        F: Fn(T) -> Result<R, ExecutionError> + Sync,
+    {
+        if count == 0 {
+            return Err(ExecutionError::ResourceLimit);
+        }
+        let (results, receiver) = sync_channel(count);
+        let mut pool = Self {
+            workers: Vec::new(),
+            results: receiver,
+        };
+        for index in 0..count {
+            let (requests, tasks) = sync_channel(1);
+            let results = results.clone();
+            let handle = Builder::new()
+                .spawn_scoped(scope, move || {
+                    while let Ok(task) = tasks.recv() {
+                        let result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(task)))
+                                .unwrap_or(Err(ExecutionError::Trap));
+                        if results.send((index, result)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .map_err(|_| ExecutionError::ResourceLimit)?;
+            pool.workers.push(ReadyWorker {
+                requests: Some(requests),
+                handle: Some(handle),
+                busy: false,
+            });
+        }
+        Ok(pool)
+    }
+
+    pub(crate) fn idle_worker(&self) -> Option<usize> {
+        self.workers.iter().position(|worker| !worker.busy)
+    }
+
+    pub(crate) fn submit(&mut self, worker: usize, task: T) -> Result<(), ExecutionError> {
+        let worker = self
+            .workers
+            .get_mut(worker)
+            .ok_or(ExecutionError::ResourceLimit)?;
+        if worker.busy {
+            return Err(ExecutionError::Conflict);
+        }
+        worker
+            .requests
+            .as_ref()
+            .ok_or(ExecutionError::Trap)?
+            .send(task)
+            .map_err(|_| ExecutionError::Trap)?;
+        worker.busy = true;
+        Ok(())
+    }
+
+    pub(crate) fn completed(&mut self) -> Result<R, ExecutionError> {
+        let (index, result) = self.results.recv().map_err(|_| ExecutionError::Trap)?;
+        self.workers[index].busy = false;
+        result
+    }
+}
+
+impl<T, R> Drop for ReadyWorkerPool<'_, T, R> {
+    fn drop(&mut self) {
+        // At most count completions exist, so the bounded result queue can hold
+        // every in-flight response while workers are joined after an error.
+        for worker in &mut self.workers {
+            worker.requests.take();
+        }
+        for worker in &mut self.workers {
+            if let Some(handle) = worker.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
 struct Worker<'scope, T, R> {
     requests: Option<SyncSender<T>>,
     results: Receiver<Result<R, ExecutionError>>,
@@ -295,5 +392,71 @@ mod tests {
                 Err(ExecutionError::ResourceLimit)
             ));
         });
+    }
+
+    #[test]
+    fn readiness_pool_receives_completion_order_and_reuses_a_fast_worker() {
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocked = Mutex::new(blocked);
+        let run = |value| {
+            if value == 0 {
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok((value, thread::current().id()))
+        };
+        thread::scope(|scope| {
+            let mut pool = ReadyWorkerPool::new(scope, 2, &run).unwrap();
+            pool.submit(0, 0).unwrap();
+            pool.submit(1, 1).unwrap();
+            let fast = pool.completed().unwrap();
+            assert_eq!(fast.0, 1);
+            assert_eq!(pool.idle_worker(), Some(1));
+            pool.submit(1, 2).unwrap();
+            let next = pool.completed().unwrap();
+            assert_eq!(next.0, 2);
+            assert_eq!(next.1, fast.1);
+            release.send(()).unwrap();
+            assert_eq!(pool.completed().unwrap().0, 0);
+        });
+    }
+
+    #[test]
+    fn readiness_pool_drains_on_failure_and_contains_worker_panics() {
+        for panic in [false, true] {
+            let calls = AtomicUsize::new(0);
+            let run = |value| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                if value == 0 {
+                    assert!(!panic, "injected readiness worker panic");
+                    Err(ExecutionError::NativeUnavailable)
+                } else {
+                    Ok(value)
+                }
+            };
+            thread::scope(|scope| {
+                let mut pool = ReadyWorkerPool::new(scope, 2, &run).unwrap();
+                pool.submit(0, 0).unwrap();
+                pool.submit(1, 1).unwrap();
+                let mut error = None;
+                for _ in 0..2 {
+                    if let Err(failure) = pool.completed() {
+                        error = Some(failure);
+                    }
+                }
+                assert_eq!(
+                    error,
+                    Some(if panic {
+                        ExecutionError::Trap
+                    } else {
+                        ExecutionError::NativeUnavailable
+                    })
+                );
+                assert_eq!(calls.load(Ordering::Relaxed), 2);
+            });
+        }
     }
 }

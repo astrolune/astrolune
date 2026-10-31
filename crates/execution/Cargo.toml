@@ -13,6 +13,9 @@ repository.workspace = true
 
 [dependencies]
 runtime = { version = "0.1.0", path = "../runtime" }
+genesis = { version = "0.1.0", path = "../genesis" }
+trocto-compiler = { version = "0.1.0", path = "../trocto-compiler" }
+trocto-runtime = { version = "0.1.0", path = "../trocto-runtime" }
 codec = { version = "0.1.0", path = "../codec" }
 state = { version = "0.1.0", path = "../state" }
 transaction = { version = "0.1.0", path = "../transaction" }

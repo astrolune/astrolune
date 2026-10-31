@@ -198,6 +198,7 @@ dependencies = [
  "state",
  "storage",
  "transaction",
+ "trocto-compiler",
  "types",
  "wat",
  "zeroize",
@@ -444,10 +445,13 @@ version = "0.1.0"
 dependencies = [
  "codec",
  "crypto",
+ "genesis",
  "runtime",
  "state",
  "testkit",
  "transaction",
+ "trocto-compiler",
+ "trocto-runtime",
  "types",
  "wat",
 ]

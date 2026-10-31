@@ -181,7 +181,12 @@ impl std::fmt::Display for NetworkNodeError {
 impl std::error::Error for NetworkNodeError {}
 impl From<ProducerError> for NetworkNodeError {
     fn from(error: ProducerError) -> Self {
-        if matches!(error, ProducerError::Storage(_) | ProducerError::Worker(_)) {
+        if matches!(
+            error,
+            ProducerError::Storage(_)
+                | ProducerError::Worker(_)
+                | ProducerError::Execution(execution::ExecutionError::NativeUnavailable)
+        ) {
             Self::Local(error.to_string())
         } else {
             Self::Input(error.to_string())

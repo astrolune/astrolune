@@ -19,6 +19,8 @@ pub enum ExecutionError {
     Conflict,
     /// Arithmetic, memory, or host behavior trapped deterministically.
     Trap,
+    /// Local LLVM, sandbox, worker or artifact failure; never a consensus trap.
+    NativeUnavailable,
     /// Transaction validation failed.
     TransactionValidation(TransactionError),
     /// State database error.
@@ -33,6 +35,7 @@ impl std::fmt::Display for ExecutionError {
             Self::ResourceLimit => write!(f, "resource limit exceeded"),
             Self::Conflict => write!(f, "execution conflict"),
             Self::Trap => write!(f, "deterministic trap"),
+            Self::NativeUnavailable => write!(f, "native Trocto runtime unavailable"),
             Self::TransactionValidation(e) => write!(f, "transaction validation: {e}"),
             Self::State(e) => write!(f, "state error: {e}"),
         }

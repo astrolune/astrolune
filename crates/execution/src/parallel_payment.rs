@@ -3,14 +3,18 @@
 
 //! Bounded parallel payment waves with a private overlay and serial error replay.
 
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::RwLock,
+};
 
 use state::{
     StateAbsenceProof, StateChange, StateDatabase, StateDiff, StateError, StateProof, StateSnapshot,
 };
 use transaction::{
     ContractAction, ContractPayload, Payment, ValidationContext, contract_address,
-    contract_code_key, contract_state_key,
+    contract_code_key, contract_state_key, trocto_contract_address, trocto_contract_code_key,
+    trocto_contract_state_key,
 };
 use types::{Hash256, Resources, StateKey, Transaction};
 
@@ -109,9 +113,13 @@ pub fn execute_parallel(
     let cached = crate::snapshot_cache::CachedSnapshot::new(snapshot.as_ref());
     let view = execution_view(snapshot.as_ref(), &cached, policy.contracts);
     let outputs = speculate(view, transactions, context, policy, workers);
-    let Ok(outputs) = outputs else {
-        drop(cached);
-        return serial(database, transactions, parent, context, false);
+    let outputs = match outputs {
+        Ok(outputs) => outputs,
+        Err(ExecutionError::NativeUnavailable) => return Err(ExecutionError::NativeUnavailable),
+        Err(_) => {
+            drop(cached);
+            return serial(database, transactions, parent, context, false);
+        }
     };
     let mut used = Resources::ZERO;
     for output in &outputs {
@@ -203,6 +211,121 @@ impl Overlay<'_> {
 }
 
 fn speculate(
+    parent: &dyn StateSnapshot,
+    transactions: &[Transaction],
+    context: ValidationContext,
+    policy: ExecutionPolicy,
+    workers: usize,
+) -> Result<Vec<TransactionOutput>, ExecutionError> {
+    let plan = GreedyScheduler.plan(transactions);
+    // A single parallel batch has no barrier to remove; a wholly serial plan
+    // benefits from one fused session without worker dispatch overhead.
+    if plan.waves.len() < 2
+        || plan
+            .waves
+            .iter()
+            .all(|wave| wave.transaction_indexes.len() == 1)
+    {
+        return speculate_waves(parent, transactions, context, policy, workers);
+    }
+    validate_declarations(transactions)?;
+    let dependencies = GreedyScheduler.dependencies(transactions);
+    let mut remaining: Vec<_> = dependencies.iter().map(Vec::len).collect();
+    let successors = successor_indexes(&dependencies);
+    let mut ready: BTreeSet<_> = remaining
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &count)| (count == 0).then_some(index))
+        .collect();
+    let mut started = vec![false; transactions.len()];
+    let mut outputs = vec![None; transactions.len()];
+    let mut overlay = Overlay {
+        parent,
+        values: BTreeMap::new(),
+    };
+    let run = |(indexes, view): (Vec<usize>, Overlay<'_>)| {
+        let mut session = SignedSession::new(&view, context, policy.capacity, policy.contracts)
+            .with_prices(policy.prices);
+        indexes
+            .into_iter()
+            .map(|index| {
+                session
+                    .execute(&transactions[index])
+                    .map(|output| (index, output))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let pool_size = workers.min(
+        plan.waves
+            .iter()
+            .map(|wave| wave.transaction_indexes.len())
+            .max()
+            .unwrap_or(1),
+    );
+    std::thread::scope(|scope| {
+        let mut pool = crate::worker_pool::ReadyWorkerPool::new(scope, pool_size, &run)?;
+        let mut completed = 0;
+        let mut in_flight = 0;
+        while completed < transactions.len() {
+            while let Some(worker) = pool.idle_worker() {
+                let Some(index) = ready.pop_first() else {
+                    break;
+                };
+                let mut indexes = vec![index];
+                started[index] = true;
+                // Fuse linear paths on one worker. Their private session feeds
+                // dependent state without an IPC round trip per transaction.
+                let mut tail = index;
+                while let [next] = successors[tail].as_slice() {
+                    if remaining[*next] != 1 || started[*next] {
+                        break;
+                    }
+                    started[*next] = true;
+                    indexes.push(*next);
+                    tail = *next;
+                }
+                // Freeze only this job's declared overlay keys. Other completed
+                // jobs can publish to the coordinator while this view executes;
+                // it never holds a global overlay read lock across execution.
+                let values = indexes
+                    .iter()
+                    .flat_map(|&index| &transactions[index].access_list)
+                    .filter_map(|key| {
+                        overlay
+                            .values
+                            .get(key)
+                            .map(|value| (key.clone(), value.clone()))
+                    })
+                    .collect();
+                pool.submit(worker, (indexes, Overlay { parent, values }))?;
+                in_flight += 1;
+            }
+            if in_flight == 0 {
+                return Err(ExecutionError::Conflict);
+            }
+            let results = pool.completed()?;
+            in_flight -= 1;
+            for (index, output) in results {
+                overlay.apply(&output.diff);
+                outputs[index] = Some(output);
+                completed += 1;
+                for &next in &successors[index] {
+                    remaining[next] -= 1;
+                    if remaining[next] == 0 && !started[next] {
+                        ready.insert(next);
+                    }
+                }
+            }
+        }
+        Ok::<_, ExecutionError>(())
+    })?;
+    outputs
+        .into_iter()
+        .map(|output| output.ok_or(ExecutionError::Conflict))
+        .collect()
+}
+
+fn speculate_waves(
     parent: &dyn StateSnapshot,
     transactions: &[Transaction],
     context: ValidationContext,
@@ -301,6 +424,28 @@ fn speculate(
         .collect()
 }
 
+fn validate_declarations(transactions: &[Transaction]) -> Result<(), ExecutionError> {
+    for tx in transactions {
+        if !required_keys(tx)?
+            .iter()
+            .all(|key| tx.access_list.contains(key))
+        {
+            return Err(ExecutionError::UndeclaredStateAccess);
+        }
+    }
+    Ok(())
+}
+
+fn successor_indexes(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut successors = vec![Vec::new(); dependencies.len()];
+    for (index, predecessors) in dependencies.iter().enumerate() {
+        for &previous in predecessors {
+            successors[previous].push(index);
+        }
+    }
+    successors
+}
+
 fn required_keys(tx: &Transaction) -> Result<Vec<StateKey>, ExecutionError> {
     let mut keys = vec![state::account_key(tx.sender)];
     match tx.lane {
@@ -320,6 +465,21 @@ fn required_keys(tx: &Transaction) -> Result<Vec<StateKey>, ExecutionError> {
             } => {
                 keys.push(contract_code_key(address));
                 keys.extend(local.iter().map(|key| contract_state_key(address, key)));
+            }
+            ContractAction::DeployTrocto(_) => keys.push(trocto_contract_code_key(
+                trocto_contract_address(tx.chain_id, tx.sender, tx.nonce),
+            )),
+            ContractAction::CallTrocto {
+                address,
+                keys: local,
+                ..
+            } => {
+                keys.push(trocto_contract_code_key(address));
+                keys.extend(
+                    local
+                        .iter()
+                        .map(|key| trocto_contract_state_key(address, key)),
+                );
             }
         },
         types::TransactionLane::System => {

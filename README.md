@@ -40,9 +40,9 @@ AstroLune is a modular blockchain node implemented as a Rust workspace. It is bu
 | --- | --- | --- |
 | Consensus | PoTB weight, weighted VRF committees, partial rotation | [Live VRF rotation, standby participation and verified catch-up](docs/40-live-vrf-network.md) |
 | Finality | Proposal, prevote, and precommit with > ⅔ voting power | Certified fixed or genesis-v2 rotating daemon network |
-| Execution | Deterministic state transitions with parallel scheduling | Parallel signed payments and ABI-v2 contract waves |
+| Execution | Deterministic state transitions with parallel scheduling | Readiness DAG for signed payments and contracts, with canonical atomic commit |
 | Persistence | Snapshots, archives, genesis, accounts, and recovery | Append-only chain log, atomic publication, verified replay recovery |
-| Contracts | Trocto source and native LLVM development | Checked `.tc` frontend and native worker; existing signed deployments use ABI-v2 WebAssembly |
+| Contracts | Trocto source and native LLVM execution | Typed `.tc`, state capabilities, isolated workers and signed runtime profile 3; historical ABI-v2 replay |
 | Ecosystem | AstroLune DNS registry and resolution | On-chain ownership/leases and certified-proof resolver |
 
 ## Design pillars
@@ -53,8 +53,8 @@ AstroLune is a modular blockchain node implemented as a Rust workspace. It is bu
 | **Verifiable committees** | Weighted VRF selection and gradual rotation make committee changes explicit and auditable. |
 | **Fast finality** | Proposal, prevote, and precommit require voting power strictly above two thirds. |
 | **Separated execution** | Consensus fixes order; deterministic execution independently computes state transitions. |
-| **Parallel performance** | State leasing, execution waves, optimistic replay, lanes, batching, locality, and prefetch are designed as separate concerns. |
-| **Deterministic contracts** | Trocto development checks native LLVM results against explicit integer and fuel semantics; signed runtime profiles preserve deployment identity and historical behavior. |
+| **Parallel performance** | State leasing, dependency readiness, optimistic replay, lanes, batching, locality, and prefetch are designed as separate concerns. |
+| **Deterministic contracts** | Trocto checks native LLVM state, events and fuel against reference semantics; versioned signed profiles preserve deployment identity and historical replay. |
 | **Lean networking** | Bounded binary P2P frames and compact-block reconstruction keep the network surface explicit. |
 | **Independent services** | DNS registry and resolution remain separate from validator signing authority. |
 

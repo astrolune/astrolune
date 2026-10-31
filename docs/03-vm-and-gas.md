@@ -4,9 +4,9 @@
 
 ## 3.1 Versioned contract model
 
-Trocto (`.tc`) and native LLVM execution are the contract development direction; see [document 64](64-trocto-native-llvm.md). Existing signed deployments use a deterministic Rust subset and a versioned canonical runtime target. The implemented target is integer-only WebAssembly ABI v2 with Wasmi 2.0.0 metering and pinned Rust 1.99.0 builds; see [sandbox and tooling](29-parallel-payments-and-wasm.md) and [signed activation](30-signed-contracts.md).
+Trocto (`.tc`) and native LLVM execution use signed runtime profile 3, with typed scalar control flow, explicit state capabilities and isolated workers; see [document 64](64-trocto-native-llvm.md). Historical signed deployments retain integer-only WebAssembly ABI v2 with Wasmi 2.0.0 metering and pinned Rust 1.99.0 builds; see [sandbox and tooling](29-parallel-payments-and-wasm.md) and [signed activation](30-signed-contracts.md).
 
-The earlier ALVM, Regol, and Kreep designs are not compatibility requirements. Trocto has a new checked frontend and a separate native development runtime. Arbitrary native executables are never accepted as consensus artifacts.
+The earlier ALVM, Regol, and Kreep designs are not compatibility requirements. Trocto has a checked frontend, direct LLVM generation and a versioned native runtime. Arbitrary native executables are never accepted as consensus artifacts.
 
 ## 3.2 Deterministic target restrictions
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
-//! Offline contract envelopes, explicitly activated by genesis profile 2.
+//! Offline contract envelopes, explicitly activated by genesis profiles 2 and 3.
 
 use crate::{
     CliError,
@@ -13,7 +13,8 @@ use runtime::{ModuleValidator, WASM_VERSION, WasmRuntime};
 use std::{ffi::OsString, io::Read, path::Path};
 use transaction::{
     ContractAction, ContractPayload, address_from_public_key, contract_address, contract_code_key,
-    contract_state_key, signing_hash,
+    contract_state_key, signing_hash, trocto_contract_address, trocto_contract_code_key,
+    trocto_contract_state_key,
 };
 use types::{Address, Resources, Transaction, TransactionLane};
 
@@ -36,24 +37,24 @@ pub(super) fn read_bounded(path: &Path, max: usize) -> Result<Vec<u8>, CliError>
 
 pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
     let (genesis_file, seed_file, nonce, expires, output, action, compute) = match (command, args) {
-        ("sign-deploy", [genesis, seed, wasm, nonce, expires, output]) => {
+        (
+            "sign-deploy" | "sign-trocto-deploy",
+            [genesis, seed, code_path, nonce, expires, output],
+        ) => {
             // Leave envelope headroom inside the reference network's 64 KiB limit.
-            let code = read_bounded(Path::new(wasm), 60 * 1024)?;
-            WasmRuntime::new()
-                .validate(&code, WASM_VERSION)
-                .map_err(error)?;
-            (
-                genesis,
-                seed,
-                nonce,
-                expires,
-                output,
-                ContractAction::Deploy(code),
-                None,
-            )
+            let action = if command == "sign-trocto-deploy" {
+                ContractAction::DeployTrocto(trocto_source(Path::new(code_path))?)
+            } else {
+                let code = read_bounded(Path::new(code_path), 60 * 1024)?;
+                WasmRuntime::new()
+                    .validate(&code, WASM_VERSION)
+                    .map_err(error)?;
+                ContractAction::Deploy(code)
+            };
+            (genesis, seed, nonce, expires, output, action, None)
         }
         (
-            "sign-call",
+            "sign-call" | "sign-trocto-call",
             [
                 genesis,
                 seed,
@@ -67,19 +68,32 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
             ],
         ) => {
             let address = Address(rpc::client::decode_hex(text(address)?).map_err(error)?);
-            let input = read_bounded(Path::new(input), 60 * 1024)?;
+            let input = if command == "sign-trocto-call" {
+                integer(input)?.to_le_bytes().to_vec()
+            } else {
+                read_bounded(Path::new(input), 60 * 1024)?
+            };
             let keys = read_keys(Path::new(keys))?;
+            let action = if command == "sign-trocto-call" {
+                ContractAction::CallTrocto {
+                    address,
+                    input,
+                    keys,
+                }
+            } else {
+                ContractAction::Call {
+                    address,
+                    input,
+                    keys,
+                }
+            };
             (
                 genesis,
                 seed,
                 nonce,
                 expires,
                 output,
-                ContractAction::Call {
-                    address,
-                    input,
-                    keys,
-                },
+                action,
                 Some(integer(compute)?),
             )
         }
@@ -90,9 +104,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
         genesis::MAX_GENESIS_BYTES,
     )?)
     .map_err(error)?;
-    if genesis.runtime_version != 2 {
-        return Err(error("genesis must activate runtime_version 2"));
-    }
+    require_profile(genesis.runtime_version, &action)?;
     let seed = read_seed(Path::new(seed_file))?;
     let public_key = ed25519_public_key(&seed);
     let mut tx = Transaction {
@@ -110,23 +122,7 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
     };
     let payload = ContractPayload::decode(&tx.payload).map_err(error)?;
     tx.access_list = access(&tx, &payload.action);
-    tx.resource_limit = match &payload.action {
-        ContractAction::Deploy(code) => Resources {
-            compute: 100 + code.len() as u64,
-            memory: code.len() as u64 + 32,
-            io: code.len() as u64 + 32,
-            bandwidth: transaction::estimate_encoded_len(&tx) as u64,
-        },
-        ContractAction::Call { .. } => Resources {
-            compute: compute.ok_or_else(|| error("missing compute budget"))?,
-            memory: genesis.capacity.memory.min(16 * 1024 * 1024 + 32),
-            io: genesis.capacity.io.min(1024 * 1024),
-            bandwidth: genesis.capacity.bandwidth.min(256 * 1024),
-        },
-    };
-    if !tx.resource_limit.fits_in(genesis.capacity) {
-        return Err(error("contract budget exceeds genesis capacity"));
-    }
+    tx.resource_limit = resource_budget(&tx, &payload.action, genesis.capacity, compute)?;
     tx.signature = ed25519_sign(&seed, signing_hash(&tx).as_bytes());
     validate(&tx)?;
     write_new(Path::new(output), &tx.to_bytes())?;
@@ -134,6 +130,45 @@ pub(super) fn run(command: &str, args: &[OsString]) -> Result<(), CliError> {
     println!("saved: {}", Path::new(output).display());
     println!("submission: not sent");
     Ok(())
+}
+
+fn require_profile(version: u32, action: &ContractAction) -> Result<(), CliError> {
+    let trocto = matches!(
+        action,
+        ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. }
+    );
+    if (trocto && version != 3) || (!trocto && !matches!(version, 2 | 3)) {
+        return Err(error(
+            "genesis must activate the selected contract runtime (Trocto: 3; ABI-v2: 2 or 3)",
+        ));
+    }
+    Ok(())
+}
+
+fn resource_budget(
+    tx: &Transaction,
+    action: &ContractAction,
+    capacity: Resources,
+    compute: Option<u64>,
+) -> Result<Resources, CliError> {
+    let resources = match action {
+        ContractAction::Deploy(code) | ContractAction::DeployTrocto(code) => Resources {
+            compute: 100 + code.len() as u64,
+            memory: code.len() as u64 + 32,
+            io: code.len() as u64 + 32,
+            bandwidth: transaction::estimate_encoded_len(tx) as u64,
+        },
+        ContractAction::Call { .. } | ContractAction::CallTrocto { .. } => Resources {
+            compute: compute.ok_or_else(|| error("missing compute budget"))?,
+            memory: capacity.memory.min(16 * 1024 * 1024 + 32),
+            io: capacity.io.min(1024 * 1024),
+            bandwidth: capacity.bandwidth.min(256 * 1024),
+        },
+    };
+    if !resources.fits_in(capacity) {
+        return Err(error("contract budget exceeds genesis capacity"));
+    }
+    Ok(resources)
 }
 
 fn read_keys(path: &Path) -> Result<Vec<Vec<u8>>, CliError> {
@@ -164,6 +199,31 @@ fn read_keys(path: &Path) -> Result<Vec<Vec<u8>>, CliError> {
     Ok(keys)
 }
 
+fn trocto_source(path: &Path) -> Result<Vec<u8>, CliError> {
+    let bytes = match path.extension().and_then(|extension| extension.to_str()) {
+        Some("tc") => {
+            let bytes = read_bounded(path, 60 * 1024)?;
+            let source = std::str::from_utf8(&bytes).map_err(error)?;
+            trocto_compiler::compile(source).map_err(error)?;
+            bytes
+        }
+        Some("tcp") => {
+            let bytes = read_bounded(path, trocto_compiler::MAX_PACKAGE_BYTES)?;
+            let package = trocto_compiler::SourcePackage::decode(&bytes).map_err(error)?;
+            package.source().as_bytes().to_vec()
+        }
+        _ => {
+            return Err(error(
+                "Trocto deployment requires .tc source or .tcp source package",
+            ));
+        }
+    };
+    if bytes.len() > 60 * 1024 {
+        return Err(error("Trocto source exceeds deployment envelope headroom"));
+    }
+    Ok(bytes)
+}
+
 fn access(tx: &Transaction, action: &ContractAction) -> Vec<types::StateKey> {
     let mut keys = vec![state::account_key(tx.sender)];
     match action {
@@ -179,6 +239,21 @@ fn access(tx: &Transaction, action: &ContractAction) -> Vec<types::StateKey> {
         } => {
             keys.push(contract_code_key(*address));
             keys.extend(local.iter().map(|key| contract_state_key(*address, key)));
+        }
+        ContractAction::DeployTrocto(_) => keys.push(trocto_contract_code_key(
+            trocto_contract_address(tx.chain_id, tx.sender, tx.nonce),
+        )),
+        ContractAction::CallTrocto {
+            address,
+            keys: local,
+            ..
+        } => {
+            keys.push(trocto_contract_code_key(*address));
+            keys.extend(
+                local
+                    .iter()
+                    .map(|key| trocto_contract_state_key(*address, key)),
+            );
         }
     }
     keys.sort();
@@ -220,7 +295,13 @@ pub(super) fn print(tx: &Transaction) -> Result<(), CliError> {
             "deploy_address: {}",
             contract_address(tx.chain_id, tx.sender, tx.nonce)
         ),
-        ContractAction::Call { address, .. } => println!("contract: {address}"),
+        ContractAction::Call { address, .. } | ContractAction::CallTrocto { address, .. } => {
+            println!("contract: {address}");
+        }
+        ContractAction::DeployTrocto(_) => println!(
+            "deploy_address: {}",
+            trocto_contract_address(tx.chain_id, tx.sender, tx.nonce)
+        ),
     }
     println!(
         "maximum_fee: {}",

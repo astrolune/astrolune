@@ -1,0 +1,204 @@
+{
+  "host": "Windows-10-10.0.26200-SP0",
+  "rounds": 7,
+  "target_round_us": 1000,
+  "method": "Isolated local current source copy, identical code and fixtures; before routes speculation through wave barrier engine; after enables dependency readiness engine. Same Cargo target, explicit source mtime refresh and verified execution crate recompilation.",
+  "limits": "One Windows machine, background load not isolated, short 7-round samples, no significance or network throughput claim. Single-wave paths unchanged by DAG; their spread measures background noise.",
+  "after_parallel_sha256": "4725dd38cccf815d1765227e975c6a43e395aca6ad91ab95c8851fdfd8b6b16e",
+  "measurements": [
+    {
+      "name": "payments/shaped/44tx_16w/serial",
+      "before_median_ns": 1763800,
+      "after_median_ns": 1863200,
+      "speedup": 0.947,
+      "before_min_ns": 1748400,
+      "before_max_ns": 2253100,
+      "after_min_ns": 1743000,
+      "after_max_ns": 2294600
+    },
+    {
+      "name": "payments/shaped/44tx_16w/w1",
+      "before_median_ns": 1867500,
+      "after_median_ns": 1995300,
+      "speedup": 0.936,
+      "before_min_ns": 1797000,
+      "before_max_ns": 1916600,
+      "after_min_ns": 1819800,
+      "after_max_ns": 2487700
+    },
+    {
+      "name": "payments/shaped/44tx_16w/w2",
+      "before_median_ns": 1442300,
+      "after_median_ns": 1633400,
+      "speedup": 0.883,
+      "before_min_ns": 1307200,
+      "before_max_ns": 13392400,
+      "after_min_ns": 1485300,
+      "after_max_ns": 1674900
+    },
+    {
+      "name": "payments/shaped/44tx_16w/w4",
+      "before_median_ns": 1446500,
+      "after_median_ns": 1171000,
+      "speedup": 1.235,
+      "before_min_ns": 1125900,
+      "before_max_ns": 9371000,
+      "after_min_ns": 1109500,
+      "after_max_ns": 1495900
+    },
+    {
+      "name": "payments/shaped/44tx_16w/w8",
+      "before_median_ns": 1349100,
+      "after_median_ns": 1290800,
+      "speedup": 1.045,
+      "before_min_ns": 1171800,
+      "before_max_ns": 1689600,
+      "after_min_ns": 1122000,
+      "after_max_ns": 1414100
+    },
+    {
+      "name": "payments/shaped/44tx_16w/w16",
+      "before_median_ns": 1229300,
+      "after_median_ns": 1297600,
+      "speedup": 0.947,
+      "before_min_ns": 1076100,
+      "before_max_ns": 2083200,
+      "after_min_ns": 1150600,
+      "after_max_ns": 1659300
+    },
+    {
+      "name": "payments/shaped/42tx_21w/serial",
+      "before_median_ns": 1752100,
+      "after_median_ns": 1735500,
+      "speedup": 1.01,
+      "before_min_ns": 1669700,
+      "before_max_ns": 2060800,
+      "after_min_ns": 1704700,
+      "after_max_ns": 2023300
+    },
+    {
+      "name": "payments/shaped/42tx_21w/w1",
+      "before_median_ns": 1762800,
+      "after_median_ns": 1773600,
+      "speedup": 0.994,
+      "before_min_ns": 1724000,
+      "before_max_ns": 2327300,
+      "after_min_ns": 1716700,
+      "after_max_ns": 2214800
+    },
+    {
+      "name": "payments/shaped/42tx_21w/w2",
+      "before_median_ns": 1976600,
+      "after_median_ns": 1757100,
+      "speedup": 1.125,
+      "before_min_ns": 1535500,
+      "before_max_ns": 17744700,
+      "after_min_ns": 1666500,
+      "after_max_ns": 1955200
+    },
+    {
+      "name": "payments/shaped/42tx_21w/w4",
+      "before_median_ns": 1535400,
+      "after_median_ns": 1431900,
+      "speedup": 1.072,
+      "before_min_ns": 1308800,
+      "before_max_ns": 16278800,
+      "after_min_ns": 1374200,
+      "after_max_ns": 1962400
+    },
+    {
+      "name": "payments/shaped/42tx_21w/w8",
+      "before_median_ns": 1624900,
+      "after_median_ns": 1501100,
+      "speedup": 1.082,
+      "before_min_ns": 1365600,
+      "before_max_ns": 16478400,
+      "after_min_ns": 1410200,
+      "after_max_ns": 1849100
+    },
+    {
+      "name": "payments/shaped/42tx_21w/w16",
+      "before_median_ns": 8883200,
+      "after_median_ns": 1501300,
+      "speedup": 5.917,
+      "before_min_ns": 4189200,
+      "before_max_ns": 45444900,
+      "after_min_ns": 1431300,
+      "after_max_ns": 2000200
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/serial",
+      "before_median_ns": 945100,
+      "after_median_ns": 946450,
+      "speedup": 0.999,
+      "before_min_ns": 925900,
+      "before_max_ns": 981500,
+      "after_min_ns": 897050,
+      "after_max_ns": 1044300
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/w1",
+      "before_median_ns": 940000,
+      "after_median_ns": 898800,
+      "speedup": 1.046,
+      "before_min_ns": 918900,
+      "before_max_ns": 1065550,
+      "after_min_ns": 891000,
+      "after_max_ns": 1010900
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/w2",
+      "before_median_ns": 713900,
+      "after_median_ns": 789150,
+      "speedup": 0.905,
+      "before_min_ns": 695200,
+      "before_max_ns": 876600,
+      "after_min_ns": 739000,
+      "after_max_ns": 860500
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/w4",
+      "before_median_ns": 610600,
+      "after_median_ns": 608000,
+      "speedup": 1.004,
+      "before_min_ns": 584200,
+      "before_max_ns": 762850,
+      "after_min_ns": 579200,
+      "after_max_ns": 643100
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/w8",
+      "before_median_ns": 704900,
+      "after_median_ns": 741800,
+      "speedup": 0.95,
+      "before_min_ns": 673750,
+      "before_max_ns": 839850,
+      "after_min_ns": 681300,
+      "after_max_ns": 1159900
+    },
+    {
+      "name": "contracts/shared_disjoint/16tx_1w/w16",
+      "before_median_ns": 1137300,
+      "after_median_ns": 984050,
+      "speedup": 1.156,
+      "before_min_ns": 1027550,
+      "before_max_ns": 9315850,
+      "after_min_ns": 924000,
+      "after_max_ns": 1048250
+    }
+  ],
+  "source_base_revision": "13bb2cc51720b51645cb56dee3df8822d5ba3466",
+  "source_state": "Isolated copy of the current working tree (tracked and untracked source files); includes the active Trocto integration changes. This is not a clean revision benchmark.",
+  "logical_processors": 8,
+  "before_parallel_sha256": "ef1cb6eb646cb0d94683d04ca39827116ae6f76df52a3bb5b93e103d01e44158",
+  "current_parallel_sha256": "c4db8b416765934c78a0d750a911ec960cb43d28fd810697d2711d0d89961403",
+  "measured_vs_current": "Exact same decoded UTF-8 text; measured artifact uses CRLF (490 line endings), current source uses LF. No execution or DAG semantic difference; only cargo fmt line-ending normalization.",
+  "source_artifacts": {
+    "before": "parallel-before.rs",
+    "after": "parallel-after.rs"
+  },
+  "reproduction": "Use the isolated source copy at target/agent-dag/source. Copy parallel-before.rs to crates/execution/src/parallel_payment.rs for the wave baseline, then parallel-after.rs for readiness; refresh source mtime and verify execution recompiles. Run pinned Rust 1.99.0 with ASTROLUNE_BENCH_ROUNDS=7 ASTROLUNE_BENCH_TARGET_US=1000 cargo bench --locked -p execution --bench execution. Reuse the same build target; run sequentially.",
+  "before_toggle": "Baseline wrapper speculate delegates solely to speculate_waves; readiness function retained under unused speculate_ready. After removes the baseline wrapper and restores readiness function name speculate. Single-wave and wholly serial fast paths are identical.",
+  "compiler": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.0\nLLVM version: 23.1.1",
+  "before_source_provenance": "parallel-before.rs reconstructs the exact measured baseline from preserved parallel-after.rs using the same wrapper transformation as the recorded orchestration call; before.log confirms speculate_ready at line217 and validate_declarations at line431."
+}

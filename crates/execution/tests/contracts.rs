@@ -19,7 +19,8 @@ use std::sync::{
 };
 use transaction::{
     ContractAction, ContractPayload, Payment, ValidationContext, address_from_public_key,
-    contract_address, contract_code_key, contract_state_key, signing_hash,
+    contract_address, contract_code_key, contract_state_key, signing_hash, trocto_contract_address,
+    trocto_contract_code_key, trocto_contract_state_key,
 };
 use types::{AccountState, Address, Hash256, Resources, StateKey, Transaction, TransactionLane};
 
@@ -102,6 +103,25 @@ fn contract(seed: u8, nonce: u64, action: ContractAction) -> Transaction {
             keys.push(contract_code_key(*address));
             keys.extend(local.iter().map(|key| contract_state_key(*address, key)));
         }
+        ContractAction::DeployTrocto(_) => {
+            keys.push(trocto_contract_code_key(trocto_contract_address(
+                7,
+                address(seed),
+                nonce,
+            )));
+        }
+        ContractAction::CallTrocto {
+            address,
+            keys: local,
+            ..
+        } => {
+            keys.push(trocto_contract_code_key(*address));
+            keys.extend(
+                local
+                    .iter()
+                    .map(|key| trocto_contract_state_key(*address, key)),
+            );
+        }
     }
     keys.sort();
     keys.dedup();
@@ -170,6 +190,354 @@ fn funded() -> InMemoryState {
     }
     state.commit(state.root(), &[diff]).unwrap();
     state
+}
+
+fn native_funded(profile: u32) -> InMemoryState {
+    let mut state = funded();
+    let mut diff = StateDiff::new();
+    diff.put(genesis::runtime_key(), profile.to_le_bytes().to_vec());
+    state.commit(state.root(), &[diff]).unwrap();
+    state
+}
+
+#[test]
+fn native_activation_is_checked_from_snapshot_even_with_contracts_enabled() {
+    let tx = contract(
+        1,
+        0,
+        ContractAction::DeployTrocto(b"fn call(input: u64) -> u64 { input }".to_vec()),
+    );
+    for mut state in [funded(), native_funded(2), native_funded(4)] {
+        let parent = state.root();
+        let before = state.export_snapshot();
+        assert_eq!(
+            execute_signed(
+                &mut state,
+                std::slice::from_ref(&tx),
+                parent,
+                context(),
+                capacity()
+            )
+            .unwrap_err(),
+            ExecutionError::TransactionValidation(
+                transaction::TransactionError::UnsupportedPayload
+            )
+        );
+        assert_eq!(state.export_snapshot(), before);
+        for workers in [2, 8] {
+            assert_eq!(
+                execute_signed_parallel(
+                    &mut state,
+                    &[
+                        tx.clone(),
+                        contract(
+                            2,
+                            0,
+                            ContractAction::DeployTrocto(
+                                b"fn call(input: u64) -> u64 { input }".to_vec()
+                            )
+                        )
+                    ],
+                    parent,
+                    context(),
+                    capacity(),
+                    workers
+                )
+                .unwrap_err(),
+                ExecutionError::TransactionValidation(
+                    transaction::TransactionError::UnsupportedPayload
+                )
+            );
+            assert_eq!(state.export_snapshot(), before);
+        }
+    }
+}
+
+#[test]
+fn native_invalid_source_is_deterministic_and_atomic_without_llvm() {
+    let mut state = native_funded(3);
+    let parent = state.root();
+    let before = state.export_snapshot();
+    let tx = contract(
+        1,
+        0,
+        ContractAction::DeployTrocto(b"define i32 @trocto_call() { ret i32 0 }".to_vec()),
+    );
+    assert_eq!(
+        execute_signed(&mut state, &[tx], parent, context(), capacity()).unwrap_err(),
+        ExecutionError::InvalidContract
+    );
+    assert_eq!(state.export_snapshot(), before);
+}
+
+#[test]
+fn native_per_transaction_fuel_is_bounded_before_local_preparation() {
+    let mut state = native_funded(3);
+    let mut funding = StateDiff::new();
+    funding.put(
+        account_key(address(1)),
+        AccountState {
+            nonce: 0,
+            balance: 100_000_000,
+        }
+        .to_bytes(),
+    );
+    state.commit(state.root(), &[funding]).unwrap();
+    let parent = state.root();
+    let before = state.export_snapshot();
+    let mut tx = contract(
+        1,
+        0,
+        ContractAction::DeployTrocto(
+            b"fn call(input: u64) -> u64 { while true {} return input; }".to_vec(),
+        ),
+    );
+    tx.resource_limit.compute = trocto_runtime::MAX_NATIVE_FUEL + 1;
+    let tx = sign(tx, 1);
+    let mut block_capacity = capacity();
+    block_capacity.compute = 20_000_000;
+    assert_eq!(
+        execute_signed(&mut state, &[tx], parent, context(), block_capacity).unwrap_err(),
+        ExecutionError::ResourceLimit
+    );
+    assert_eq!(state.export_snapshot(), before);
+}
+
+#[test]
+#[ignore = "requires pinned sandboxed native clang 22.1.8"]
+fn native_dynamic_address_keys_are_isolated_and_bounds_are_atomic() {
+    let source = b"fn call(input: u64) -> u64 { let count: u64 = key_count(); let value: u64 = state_get_at(input) + 1; state_set_at(input, value); emit(height(), key_word(input, 0)); return value + count; }";
+    let mut initial = native_funded(3);
+    let target = trocto_contract_address(7, address(1), 0);
+    let parent = initial.root();
+    execute_signed(
+        &mut initial,
+        &[contract(
+            1,
+            0,
+            ContractAction::DeployTrocto(source.to_vec()),
+        )],
+        parent,
+        context(),
+        capacity(),
+    )
+    .unwrap();
+    let call = |seed, nonce, input: u64| {
+        contract(
+            seed,
+            nonce,
+            ContractAction::CallTrocto {
+                address: target,
+                input: input.to_le_bytes().to_vec(),
+                keys: vec![address(seed).as_bytes().to_vec()],
+            },
+        )
+    };
+    let transactions = vec![call(2, 0, 0), call(3, 0, 0), call(2, 1, 0), call(3, 1, 0)];
+    let parent = initial.root();
+    let mut serial = initial.clone();
+    let expected =
+        execute_signed(&mut serial, &transactions, parent, context(), capacity()).unwrap();
+    for seed in [2, 3] {
+        assert_eq!(
+            serial.get(&trocto_contract_state_key(target, address(seed).as_bytes())),
+            Some(2u64.to_le_bytes().as_slice())
+        );
+    }
+    for workers in [2, 3, 8] {
+        let mut parallel = initial.clone();
+        assert_eq!(
+            execute_signed_parallel(
+                &mut parallel,
+                &transactions,
+                parent,
+                context(),
+                capacity(),
+                workers
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+        let mut candidate = initial.clone();
+        let before = candidate.export_snapshot();
+        assert_eq!(
+            execute_signed_parallel(
+                &mut candidate,
+                &[call(2, 0, 0), call(3, 0, 1)],
+                parent,
+                context(),
+                capacity(),
+                workers
+            )
+            .unwrap_err(),
+            ExecutionError::Trap
+        );
+        assert_eq!(candidate.export_snapshot(), before);
+    }
+}
+
+#[test]
+#[ignore = "requires pinned sandboxed native clang 22.1.8"]
+fn native_state_events_replay_and_failure_rollback() {
+    let source = b"fn call(input: u64) -> u64 { let value: u64 = state_get(\"k\") + input; state_set(\"k\", value); emit(height(), value); let checked: u64 = value + input; return checked; }";
+    let mut state = native_funded(3);
+    let target = trocto_contract_address(7, address(1), 0);
+    let deploy = contract(1, 0, ContractAction::DeployTrocto(source.to_vec()));
+    let parent = state.root();
+    execute_signed(&mut state, &[deploy], parent, context(), capacity()).unwrap();
+    assert_eq!(
+        state.get(&trocto_contract_code_key(target)),
+        Some(source.as_slice())
+    );
+    assert!(state.get(&contract_code_key(target)).is_none());
+    let call = |seed, nonce, input: u64| {
+        contract(
+            seed,
+            nonce,
+            ContractAction::CallTrocto {
+                address: target,
+                input: input.to_le_bytes().to_vec(),
+                keys: vec![b"k".to_vec()],
+            },
+        )
+    };
+    let transactions = vec![call(1, 1, 3), call(2, 0, 4), call(3, 0, 5)];
+    let initial = state.clone();
+    let parent = initial.root();
+    let (expected, root) =
+        execute_signed(&mut state, &transactions, parent, context(), capacity()).unwrap();
+    for (output, (returned, event)) in expected.iter().zip([(6u64, 3u64), (11, 7), (17, 12)]) {
+        let mut committed = output.diff.commitment().as_bytes().to_vec();
+        committed.extend_from_slice(&returned.to_le_bytes());
+        codec::encode_length(1, &mut committed);
+        committed.extend_from_slice(&1u64.to_le_bytes());
+        committed.extend_from_slice(&event.to_le_bytes());
+        assert_eq!(
+            output.receipt.output_root,
+            types::hash::domain_hash(b"astrolune.contract.result.v3", &committed)
+        );
+    }
+    assert_eq!(
+        state.get(&trocto_contract_state_key(target, b"k")),
+        Some(12u64.to_le_bytes().as_slice())
+    );
+    assert!(state.get(&contract_state_key(target, b"k")).is_none());
+    for workers in [2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        let (outputs, actual) = execute_signed_parallel(
+            &mut parallel,
+            &transactions,
+            parent,
+            context(),
+            capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(outputs, expected);
+        assert_eq!(actual, root);
+        assert_eq!(parallel.export_snapshot(), state.export_snapshot());
+    }
+    let mut bad = vec![call(1, 1, 2), call(2, 0, u64::MAX)];
+    for workers in [1, 2, 8] {
+        let mut candidate = initial.clone();
+        let before = candidate.export_snapshot();
+        assert_eq!(
+            execute_signed_parallel(&mut candidate, &bad, parent, context(), capacity(), workers)
+                .unwrap_err(),
+            ExecutionError::Trap
+        );
+        assert_eq!(candidate.export_snapshot(), before);
+    }
+    // A late resource refusal after valid native effects also rolls back fees,
+    // nonce, writes and the prior successful transaction in the same block.
+    bad[1] = call(2, 0, 1);
+    bad[1].resource_limit.io = 1;
+    bad[1] = sign(bad[1].clone(), 2);
+    let mut candidate = initial.clone();
+    let before = candidate.export_snapshot();
+    assert_eq!(
+        execute_signed_parallel(&mut candidate, &bad, parent, context(), capacity(), 2)
+            .unwrap_err(),
+        ExecutionError::ResourceLimit
+    );
+    assert_eq!(candidate.export_snapshot(), before);
+}
+
+#[test]
+#[ignore = "requires pinned sandboxed native clang 22.1.8"]
+fn native_disjoint_keys_share_code_and_enforce_access_at_use() {
+    let source = b"fn call(input: u64) -> u64 { if input < 10 { state_set(\"a\", input); } else { state_set(\"b\", input); } emit(height(), input); return input; }";
+    let mut initial = native_funded(3);
+    let target = trocto_contract_address(7, address(1), 0);
+    let parent = initial.root();
+    execute_signed(
+        &mut initial,
+        &[contract(
+            1,
+            0,
+            ContractAction::DeployTrocto(source.to_vec()),
+        )],
+        parent,
+        context(),
+        capacity(),
+    )
+    .unwrap();
+    let call = |seed, nonce, input: u64, key: &[u8]| {
+        contract(
+            seed,
+            nonce,
+            ContractAction::CallTrocto {
+                address: target,
+                input: input.to_le_bytes().to_vec(),
+                keys: vec![key.to_vec()],
+            },
+        )
+    };
+    let transactions = vec![
+        call(2, 0, 1, b"a"),
+        call(3, 0, 11, b"b"),
+        call(2, 1, 2, b"a"),
+        call(3, 1, 12, b"b"),
+        call(2, 2, 3, b"a"),
+        call(3, 2, 13, b"b"),
+    ];
+    let plan = GreedyScheduler.plan(&transactions);
+    assert_eq!(
+        plan.waves
+            .iter()
+            .map(|wave| wave.transaction_indexes.clone())
+            .collect::<Vec<_>>(),
+        vec![vec![0, 1], vec![2, 3], vec![4, 5]]
+    );
+    let parent = initial.root();
+    let mut serial = initial.clone();
+    let (expected, root) =
+        execute_signed(&mut serial, &transactions, parent, context(), capacity()).unwrap();
+    for workers in [2, 3, 8, 32] {
+        let mut parallel = initial.clone();
+        let (outputs, actual) = execute_signed_parallel(
+            &mut parallel,
+            &transactions,
+            parent,
+            context(),
+            capacity(),
+            workers,
+        )
+        .unwrap();
+        assert_eq!(outputs, expected);
+        assert_eq!(actual, root);
+        assert_eq!(parallel.export_snapshot(), serial.export_snapshot());
+    }
+    let bad = [call(2, 0, 1, b"a"), call(3, 0, 11, b"a")];
+    let mut candidate = initial;
+    let before = candidate.export_snapshot();
+    assert_eq!(
+        execute_signed_parallel(&mut candidate, &bad, parent, context(), capacity(), 8)
+            .unwrap_err(),
+        ExecutionError::UndeclaredStateAccess
+    );
+    assert_eq!(candidate.export_snapshot(), before);
 }
 fn batch() -> Vec<Transaction> {
     let a = contract_address(7, address(1), 0);
@@ -246,6 +614,127 @@ impl StateDatabase for CountingState {
 
     fn commit(&mut self, parent: Hash256, diffs: &[StateDiff]) -> Result<Hash256, StateError> {
         self.inner.commit(parent, diffs)
+    }
+}
+
+struct GatedState {
+    inner: InMemoryState,
+    blocked: StateKey,
+    release: StateKey,
+    gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+struct GatedSnapshot {
+    inner: Box<dyn StateSnapshot>,
+    blocked: StateKey,
+    release: StateKey,
+    gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl StateSnapshot for GatedSnapshot {
+    fn root(&self) -> Hash256 {
+        self.inner.root()
+    }
+    fn get(&self, key: &StateKey) -> Result<Option<Vec<u8>>, StateError> {
+        let (lock, changed) = &*self.gate;
+        if key == &self.release {
+            *lock.lock().unwrap() = true;
+            changed.notify_all();
+        } else if key == &self.blocked {
+            let (released, _) = changed
+                .wait_timeout_while(
+                    lock.lock().unwrap(),
+                    std::time::Duration::from_secs(5),
+                    |released| !*released,
+                )
+                .unwrap();
+            if !*released {
+                return Err(StateError::Corrupt);
+            }
+        }
+        self.inner.get(key)
+    }
+    fn prove(&self, key: &StateKey) -> Result<Option<StateProof>, StateError> {
+        self.inner.prove(key)
+    }
+    fn prove_absence(&self, key: &StateKey) -> Result<Option<StateAbsenceProof>, StateError> {
+        self.inner.prove_absence(key)
+    }
+}
+
+impl StateDatabase for GatedState {
+    fn snapshot(&self) -> Result<Box<dyn StateSnapshot>, StateError> {
+        Ok(Box::new(GatedSnapshot {
+            inner: self.inner.snapshot()?,
+            blocked: self.blocked.clone(),
+            release: self.release.clone(),
+            gate: Arc::clone(&self.gate),
+        }))
+    }
+    fn commit(&mut self, parent: Hash256, diffs: &[StateDiff]) -> Result<Hash256, StateError> {
+        self.inner.commit(parent, diffs)
+    }
+    fn prefetch(&self, keys: &[StateKey]) -> Result<(), StateError> {
+        self.inner.prefetch(keys)
+    }
+}
+
+#[test]
+fn ready_descendants_execute_while_an_unrelated_earlier_wave_is_blocked() {
+    let mut initial = funded();
+    execute_uncached(
+        &mut initial,
+        &[
+            contract(1, 0, ContractAction::Deploy(disjoint_code())),
+            contract(2, 0, ContractAction::Deploy(disjoint_code())),
+        ],
+    )
+    .unwrap();
+    let slow = contract_address(7, address(1), 0);
+    let fast = contract_address(7, address(2), 0);
+    let transactions = vec![
+        disjoint_call(1, 1, slow, b's', 1),
+        disjoint_call(2, 1, fast, b'x', 2),
+        contract(
+            3,
+            0,
+            ContractAction::Call {
+                address: fast,
+                input: vec![b'x', 3],
+                keys: vec![b"m".to_vec(), b"x".to_vec()],
+            },
+        ),
+        disjoint_call(2, 2, fast, b'z', 4),
+    ];
+    assert_eq!(
+        GreedyScheduler.dependencies(&transactions),
+        vec![vec![], vec![], vec![1], vec![1]]
+    );
+    let parent = initial.root();
+    let mut serial = initial.clone();
+    let expected =
+        execute_signed(&mut serial, &transactions, parent, context(), capacity()).unwrap();
+    for workers in [2, 3, 8] {
+        let mut state = GatedState {
+            inner: initial.clone(),
+            blocked: contract_code_key(slow),
+            release: contract_state_key(fast, b"m"),
+            gate: Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+        };
+        assert_eq!(
+            execute_signed_parallel(
+                &mut state,
+                &transactions,
+                parent,
+                context(),
+                capacity(),
+                workers
+            )
+            .unwrap(),
+            expected
+        );
+        assert!(*state.gate.0.lock().unwrap());
+        assert_eq!(state.inner.export_snapshot(), serial.export_snapshot());
     }
 }
 

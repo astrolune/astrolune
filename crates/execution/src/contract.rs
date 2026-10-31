@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
-//! Authenticated ABI-v2 contract transitions. All effects are private until commit.
+//! Authenticated historical and native contract transitions, staged until commit.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,7 +19,8 @@ use state::{
 use transaction::{
     ContractAction, ContractPayload, RegisteredAccount, SignedValidator, TransactionError,
     TransactionValidator, ValidationContext, contract_address, contract_code_key,
-    contract_state_key,
+    contract_state_key, trocto_contract_address, trocto_contract_code_key,
+    trocto_contract_state_key,
 };
 use types::{AccountState, ExecutionReceipt, Resources, Transaction};
 
@@ -81,7 +82,17 @@ pub(crate) fn execute_contract(
             transaction: validated.id,
             succeeded: true,
             resources,
-            output_root: types::hash::domain_hash(b"astrolune.contract.result.v2", &commitment),
+            output_root: types::hash::domain_hash(
+                if matches!(
+                    payload.action,
+                    ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. }
+                ) {
+                    b"astrolune.contract.result.v3"
+                } else {
+                    b"astrolune.contract.result.v2"
+                },
+                &commitment,
+            ),
         },
         diff,
         observed_lease: StateLease::new(actual),
@@ -123,10 +134,17 @@ fn execute_action(
     context: ValidationContext,
     payload: &ContractPayload,
 ) -> Result<Effects, ExecutionError> {
+    if matches!(
+        payload.action,
+        ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. }
+    ) {
+        return execute_trocto_action(snapshot, tx, context, payload);
+    }
     let sender_key = account_key(tx.sender);
     let address = match &payload.action {
         ContractAction::Deploy(_) => contract_address(tx.chain_id, tx.sender, tx.nonce),
         ContractAction::Call { address, .. } => *address,
+        ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. } => unreachable!(),
     };
     let code_key = contract_code_key(address);
     if !tx.access_list.contains(&code_key) {
@@ -211,6 +229,7 @@ fn execute_action(
                 .checked_add(charged)
                 .ok_or(ExecutionError::ResourceLimit)?
         }
+        ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. } => unreachable!(),
     };
     Ok(Effects {
         diff,
@@ -218,6 +237,269 @@ fn execute_action(
         resources,
         result_bytes,
     })
+}
+
+fn native_artifacts() -> &'static trocto_runtime::NativeArtifactCache {
+    static CACHE: OnceLock<trocto_runtime::NativeArtifactCache> = OnceLock::new();
+    CACHE.get_or_init(trocto_runtime::NativeArtifactCache::new)
+}
+
+fn execute_trocto_action(
+    snapshot: &dyn StateSnapshot,
+    tx: &Transaction,
+    context: ValidationContext,
+    payload: &ContractPayload,
+) -> Result<Effects, ExecutionError> {
+    // The caller's contracts flag is insufficient: only committed profile 3
+    // authorizes native source, including through direct execution APIs.
+    if snapshot.get(&genesis::runtime_key())?.as_deref() != Some(&3u32.to_le_bytes()) {
+        return Err(TransactionError::UnsupportedPayload.into());
+    }
+    if tx.resource_limit.compute > trocto_runtime::MAX_NATIVE_FUEL {
+        return Err(ExecutionError::ResourceLimit);
+    }
+    let address = match &payload.action {
+        ContractAction::DeployTrocto(_) => {
+            trocto_contract_address(tx.chain_id, tx.sender, tx.nonce)
+        }
+        ContractAction::CallTrocto { address, .. } => *address,
+        _ => unreachable!(),
+    };
+    let code_key = trocto_contract_code_key(address);
+    if !tx.access_list.contains(&code_key) {
+        return Err(ExecutionError::UndeclaredStateAccess);
+    }
+    let mut actual = vec![
+        AccessRequest {
+            key: account_key(tx.sender),
+            mode: AccessMode::Write,
+        },
+        AccessRequest {
+            key: code_key.clone(),
+            mode: AccessMode::Read,
+        },
+    ];
+    let mut diff = StateDiff::new();
+    let mut result_bytes = Vec::new();
+    let bandwidth = transaction::estimate_encoded_len(tx) as u64;
+    let resources = match &payload.action {
+        ContractAction::DeployTrocto(code) => {
+            if snapshot.get(&code_key)?.is_some() {
+                return Err(ExecutionError::InvalidContract);
+            }
+            let source = std::str::from_utf8(code).map_err(|_| ExecutionError::InvalidContract)?;
+            // Native artifacts are local only. Committed bytes are bounded UTF-8
+            // source; every node independently checks and compiles this source.
+            trocto_compiler::compile(source).map_err(|_| ExecutionError::InvalidContract)?;
+            let resources = Resources {
+                compute: 100 + code.len() as u64,
+                memory: code.len() as u64 + 32,
+                io: code.len() as u64 + 32,
+                bandwidth,
+            };
+            subtract(tx.resource_limit, resources)?;
+            native_artifacts()
+                .prepare(source)
+                .map_err(|error| native_error(&error))?;
+            diff.put(code_key, code.clone());
+            actual[1].mode = AccessMode::Write;
+            result_bytes.extend_from_slice(address.as_bytes());
+            resources
+        }
+        ContractAction::CallTrocto { input, keys, .. } => execute_trocto_call(
+            snapshot,
+            tx,
+            context,
+            address,
+            (input, keys),
+            &mut NativeEffects {
+                diff: &mut diff,
+                actual: &mut actual,
+                result_bytes: &mut result_bytes,
+            },
+        )?,
+        _ => unreachable!(),
+    };
+    Ok(Effects {
+        diff,
+        actual,
+        resources,
+        result_bytes,
+    })
+}
+
+struct NativeEffects<'a> {
+    diff: &'a mut StateDiff,
+    actual: &'a mut Vec<AccessRequest>,
+    result_bytes: &'a mut Vec<u8>,
+}
+
+fn execute_trocto_call(
+    snapshot: &dyn StateSnapshot,
+    tx: &Transaction,
+    context: ValidationContext,
+    address: types::Address,
+    (input, keys): (&[u8], &[Vec<u8>]),
+    effects: &mut NativeEffects<'_>,
+) -> Result<Resources, ExecutionError> {
+    let code_key = trocto_contract_code_key(address);
+    let bandwidth = transaction::estimate_encoded_len(tx) as u64;
+    let code = snapshot
+        .get(&code_key)?
+        .ok_or(ExecutionError::InvalidContract)?;
+    let source = std::str::from_utf8(&code).map_err(|_| ExecutionError::InvalidContract)?;
+    let program = native_artifacts()
+        .program(source)
+        .map_err(|error| native_error(&error))?;
+    for local in keys {
+        if !tx
+            .access_list
+            .contains(&trocto_contract_state_key(address, local))
+        {
+            return Err(ExecutionError::UndeclaredStateAccess);
+        }
+    }
+    let mut context_keys = program.state_keys().to_vec();
+    context_keys.extend(
+        keys.iter()
+            .filter(|key| program.state_keys().binary_search(key).is_err())
+            .cloned(),
+    );
+    if context_keys.len() > transaction::contract::MAX_CONTRACT_KEYS {
+        return Err(ExecutionError::ResourceLimit);
+    }
+    let mut state = Vec::with_capacity(context_keys.len());
+    let mut access = Vec::with_capacity(context_keys.len());
+    let mut loaded = 0u64;
+    let mut logical_memory = code.len() as u64 + 32 + program.instruction_count() as u64 * 8;
+    for local in &context_keys {
+        logical_memory += local.len() as u64 + 16;
+        let authorized = keys.binary_search(local).is_ok();
+        access.push(authorized);
+        if authorized {
+            let global = trocto_contract_state_key(address, local);
+            let bytes = snapshot.get(&global)?;
+            let value = bytes
+                .as_deref()
+                .map(|bytes| {
+                    let bytes: [u8; 8] = bytes
+                        .try_into()
+                        .map_err(|_| ExecutionError::InvalidContract)?;
+                    Ok::<_, ExecutionError>(u64::from_le_bytes(bytes))
+                })
+                .transpose()?;
+            loaded += local.len() as u64 + bytes.as_ref().map_or(0, |value| value.len() as u64);
+            state.push(value);
+            effects.actual.push(AccessRequest {
+                key: global,
+                mode: AccessMode::Read,
+            });
+        } else {
+            // Do not inspect unleased state. Access is checked at use, so
+            // an unexecuted branch may safely mention an unleased key.
+            state.push(None);
+        }
+    }
+    let overhead = Resources {
+        compute: 100 + loaded,
+        memory: logical_memory,
+        io: code.len() as u64 + 32 + loaded,
+        bandwidth,
+    };
+    let limits = subtract(tx.resource_limit, overhead)?;
+    let input = u64::from_le_bytes(
+        input
+            .try_into()
+            .map_err(|_| ExecutionError::InvalidContract)?,
+    );
+    let caller = std::array::from_fn(|index| {
+        let mut word = [0; 8];
+        word.copy_from_slice(&tx.sender.as_bytes()[index * 8..index * 8 + 8]);
+        u64::from_le_bytes(word)
+    });
+    let result = native_artifacts()
+        .execute_contract(
+            source,
+            input,
+            &trocto_compiler::ContractContext {
+                height: context.next_height,
+                caller,
+                keys: context_keys.clone(),
+                state,
+                access,
+            },
+            limits.compute,
+        )
+        .map_err(|error| native_error(&error))?;
+    let charged = stage_trocto_result(
+        address,
+        &context_keys,
+        result,
+        effects.diff,
+        effects.actual,
+        effects.result_bytes,
+    )?;
+    overhead
+        .checked_add(charged)
+        .ok_or(ExecutionError::ResourceLimit)
+}
+
+fn stage_trocto_result(
+    address: types::Address,
+    keys: &[Vec<u8>],
+    result: trocto_compiler::ContractExecution,
+    diff: &mut StateDiff,
+    actual: &mut Vec<AccessRequest>,
+    result_bytes: &mut Vec<u8>,
+) -> Result<Resources, ExecutionError> {
+    if result.state.len() != keys.len() || result.writes.len() != keys.len() {
+        return Err(ExecutionError::NativeUnavailable);
+    }
+    let mut io = 8 + 4 + result.events.len() as u64 * 16;
+    for ((local, value), written) in keys.iter().zip(result.state).zip(result.writes) {
+        if written {
+            let global = trocto_contract_state_key(address, local);
+            io += local.len() as u64 + if value.is_some() { 8 } else { 0 };
+            match value {
+                Some(value) => diff.put(global.clone(), value.to_le_bytes().to_vec()),
+                None => diff.delete(global.clone()),
+            }
+            actual.push(AccessRequest {
+                key: global,
+                mode: AccessMode::Write,
+            });
+        }
+    }
+    result_bytes.extend_from_slice(&result.value.to_le_bytes());
+    codec::encode_length(result.events.len(), result_bytes);
+    for (topic, value) in result.events {
+        result_bytes.extend_from_slice(&topic.to_le_bytes());
+        result_bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    Ok(Resources {
+        compute: result.fuel_used,
+        memory: io,
+        io,
+        bandwidth: 0,
+    })
+}
+
+fn native_error(error: &trocto_runtime::NativeError) -> ExecutionError {
+    use trocto_compiler::ExecutionError as ContractError;
+    match error {
+        trocto_runtime::NativeError::Source(_) => ExecutionError::InvalidContract,
+        trocto_runtime::NativeError::FuelLimit
+        | trocto_runtime::NativeError::Contract(
+            ContractError::FuelExhausted | ContractError::EventLimit,
+        ) => ExecutionError::ResourceLimit,
+        trocto_runtime::NativeError::Contract(ContractError::AccessDenied) => {
+            ExecutionError::UndeclaredStateAccess
+        }
+        trocto_runtime::NativeError::Contract(
+            ContractError::Overflow | ContractError::DivisionByZero | ContractError::Bounds,
+        ) => ExecutionError::Trap,
+        _ => ExecutionError::NativeUnavailable,
+    }
 }
 
 /// Stages one call's writes and encodes its return data and events.
@@ -311,5 +593,66 @@ fn runtime_error(error: RuntimeError) -> ExecutionError {
         RuntimeError::InvalidModule | RuntimeError::Unsupported => ExecutionError::InvalidContract,
         RuntimeError::LimitExceeded => ExecutionError::ResourceLimit,
         RuntimeError::Trap => ExecutionError::Trap,
+    }
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+    use trocto_compiler::ExecutionError as ContractError;
+    use trocto_runtime::NativeError;
+
+    #[test]
+    fn local_native_failures_never_become_invalid_transactions_or_traps() {
+        for error in [
+            NativeError::Isolation("unavailable".into()),
+            NativeError::Capacity,
+            NativeError::CompilerIdentity("unavailable".into()),
+            NativeError::Compilation("unavailable".into()),
+            NativeError::Io("unavailable".into()),
+            NativeError::DiagnosticLimit,
+            NativeError::CompilationTimeout,
+            NativeError::ExecutionTimeout,
+            NativeError::WorkerUnavailable,
+            NativeError::Protocol,
+            NativeError::Divergence,
+            NativeError::InvalidDeadline,
+            NativeError::Contract(ContractError::InvalidContext),
+        ] {
+            assert_eq!(native_error(&error), ExecutionError::NativeUnavailable);
+        }
+        for (error, expected) in [
+            (NativeError::FuelLimit, ExecutionError::ResourceLimit),
+            (
+                NativeError::Contract(ContractError::FuelExhausted),
+                ExecutionError::ResourceLimit,
+            ),
+            (
+                NativeError::Contract(ContractError::EventLimit),
+                ExecutionError::ResourceLimit,
+            ),
+            (
+                NativeError::Contract(ContractError::AccessDenied),
+                ExecutionError::UndeclaredStateAccess,
+            ),
+            (
+                NativeError::Contract(ContractError::Bounds),
+                ExecutionError::Trap,
+            ),
+            (
+                NativeError::Contract(ContractError::Overflow),
+                ExecutionError::Trap,
+            ),
+            (
+                NativeError::Contract(ContractError::DivisionByZero),
+                ExecutionError::Trap,
+            ),
+            (
+                NativeError::Source(trocto_compiler::compile("external native IR").unwrap_err()),
+                ExecutionError::InvalidContract,
+            ),
+        ] {
+            assert_eq!(native_error(&error), expected);
+        }
     }
 }

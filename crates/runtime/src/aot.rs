@@ -21,9 +21,9 @@
 //! engine policy the reference profile pins: the same rejected proposals,
 //! the same fuel schedule, the same 128-frame recursion cap and the same
 //! 16,384-byte value stack cap. What changes is when translation happens and
-//! how often, never what a call observes. A native-codegen backend is
-//! impossible in this workspace, because `unsafe_code` is forbidden
-//! workspace-wide and no safe interface can hand control to generated code.
+//! how often, never what a call observes. Trocto's separate process runtime
+//! generates native code without in-process FFI. This historical WASM cache
+//! continues to execute the pinned interpreter for exact replay.
 //!
 //! What this does NOT establish: a second WebAssembly implementation to
 //! differentially test the first against, since both sides of every comparison

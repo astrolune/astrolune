@@ -98,9 +98,13 @@ Commands:
   reprice-transaction <file> <seed-or-vault> <prices> <output>  Sign with explicit resource prices
   inspect-payment <file>  Verify and display a signed payment offline
   sign-deploy <genesis> <seed-file> <wasm> <nonce> <expires-at> <output>
-           Sign ABI-v2 deployment offline (genesis runtime_version must be 2)
+           Sign ABI-v2 deployment offline (genesis runtime_version 2 or 3)
   sign-call <genesis> <seed-file> <contract> <input-file> <keys-file> <nonce> <expires-at> <max-compute> <output>
            Sign a contract call; keys-file contains one hex local key per line
+  sign-trocto-deploy <genesis> <seed-file> <source.tc> <nonce> <expires-at> <output>
+           Check and sign a Trocto deployment (genesis runtime_version 3)
+  sign-trocto-call <genesis> <seed-file> <contract> <input-u64> <keys-file> <nonce> <expires-at> <max-compute> <output>
+           Sign a native Trocto call; keys-file contains hex local keys
   inspect-transaction <file>  Verify and display a payment or contract envelope
   submit <file> [rpc-address]  Send a saved transaction once; acceptance is not finality
   evidence-create <genesis> <validators> <vote-a> <vote-b> <output> [rpc-address]  Verify and save a double-vote proof
@@ -150,7 +154,7 @@ Commands:
            Export verified history for an observer, without copying signing authority
   verify   Validate a node configuration
   genesis <file>  Verify binary genesis and derive its initial state root
-  devnet <directory> [validators] [--observer] [--contracts] [--vrf|--potb]  Create a local test network (default: 4)
+  devnet <directory> [validators] [--observer] [--contracts|--trocto] [--vrf|--potb]  Create a local test network (default: 4)
   init-validator <genesis> <seed-or-vault> <directory>  Provision a protected signing journal
   signing-anchor-create <genesis> <seed-or-vault> <journal> <new-anchor>
            Provision an independent rollback anchor; keep it on separate storage
@@ -227,9 +231,9 @@ fn run() -> Result<(), CliError> {
         Some(command @ ("release-sign" | "verify-release")) => {
             release::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
         }
-        Some(command @ ("sign-deploy" | "sign-call")) => {
-            contracts::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>())
-        }
+        Some(
+            command @ ("sign-deploy" | "sign-call" | "sign-trocto-deploy" | "sign-trocto-call"),
+        ) => contracts::run(command, &std::env::args_os().skip(2).collect::<Vec<_>>()),
         Some(command @ ("evidence-create" | "evidence-verify")) => evidence::run(command),
         Some(
             command @ ("admission-request" | "admission-inspect" | "admission-approve"

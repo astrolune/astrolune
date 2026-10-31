@@ -104,3 +104,84 @@ fn rejects_malformed_source_extensions_and_native_call_arguments() {
         assert!(!fixture.command(&args).status.success(), "{args:?}");
     }
 }
+
+#[test]
+fn source_packages_preserve_exact_source_and_reject_tampering() {
+    let fixture = Fixture::new();
+    let packaged = fixture.command(&["package", "main.tc", "main.tcp"]);
+    assert!(
+        packaged.status.success(),
+        "{}",
+        String::from_utf8_lossy(&packaged.stderr)
+    );
+    assert!(fixture.command(&["check", "main.tcp"]).status.success());
+    assert!(
+        fixture
+            .command(&["verify-source", "main.tc", "main.tcp"])
+            .status
+            .success()
+    );
+    let original = std::fs::read(fixture.0.join("main.tcp")).unwrap();
+    assert!(
+        !fixture
+            .command(&["package", "main.tc", "main.tcp"])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(fixture.0.join("main.tcp")).unwrap(), original);
+    std::fs::write(
+        fixture.0.join("changed.tc"),
+        "fn call(input: u64) -> u64 { return input + 8; }",
+    )
+    .unwrap();
+    assert!(
+        !fixture
+            .command(&["verify-source", "changed.tc", "main.tcp"])
+            .status
+            .success()
+    );
+    let mut altered = original;
+    altered[12] ^= 1;
+    std::fs::write(fixture.0.join("tampered.tcp"), altered).unwrap();
+    assert!(!fixture.command(&["check", "tampered.tcp"]).status.success());
+}
+
+#[test]
+fn initializes_stateful_source_and_exposes_declared_keys() {
+    let fixture = Fixture::new();
+    assert!(fixture.command(&["init", "counter"]).status.success());
+    assert!(!fixture.command(&["init", "counter"]).status.success());
+    let checked = fixture.command(&["check", "counter/main.tc"]);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let output = String::from_utf8_lossy(&checked.stdout);
+    assert!(output.contains("language: trocto-2"));
+    assert!(output.contains("state_key: counter"));
+}
+
+#[test]
+#[ignore = "requires pinned LLVM 22.1.8 and native OS isolation"]
+fn native_stateful_cli_build_and_run() {
+    let fixture = Fixture::new();
+    assert!(fixture.command(&["init", "counter"]).status.success());
+    let built = fixture.command(&["build", "counter/main.tc", "counter.tcp"]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    std::fs::write(fixture.0.join("state.txt"), "counter=10\n").unwrap();
+    let output = fixture.command(&["run", "counter.tcp", "5", "1000", "state.txt"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = String::from_utf8_lossy(&output.stdout);
+    assert!(output.contains("return_value: 15"));
+    assert!(output.contains("write: counter=15"));
+    assert!(output.contains("event: 1=15"));
+}

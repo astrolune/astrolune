@@ -294,9 +294,12 @@ name = "execution"
 version = "0.1.0"
 dependencies = [
  "codec",
+ "genesis",
  "runtime",
  "state",
  "transaction",
+ "trocto-compiler",
+ "trocto-runtime",
  "types",
 ]
 
@@ -804,6 +807,20 @@ dependencies = [
  "codec",
  "crypto",
  "types",
+]
+
+[[package]]
+name = "trocto-compiler"
+version = "0.1.0"
+dependencies = [
+ "types",
+]
+
+[[package]]
+name = "trocto-runtime"
+version = "0.1.0"
+dependencies = [
+ "trocto-compiler",
 ]
 
 [[package]]

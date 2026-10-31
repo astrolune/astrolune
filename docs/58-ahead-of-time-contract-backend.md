@@ -353,10 +353,10 @@ No in-process just-in-time backend is delivered by the WebAssembly runtime.
 make generated memory executable or transfer control through unchecked pointers.
 `BackendKind::Jit` stays reserved, and `AotBackend` is asserted never to report it.
 
-The separate [Trocto native development worker](64-trocto-native-llvm.md) invokes
+The separate [Trocto native runtime](64-trocto-native-llvm.md) invokes
 LLVM and runs a generated executable in another process through safe Rust process
 APIs. It has its own checked source, reference semantics, and qualification gates;
-it does not change this WebAssembly backend or activate a validator runtime.
+it uses signed runtime profile 3 and preserves this historical WebAssembly backend.
 
 What this section does not establish: that SIMD or native code generation would
 be unsound or unprofitable, neither of which was investigated; or that

@@ -6,14 +6,19 @@
 
 `execute_payments_parallel` executes the existing signed payment rules with
 1–32 local workers. It checks actual sender/recipient keys against declarations
-before trusting the existing dependency-preserving wave planner. Independent
-transactions run concurrently against immutable snapshots and a private overlay;
-later dependent waves see preceding writes. Results and receipts return in the
+before trusting the dependency planner. A single wide wave uses the batched
+parallel path; an entirely singleton plan uses a fused serial session. Mixed
+plans use a readiness DAG: a transaction starts when its own conflict and sender
+predecessors complete, without waiting for unrelated transactions in an earlier
+wave. Workers read immutable views of the parent and preceding private writes.
+Results and receipts return in the
 original transaction order. Block resource totals are checked in that order,
 and the database receives one atomic commit.
 
-Speculative failures and worker creation failures replay through the serial
-reference executor. Invalid inputs therefore preserve the reference error and
+Deterministic speculative failures and executor-thread creation failures replay through
+the serial executor. Native LLVM, sandbox and worker failures remain local
+`NativeUnavailable` errors and never select a fallback execution backend.
+Invalid inputs therefore preserve the reference error and
 leave no published prefix. The producer uses up to eight available local workers
 when verifying/replaying genesis-backed payment blocks. Mempool selection and
 proposal admission remain sequential so rejected candidates cannot consume
@@ -24,7 +29,11 @@ independent transfers, dependent account creation, self-transfers, multiple
 nonces, forged signatures, missing access declarations, capacity exhaustion and
 stale parents.
 
-Local execution performance is now measured by `crates/execution/benches/execution.rs`
+The historical wave-executor measurements below were recorded by
+`crates/execution/benches/execution.rs` before readiness dispatch was implemented.
+They retain their original workload and environment limits; the newer readiness
+comparison is described under per-block worker reuse and in
+[document 64](64-trocto-native-llvm.md). Local execution performance was measured
 on one eight-core host, and the measurement qualifies the parallel path more
 narrowly than equivalence testing alone suggested. Against the serial path on
 fully independent transfers in one wide wave, the best observed speedup is 2.56x
@@ -63,10 +72,13 @@ resource charges. Direct `SignedSession` callers retain their supplied snapshot;
 the payment-only path uses its existing account/write overlays without this
 additional cache.
 
-The wave planner borrows access keys from the transaction batch instead of
-allocating normalized leases during planning. It computes all predecessor waves
-before updating its per-key index, preserving plans for unordered or duplicate
-keys and repeated senders. The public lease operation is unchanged.
+The planner borrows access keys from the transaction batch instead of allocating
+normalized leases during planning. Canonical ABI-v2 and Trocto ABI-v3 calls read
+only their exact immutable code key; deployments and every other declared key
+remain writes. Read/write dependencies and sender order are retained. The wave
+plan waits for the highest prior reader wave before a write, while the readiness
+DAG retains the actual conflicting predecessors. Both collect predecessors
+before updating their per-key indexes, including for duplicate declarations.
 
 Deterministic tests compare the planner against an independent pairwise
 predecessor implementation on 256 generated blocks, alongside the existing 512
@@ -92,23 +104,26 @@ above rather than on a measured speedup;
 ## Per-block worker reuse
 
 Parallel execution creates one scoped worker pool per block attempt and reuses
-its threads across all parallel waves. Its size is the smaller of the requested
-worker count and the widest wave, with the existing maximum of 32. Singleton
-waves execute on the coordinator; a plan containing only singleton waves creates
-no workers. Threads are joined before the attempt returns, including on failure.
+its threads across that attempt. Its size is bounded by the requested worker
+count and the widest planned wave, with the existing maximum of 32. A plan
+containing only singleton waves creates no workers. Singleton nodes in a mixed
+DAG can execute on workers as soon as their predecessors complete. Threads are
+joined before the attempt returns, including on failure.
 
-Each worker has a one-slot request channel and a one-slot result channel. The
-coordinator dispatches at most one chunk to each worker per wave and receives
-every dispatched result before advancing the shared private overlay. Workers
-hold read access only while executing their chunk; the coordinator applies
-results between waves. A fresh execution session per chunk retains the existing
-resource accounting. Result order, chunk boundaries, resource charges and the
-final atomic commit are unchanged.
+Each worker has a one-slot request channel. The readiness pool shares a bounded
+completion queue and permits at most one in-flight job per worker. The
+coordinator applies completed outputs to its private overlay and immediately
+releases ready successors. A job freezes only its declared overlay keys, so it
+holds no global overlay read lock during execution. The single-wide-wave path
+retains its batched channels and result buffers. Every job uses a private signed
+session; transaction outputs, resource charges and the final atomic commit keep
+their canonical order despite different completion order and chunk boundaries.
 
-Task failures and closed worker channels drain outstanding results and close the
-pool. Worker panics are consumed by explicit joins; execution falls back to the
-existing serial path, as it does for worker creation failures. No worker, task
-queue or speculative overlay survives into another execution attempt.
+Failure cleanup joins outstanding workers and closes the pool. Worker panics are
+contained and trigger serial error replay, as do worker creation failures.
+`NativeUnavailable` propagates without selecting another backend or publishing
+state. No worker, task queue or speculative overlay survives into another
+execution attempt.
 
 Tests compare 16 waves with changing widths, new account visibility, a late
 resource failure and a clean retry against serial execution for 1, 2, 3, 8 and
@@ -116,22 +131,37 @@ resource failure and a clean retry against serial execution for 1, 2, 3, 8 and
 six four-wide waves use four worker threads at a requested count of four or
 more, instead of creating 24 threads. Separate pool tests cover ordered results,
 reuse, smaller/empty batches, task errors, worker panics and joining idle workers.
-This qualifies thread reuse and functional equivalence; end-to-end throughput
-has not been benchmarked. Reuse is visible in the per-operation figures: a
+Dependency-oracle tests also check sender and RAW/WAR/WAW edges. A controlled
+execution test blocks an unrelated earlier transaction until a ready descendant
+reads its own state, demonstrating that mixed execution no longer waits for a
+whole wave. These checks qualify thread reuse and functional equivalence;
+end-to-end throughput has not been benchmarked. In the historical wave-executor
+per-operation figures, a
 44-transaction batch spanning 16 waves reaches 1.51x serial, which a pool created
 per wave could not do, since 16 pool creations alone would exceed the whole
 measured block. The pool's cost is still charged once per attempt and is the
 dominant reason parallel execution needs about eight transactions per worker to
 win; [measured scaling](56-performance-measurement.md).
 
+The newer [readiness comparison](assets/trocto-readiness-2026-10-31/comparison.json)
+holds fixtures and source constant while switching wave and ready dispatch.
+For 44 payments in a 16-wave dependency shape, four-worker median changed from
+1.4465 ms to 1.1710 ms (1.235x); two workers regressed from 1.4423 ms to 1.6334 ms.
+Unchanged single-wave controls fluctuated 5–15% under background load. Seven
+short rounds establish no general speedup, statistical significance or network
+throughput result.
+
 ## Fusion, prefetch and result-buffer reuse
 
-Consecutive waves containing one transaction each execute in one sequential
-session. Later transactions see that session's private writes, including account
+Entirely serial plans fuse consecutive singleton waves in one sequential
+session. Mixed readiness plans also fuse linear dependency paths on a worker
+when the next node has only that unfinished predecessor and the current node has
+only that successor. Later transactions see that session's private writes, including account
 creation and contract changes, before the combined results reach the block
 overlay. Each transaction retains its own output, receipt, resource accounting
-and committed position. Wider waves retain parallel execution. Any speculative
-failure still triggers serial replay to preserve the canonical error; a failed
+and committed position. Independent ready jobs retain parallel execution.
+Deterministic speculative failures trigger serial replay to preserve the
+canonical error; native infrastructure failures remain local. A failed
 attempt publishes no state.
 
 Each public payment or signed-execution invocation offers at most one advisory
@@ -143,12 +173,14 @@ are ignored, and serial replay does not issue the hint again. Prefetch never
 substitutes for state reads or transaction validation. Existing database backends
 implement it as a no-op, so this hook alone establishes no speedup.
 
-The executor drains each worker's output vector into committed-order result
+The single-wide-wave executor drains each worker's output vector into committed-order result
 positions and recycles the empty allocation for later waves. The coordinator's
 result envelope, singleton result buffer and fused-index buffer are reused within
 the execution attempt. Buffers and worker threads are dropped at its end; no
 transaction output or speculative state is shared with another block or retry.
-This is a pool of result buffers, not a pool of contract instances or state values.
+Mixed readiness jobs return their own output vectors; their completed outputs
+occupy the same committed-order positions. The executor's wave-path buffer pool
+contains no contract instances or state values.
 
 Differential checks cover dependent singleton runs, changing wave widths, resource
 failures and serial replay. Prefetch checks cover limits, deduplication, hint
@@ -168,13 +200,14 @@ Bounded declared-key prefetch has no measurable effect at any batch size, and th
 sign of the difference changed between runs, because `InMemoryState::prefetch` is
 a no-op and only the key-set construction is left to measure.
 
-One planner consequence is worth stating plainly: repeated calls to a single
-contract do not parallelize at all. Sixteen calls to one contract plan as sixteen
-singleton waves, because the shared contract code key is declared and the planner
-treats every declared key as a write, giving 1 237 us at eight workers against
-1 202 us serial. Sixteen calls to sixteen distinct contracts plan as one wave and
-reach 1.72x. This is a consequence of conservative access declaration, not a
-tuning parameter; [measurement limits](56-performance-measurement.md).
+The historical `shared_code` fixture writes the same contract-local key `k`
+from every call. Its sixteen singleton waves measured 1 237 us at eight workers
+against 1 202 us serial; sixteen calls to distinct contracts reached 1.72x.
+Shared writable state still imposes these dependencies. Current canonical calls
+read the immutable code key, so a separate shared-code fixture with disjoint
+state keys can run in one wave. The [scheduler comparison](assets/trocto-architecture-2026-10-31/comparison.json)
+records that change without attributing the contended fixture's serialization
+solely to code access; [measurement limits](56-performance-measurement.md).
 
 ## WebAssembly ABI v2
 
@@ -227,9 +260,11 @@ state I/O and output/event bandwidth are charged separately. Wasmi instruction
 fuel is part of the pinned metering version, not measured elapsed time.
 
 Changing engine version, fuel schedule or allowed features requires an explicit
-runtime-version change. No native backend is qualified; the qualified
-ahead-of-time backend emits no native code and is described in
-[document 58](58-ahead-of-time-contract-backend.md).
+runtime-version change. The ABI-v2 ahead-of-time backend emits no native code and
+is described in [document 58](58-ahead-of-time-contract-backend.md). Native Trocto
+uses the separate explicit runtime profile 3, its own metering and OS-isolated
+LLVM workers; [document 64](64-trocto-native-llvm.md) records its implementation,
+tests and remaining qualification limits.
 
 ## Qualified alternate engine configurations
 
@@ -331,11 +366,12 @@ two allocation axes, and it records one measured configuration axis that is not
 independent. None of the profiles compared here is an ahead-of-time, a
 just-in-time, a SIMD or an independently implemented backend, and each reports
 `BackendKind::Interpreter`; the separate ahead-of-time backend that reports
-`BackendKind::Aot` is described in the next section. No profile here and no
-backend anywhere in this workspace emits native machine code, so
-`BackendKind::Jit` remains a reserved declaration. The compared profiles share
+`BackendKind::Aot` is described in the next section. No ABI-v2 profile compared
+here emits native machine code; the separate Trocto LLVM backend does.
+`BackendKind::Jit` remains a reserved declaration in the ABI-v2 seam. The compared profiles share
 one interpreter, one translator and one fuel schedule, so agreement between them
-does not establish agreement with a hypothetical native backend. Nothing here
+does not establish agreement with the separate native backend. Nothing in this
+historical ABI-v2 campaign
 changes the runtime version, enables an alternate backend for live execution, or
 establishes any throughput, compile-time or memory-footprint claim; the reported
 seconds are campaign durations, not benchmarks.
@@ -379,7 +415,7 @@ one million mutations with 0 disagreements. SIMD rejection is pinned so the
 engine feature cannot be enabled silently.
 [Identity, bounds, differential case counts and measured figures](58-ahead-of-time-contract-backend.md).
 
-## Contract tooling
+## Historical ABI-v2 contract tooling
 
 ```text
 cargo contract build contract.rs contract.wasm
@@ -405,4 +441,4 @@ build test. The latter needs the target libraries and is ignored in the default
 workspace run; run `cargo test -p cargo-contract --test commands -- --ignored`.
 The pinned build test has been run locally with the official target component.
 
-Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Restricted source manifests and exact offline package reconstruction are implemented in [document 34](34-contract-source-packages.md). A qualified ahead-of-time backend, its artifact cache and its differential qualification are implemented in [document 58](58-ahead-of-time-contract-backend.md); in-process just-in-time execution and SIMD require separate safety and runtime-version decisions. The separate Trocto native development worker is described in [document 64](64-trocto-native-llvm.md). Contract fuzz campaigns remain open and deferred.
+Signed deploy/call envelopes, fees/nonces, mixed waves and explicit daemon activation are implemented in [document 30](30-signed-contracts.md). The allocation-free Rust SDK host adapter is implemented and tested; see [document 31](31-rust-sdk-and-wallet-vaults.md). Restricted source manifests and exact offline package reconstruction are implemented in [document 34](34-contract-source-packages.md). A qualified ahead-of-time backend, its artifact cache and its differential qualification are implemented in [document 58](58-ahead-of-time-contract-backend.md); in-process just-in-time execution and SIMD require separate safety and runtime-version decisions. Trocto native contracts, tooling and signed runtime profile 3 are described in [document 64](64-trocto-native-llvm.md). Contract fuzz campaigns remain open and deferred.

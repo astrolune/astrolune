@@ -3,7 +3,7 @@
 
 //! Single-writer atomic archives containing blocks, certificates, and state history.
 
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,7 @@ use types::{Block, Hash256};
 
 use crate::{
     Checkpoint, CommitBatch, InMemoryStorage, MAX_ARCHIVE_BYTES, NodeStorage, SnapshotSink,
-    SnapshotSource, StorageError, archive,
+    SnapshotSource, StorageError, archive, writer_lock::WriterLock,
 };
 
 /// Bounded reference chain persistence using synchronized atomic file replacement.
@@ -23,7 +23,7 @@ use crate::{
 pub struct FileBackedStorage {
     inner: InMemoryStorage,
     path: PathBuf,
-    _lock: File,
+    _lock: WriterLock,
     recovery_required: bool,
 }
 
@@ -47,17 +47,7 @@ impl FileBackedStorage {
                 return Err(StorageError::Io);
             }
         }
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(sidecar(&path, ".lock"))
-            .map_err(|_| StorageError::Io)?;
-        lock.try_lock().map_err(|error| match error {
-            TryLockError::WouldBlock => StorageError::Locked,
-            TryLockError::Error(_) => StorageError::Io,
-        })?;
+        let lock = WriterLock::acquire(&sidecar(&path, ".lock"))?;
         let (inner, create) = match File::open(&path) {
             Ok(file) => {
                 let mut bytes = Vec::new();

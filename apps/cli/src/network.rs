@@ -57,6 +57,7 @@ pub(crate) fn devnet() -> Result<(), CliError> {
         count,
         with_observer,
         with_contracts,
+        with_trocto,
         consensus,
     } = devnet_options()?;
     let with_vrf = matches!(consensus, DevnetConsensus::Vrf);
@@ -66,7 +67,13 @@ pub(crate) fn devnet() -> Result<(), CliError> {
     let keys: Vec<_> = (1..=count)
         .map(|index| ed25519_public_key(&[index; 32]))
         .collect();
-    let genesis = devnet_genesis(&keys, count, with_contracts, with_vrf || with_potb);
+    let genesis = devnet_genesis(
+        &keys,
+        count,
+        with_contracts,
+        with_trocto,
+        with_vrf || with_potb,
+    );
     let wallet = genesis.allocations[0].address;
     let profile = if with_potb {
         Some(
@@ -108,6 +115,9 @@ pub(crate) fn devnet() -> Result<(), CliError> {
     }
     if with_potb {
         instructions.push_str("Explicit PoTB configuration: one age increment per 100 active blocks, weight capped at 100. Keep every eligible identity online, including standby validators. Submit consent/quorum certificates and historical evidence to validator RPC endpoints. Pending submissions expire at the next finalized height.\n\n");
+    }
+    if with_trocto {
+        instructions.push_str("Runtime profile 3 activates native Trocto. Every node needs LLVM 22.1.8 and the supported native isolation environment. Set ASTROLUNE_LLVM_CLANG to its clang executable before starting nodes.\n\n");
     }
     for index in 1..=count {
         let data = directory.join(format!("node-{index}"));
@@ -280,6 +290,7 @@ struct DevnetOptions {
     count: u8,
     with_observer: bool,
     with_contracts: bool,
+    with_trocto: bool,
     consensus: DevnetConsensus,
 }
 fn devnet_options() -> Result<DevnetOptions, CliError> {
@@ -289,7 +300,11 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
             .ok_or_else(|| error("usage: cli devnet <new-directory> [validators] [--observer]"))?,
     );
     let count: u8 = if args.peek().is_some_and(|value| {
-        value == "--observer" || value == "--contracts" || value == "--vrf" || value == "--potb"
+        value == "--observer"
+            || value == "--contracts"
+            || value == "--trocto"
+            || value == "--vrf"
+            || value == "--potb"
     }) {
         4
     } else {
@@ -303,6 +318,7 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
     };
     let mut with_observer = false;
     let mut with_contracts = false;
+    let mut with_trocto = false;
     let mut with_vrf = false;
     let mut with_potb = false;
     for value in args {
@@ -310,13 +326,15 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
             with_observer = true;
         } else if value == "--contracts" && !with_contracts {
             with_contracts = true;
+        } else if value == "--trocto" && !with_trocto {
+            with_trocto = true;
         } else if value == "--vrf" && !with_vrf {
             with_vrf = true;
         } else if value == "--potb" && !with_potb {
             with_potb = true;
         } else {
             return Err(error(
-                "expected unique --observer, --contracts, --vrf or --potb flags",
+                "expected unique --observer, --contracts, --trocto, --vrf or --potb flags",
             ));
         }
     }
@@ -331,6 +349,7 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
         count,
         with_observer,
         with_contracts,
+        with_trocto,
         consensus: if with_potb {
             DevnetConsensus::Potb
         } else if with_vrf {
@@ -341,7 +360,13 @@ fn devnet_options() -> Result<DevnetOptions, CliError> {
     })
 }
 
-fn devnet_genesis(keys: &[[u8; 32]], count: u8, with_contracts: bool, rotating: bool) -> Genesis {
+fn devnet_genesis(
+    keys: &[[u8; 32]],
+    count: u8,
+    with_contracts: bool,
+    with_trocto: bool,
+    rotating: bool,
+) -> Genesis {
     let mut validators: Vec<_> = keys
         .iter()
         .map(|key| GenesisValidator {
@@ -370,7 +395,13 @@ fn devnet_genesis(keys: &[[u8; 32]], count: u8, with_contracts: bool, rotating: 
             count
         }),
         rotation_count: 1,
-        runtime_version: if with_contracts { 2 } else { 1 },
+        runtime_version: if with_trocto {
+            3
+        } else if with_contracts {
+            2
+        } else {
+            1
+        },
         validators,
         allocations: vec![Allocation {
             address: wallet,

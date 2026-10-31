@@ -36,6 +36,13 @@ class PackageTests(unittest.TestCase):
                 (root / "docs/assets").mkdir(parents=True)
                 (root / "docs/assets/banner.png").write_bytes(b"image-fixture")
                 (root / "docs/protocol.md").write_bytes(b"protocol-fixture")
+                evidence = {
+                    "comparison.json": b'{"median_ms": 1.17}\n',
+                    "before.log": b"measurement fixture\n",
+                    "parallel-before.rs": b"fn benchmark_fixture() {}\n",
+                }
+                for name, data in evidence.items():
+                    (root / "docs/assets" / name).write_bytes(data)
                 identity = (target, "a" * 40, "rustc fixture\n")
                 first = PACKAGER.package(root, binaries, root / "first", *identity)
                 for path in (*binaries.iterdir(), root / "README.md"):
@@ -60,6 +67,12 @@ class PackageTests(unittest.TestCase):
                         {m.name for m in members} - {"BUILD.json"},
                     )
                     self.assertIn("dns" + suffix, metadata["files"])
+                    for name, data in evidence.items():
+                        path = "docs/assets/" + name
+                        self.assertEqual(archive.extractfile(path).read(), data)
+                        self.assertEqual(
+                            metadata["files"][path], hashlib.sha256(data).hexdigest()
+                        )
                     for member in members:
                         self.assertEqual(
                             (member.uid, member.gid, member.mtime), (0, 0, 0)

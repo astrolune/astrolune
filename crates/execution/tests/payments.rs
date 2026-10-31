@@ -468,7 +468,7 @@ fn parallel_executor_reuses_the_same_workers_across_payment_waves() {
         } else {
             assert!(readers.len() > 1, "parallel execution fell back to serial");
             assert!(!readers.contains(&current().id()));
-            let expected_readers = 4_usize.div_ceil(4_usize.div_ceil(workers));
+            let expected_readers = workers.min(4);
             assert_eq!(
                 readers.len(),
                 expected_readers,

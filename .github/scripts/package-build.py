@@ -48,7 +48,7 @@ def package(
     for name in ("LICENSE", "README.md", "Cargo.lock", "rust-toolchain.toml"):
         entries[name] = (root / name, 0o644)
     for path in sorted((root / "docs").rglob("*")):
-        if path.is_file() and path.suffix in (".md", ".png"):
+        if path.is_file() and path.suffix in (".md", ".png", ".json", ".log", ".rs"):
             entries[path.relative_to(root).as_posix()] = (path, 0o644)
     payloads = {}
     for name, (path, mode) in sorted(entries.items()):

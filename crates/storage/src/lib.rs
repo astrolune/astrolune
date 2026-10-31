@@ -30,6 +30,7 @@ mod persistent;
 mod receipts;
 mod retention;
 mod snapshot;
+mod writer_lock;
 pub use receipts::{
     BlockEffects, MAX_BLOCK_RECEIPTS, MAX_INDEXED_TRANSACTIONS, MAX_RECEIPTS_BYTES, StoredReceipts,
 };

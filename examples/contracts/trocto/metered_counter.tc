@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Ankerin
+// SPDX-License-Identifier: MIT
+
+// Every iteration consumes deterministic fuel. A trap discards all staged writes.
+fn call(input: u64) -> u64 {
+    let mut i: u64 = 0;
+    let mut total: u64 = state_get("counter");
+    while i < input {
+        total = total + 1;
+        i = i + 1;
+    }
+    state_set("counter", total);
+    emit(height(), total);
+    return total;
+}

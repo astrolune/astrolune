@@ -427,6 +427,9 @@ impl BlockProducer {
                     Err(ExecutionError::State(error)) => {
                         return Err(ExecutionError::State(error).into());
                     }
+                    Err(ExecutionError::NativeUnavailable) => {
+                        return Err(ExecutionError::NativeUnavailable.into());
+                    }
                     // Conflicts with earlier transfers may invalidate a pool entry.
                     // Keep it pending while building the proposal; never stall valid work.
                     Err(_) => {}
@@ -824,12 +827,12 @@ impl BlockProducer {
         }
     }
 
-    /// Whether committed genesis activated ABI-v2 contract execution.
+    /// Whether committed genesis activated contract execution.
     #[must_use]
     pub fn contracts_enabled(&self) -> bool {
         self.state
             .get(&genesis::runtime_key())
-            .is_some_and(|bytes| bytes == 2u32.to_le_bytes())
+            .is_some_and(|bytes| bytes == 2u32.to_le_bytes() || bytes == 3u32.to_le_bytes())
     }
 
     /// Chain identity used for admission and execution.

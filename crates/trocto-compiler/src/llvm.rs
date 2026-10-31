@@ -79,5 +79,8 @@ pub(crate) fn generate(instructions: &[Instruction], result: usize) -> String {
          %used, align 8\n  ret i32 0\nfuel_exhausted:\n  ret i32 1\noverflow:\n  ret i32 \
          2\ndivision_zero:\n  ret i32 3\n}}"
     );
+    ir.push_str(crate::stateful_llvm::CONTRACT_SIGNATURE);
+    crate::stateful_llvm::initialize(&mut ir, 0);
+    ir.push_str("  %status = call i32 @trocto_call(i64 %input, i64 %fuel, ptr %output, ptr %used)\n  ret i32 %status\ninvalid_context:\n  ret i32 6\n}\n");
     ir
 }

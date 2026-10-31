@@ -28,6 +28,7 @@ rpc = { version = "0.1.0", path = "../../crates/rpc" }
 state = { version = "0.1.0", path = "../../crates/state" }
 transaction = { version = "0.1.0", path = "../../crates/transaction" }
 types = { version = "0.1.0", path = "../../crates/types" }
+trocto-compiler = { version = "0.1.0", path = "../../crates/trocto-compiler" }
 zeroize = "=1.9.1"
 
 [lints]

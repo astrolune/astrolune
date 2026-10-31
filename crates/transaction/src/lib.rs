@@ -26,6 +26,7 @@ pub mod validator;
 
 pub use contract::{
     ContractAction, ContractPayload, contract_address, contract_code_key, contract_state_key,
+    trocto_contract_address, trocto_contract_code_key, trocto_contract_state_key,
 };
 pub use envelope::Envelope;
 pub use error::TransactionError;

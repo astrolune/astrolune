@@ -54,11 +54,12 @@ Pinned contract toolchain, canonical target selection, validator, interpreter, h
 - [x] Dedicated contract fuzz target with a differential validate/execute oracle and gated mutation campaigns; [scope](docs/37-protocol-qualification.md).
 - [x] Qualified alternate engine configurations across the backend seam, with a measured prohibition on lazy compilation whose deferred work is charged to the call's fuel; [scope](docs/29-parallel-payments-and-wasm.md#qualified-alternate-engine-configurations).
 - [x] Qualified ahead-of-time backend: translation completed before a call's fuel budget exists, a bounded generational artifact cache keyed by engine, compiler and target identity, and differential qualification against the recompiling path; [scope and measured figures](docs/58-ahead-of-time-contract-backend.md).
-- [x] Initial Trocto (`.tc`) frontend, checked integer reference semantics, LLVM IR, and persistent native development worker; [scope](docs/64-trocto-native-llvm.md).
-- [ ] Trocto state capabilities, ownership for richer values, OS sandbox, native conformance, and a new signed deployment/runtime profile.
-- [ ] In-process JIT and SIMD require separate safety and runtime-version decisions; they are outside the current native development worker.
+- [x] Trocto (`.tc`) frontend, typed Copy scalars, metered control flow, literal/dynamic state capabilities, events, checked reference semantics and LLVM IR; [language profiles and bounds](docs/64-trocto-native-llvm.md#language-profile-2).
+- [x] LLVM 22.1.8 native compilation, persistent OS-isolated workers, bounded artifact/worker reuse, complete reference/native comparison, source-package tooling, and signed deployment/calls under genesis runtime profile 3; [execution and activation](docs/64-trocto-native-llvm.md).
+- [ ] Ownership/borrowing for aggregate values and independent compiler/runtime security review.
+- [ ] In-process JIT and SIMD require separate safety and runtime-version decisions.
 
-Implemented behavior and the remaining activation boundary are specified in [document 29](docs/29-parallel-payments-and-wasm.md).
+Historical ABI-v2 behavior is specified in [document 29](docs/29-parallel-payments-and-wasm.md). Trocto language/metering profiles 1/1 and 2/2, native isolation and explicit genesis runtime profile 3 are specified in [document 64](docs/64-trocto-native-llvm.md). Native artifacts remain local derived data; independent compiler/runtime review and production qualification remain open.
 
 ## M4 — parallel execution
 
@@ -67,6 +68,7 @@ Access leasing, execution waves, multiple lanes, optimistic validation, determin
 - [x] Parallel signed payment waves with checked actual access, private overlays and serial error replay.
 - [x] Node verification/replay integration and serial/parallel differential tests across worker counts.
 - [x] Mixed contract/payment waves, aggregate capacity enforcement and deterministic serial replay.
+- [x] Readiness-driven dependency dispatch with immutable declared-key views, preserved sender/RAW/WAR/WAW order and canonical publication; [scope and measurement limits](docs/64-trocto-native-llvm.md#execution-architecture-and-evidence).
 - [x] Explicit rotating-producer system lane with reserved VRF resources, mixed application execution and atomic publication.
 - [x] Explicit genesis-v2 daemon activation of the VRF system lane.
 - [x] Consensus capacity/fee governance: more than 2/3 incumbent weight, next-epoch activation; [details](docs/48-parameter-governance.md).
@@ -133,7 +135,7 @@ bounded frames, strict response checks and whole-call deadlines. Encrypted walle
 Distributed calibration, interoperability, long fuzz campaigns, reproducible releases, dependency review, external cryptography/consensus/runtime/security audits, key ceremonies, monitoring, incident response, and operator runbooks.
 
 - [x] Deterministic native archive generation, complete binary/document payloads and per-file checksums.
-- [x] Two independent native builds with byte-identity checks; Windows verified locally, Linux/Windows gates configured in CI.
+- [x] Two fresh native builds on the same machine with byte-identity checks; Windows verified locally, Linux/Windows gates configured in CI.
 - [x] Run pinned Rust-to-WASM SDK and source-package tests in the release CI matrix.
 - [x] Provide routine operations and a bounded read-only calibration sampler with raw reports; [runbook and measurement limits](docs/52-network-operations.md).
 - [x] Detached release-manifest signing over every packaged file hash, with offline verification and no invented signing identity; [workflow](docs/53-key-custody-and-release-authority.md).
@@ -152,6 +154,7 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 - [x] Activate VRF and committee transitions, including restart, complete-roster unavailable-proof policy and catch-up.
 - [x] Activate the tested PoTB producer profile across daemon networking, operator provisioning and client verification.
 - [x] Connect signed deploy/call transactions to the WebAssembly runtime.
+- [x] Activate signed Trocto source deployment and stateful native calls under explicit genesis runtime profile 3, with OS isolation and reference/native result checks; [scope](docs/64-trocto-native-llvm.md).
 - [x] Complete the Rust SDK host adapter.
 - [x] Complete bounded source-package tooling and exact artifact reconstruction.
 - [x] Complete mixed-lane execution, capacity/fee governance and reference execution optimizations with deterministic equivalence checks; [scope](docs/29-parallel-payments-and-wasm.md#fusion-prefetch-and-result-buffer-reuse).
@@ -175,7 +178,7 @@ External audits, public-testnet calibration and key ceremonies are separate rele
 
 The reference execution optimizations above do not complete the whole roadmap.
 
-- Security-related work now has local evidence: bounded parallel strict signature verification, long deterministic and coverage-guided protocol/contract fuzz campaigns, validly signed Byzantine and churn simulations, a bounded formal model of fixed-height voting, an enumerated unbounded safety and liveness argument over arbitrary committee weight, bounded local admission control, a committed dependency/security review, anchored consensus key custody and detached release-manifest signing. What remains is work this repository cannot perform for itself: external cryptography, consensus, runtime and security audits, independent provider review of the VRF and signature backends, independent review of the unbounded argument, a release authority identity and key ceremony, and reproducibility observed on independent machines. The Trocto native development worker now compiles checked source through LLVM in a separate process. Production native execution still requires OS isolation, stateful ABI qualification, a new runtime profile, and independent review; SIMD remains a runtime-version decision.
+- Security-related work now has local evidence: bounded parallel strict signature verification, long deterministic and coverage-guided protocol/contract fuzz campaigns, validly signed Byzantine and churn simulations, a bounded formal model of fixed-height voting, an enumerated unbounded safety and liveness argument over arbitrary committee weight, bounded local admission control, a committed dependency/security review, anchored consensus key custody and detached release-manifest signing. Trocto now compiles checked source through pinned LLVM, executes stateful calls in OS-isolated workers, compares complete native results with reference semantics and activates through explicit genesis runtime profile 3. What remains is work this repository cannot perform for itself: external cryptography, consensus, compiler/runtime and security audits, independent provider review of the VRF and signature backends, independent review of the unbounded argument, a release authority identity and key ceremony, and reproducibility observed on independent machines. Aggregate ownership/borrowing and SIMD require separate language/runtime-version decisions.
 - Platform and release evidence remains partly external to the local Windows checks. Linux suite execution and Linux two-build reproducibility are now observed on hosted runners; cross-platform contract artifacts and reproducibility on independent machines are not. Configured CI gates do not establish observed results, and a green `Independent-run reproducibility` job that found no second run to compare against establishes nothing at all.
 - M6 reference compact propagation and bounded stage overlap are implemented: peer fetch/decode, detached execution, node-thread voting and sequential commit. Speculation covers local candidate preparation and bounded next-height fetch; execution/voting on uncommitted descendant state is outside this reference profile. [Exact behavior and bounds](docs/54-compact-blocks-and-execution-pipeline.md).
 - Routine operations and calibration tooling are implemented. Actual distributed calibration, deployment-specific production acceptance and independent-machine reproducibility remain release activities. Local micro-benchmarks now measure the per-operation cost of the cryptographic, codec, state, storage, execution and consensus paths on one machine; they do not establish end-to-end throughput, operation-latency percentiles, or any figure comparable to another host. Functional equivalence and deterministic read/thread/allocation checks remain separate evidence from either; [measurement limits](docs/56-performance-measurement.md).

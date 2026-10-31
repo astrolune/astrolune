@@ -116,7 +116,7 @@ fn unsupported_authority_types_and_binding_errors_are_refused() {
         "fn call(input: u64) -> u64 { let x = 1; let x = 2; return x; }",
         "fn call(input: u64) -> u64 { let input = 1; return input; }",
         "fn call(input: u64) -> u64 { let x: bool = 1; return x; }",
-        "fn call(input: u64) -> u64 { let mut x = 1; return x; }",
+        "fn call(input: u64) -> u64 { let mut x: f64 = 1; return x; }",
         "fn call(input: u64) -> u64 { let x = 1; x = 2; return x; }",
         "fn call(input: u64) -> u64 { return unsafe { 1 }; }",
         "fn call(input: u64) -> u64 { return input(); }",

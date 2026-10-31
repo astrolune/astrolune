@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ankerin
 // SPDX-License-Identifier: MIT
 
-//! Bounded ABI-v2 deployment and call payloads within signed envelopes.
+//! Bounded historical ABI-v2 and native Trocto ABI-v3 signed payloads.
 
 use codec::{CanonicalEncode, decoder::Decoder};
 use types::{Address, StateKey};
@@ -12,6 +12,8 @@ use crate::TransactionError;
 pub const MAX_CONTRACT_CODE: usize = 1_000_000;
 /// Maximum raw contract-local keys authorized by one call.
 pub const MAX_CONTRACT_KEYS: usize = 1024;
+/// Maximum raw UTF-8 Trocto source bytes.
+pub const MAX_TROCTO_SOURCE: usize = 65_536;
 
 /// Immutable deployment or a call with explicit local state keys.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +27,17 @@ pub enum ContractAction {
         /// Contract input, at most 64 KiB.
         input: Vec<u8>,
         /// Raw local keys; the outer envelope also leases their scoped hashes.
+        keys: Vec<Vec<u8>>,
+    },
+    /// Deploy checked Trocto source in the distinct ABI-v3 namespace.
+    DeployTrocto(Vec<u8>),
+    /// Execute native Trocto with one little-endian `u64` input.
+    CallTrocto {
+        /// Address derived at deployment.
+        address: Address,
+        /// Exactly eight little-endian bytes.
+        input: Vec<u8>,
+        /// Strictly increasing raw local keys, also leased by the envelope.
         keys: Vec<Vec<u8>>,
     },
 }
@@ -45,14 +58,23 @@ impl ContractPayload {
     /// Panics if an in-memory field or key count exceeds `u32::MAX`.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = b"ALCON002".to_vec();
+        let native = matches!(
+            self.action,
+            ContractAction::DeployTrocto(_) | ContractAction::CallTrocto { .. }
+        );
+        let mut out = if native { b"ALCON003" } else { b"ALCON002" }.to_vec();
         out.extend_from_slice(&self.public_key);
         match &self.action {
-            ContractAction::Deploy(code) => {
+            ContractAction::Deploy(code) | ContractAction::DeployTrocto(code) => {
                 out.push(0);
                 encode_bytes(code, &mut out);
             }
             ContractAction::Call {
+                address,
+                input,
+                keys,
+            }
+            | ContractAction::CallTrocto {
                 address,
                 input,
                 keys,
@@ -87,17 +109,31 @@ impl ContractPayload {
             return Err(DecodeError::LimitExceeded);
         }
         let mut dec = Decoder::new(bytes);
-        if dec.read_exact(8)? != b"ALCON002" {
-            return Err(DecodeError::NonCanonical);
-        }
+        let native = match dec.read_exact(8)? {
+            b"ALCON002" => false,
+            b"ALCON003" => true,
+            _ => return Err(DecodeError::NonCanonical),
+        };
         let public_key = dec.read_fixed()?;
         let action = match dec.read_u8()? {
             0 => {
-                let code = decode_bytes(&mut dec, MAX_CONTRACT_CODE)?;
+                let code = decode_bytes(
+                    &mut dec,
+                    if native {
+                        MAX_TROCTO_SOURCE
+                    } else {
+                        MAX_CONTRACT_CODE
+                    },
+                )?;
                 if code.is_empty() {
                     return Err(DecodeError::NonCanonical);
                 }
-                ContractAction::Deploy(code.to_vec())
+                if native {
+                    std::str::from_utf8(code).map_err(|_| DecodeError::NonCanonical)?;
+                    ContractAction::DeployTrocto(code.to_vec())
+                } else {
+                    ContractAction::Deploy(code.to_vec())
+                }
             }
             1 => {
                 let address = Address(dec.read_fixed()?);
@@ -105,6 +141,9 @@ impl ContractPayload {
                     return Err(DecodeError::NonCanonical);
                 }
                 let input = decode_bytes(&mut dec, 65_536)?.to_vec();
+                if native && input.len() != 8 {
+                    return Err(DecodeError::NonCanonical);
+                }
                 let count = dec.read_u32()? as usize;
                 if count > MAX_CONTRACT_KEYS || count > dec.remaining() / 5 {
                     return Err(DecodeError::LimitExceeded);
@@ -117,10 +156,18 @@ impl ContractPayload {
                     }
                     keys.push(key);
                 }
-                ContractAction::Call {
-                    address,
-                    input,
-                    keys,
+                if native {
+                    ContractAction::CallTrocto {
+                        address,
+                        input,
+                        keys,
+                    }
+                } else {
+                    ContractAction::Call {
+                        address,
+                        input,
+                        keys,
+                    }
                 }
             }
             _ => return Err(DecodeError::NonCanonical),
@@ -153,6 +200,32 @@ pub fn contract_state_key(address: Address, local: &[u8]) -> StateKey {
     let mut key = b"astrolune/contract/state/v2/".to_vec();
     key.extend_from_slice(address.as_bytes());
     key.extend_from_slice(types::hash::domain_hash(b"astrolune.contract.key.v2", local).as_bytes());
+    StateKey(key)
+}
+
+/// Domain-separated native Trocto deployment address.
+#[must_use]
+pub fn trocto_contract_address(chain_id: u32, sender: Address, nonce: u64) -> Address {
+    let mut bytes = chain_id.to_le_bytes().to_vec();
+    bytes.extend_from_slice(sender.as_bytes());
+    bytes.extend_from_slice(&nonce.to_le_bytes());
+    Address(types::hash::domain_hash(b"astrolune.contract.address.v3", &bytes).0)
+}
+
+/// Immutable raw-source key in the native Trocto namespace.
+#[must_use]
+pub fn trocto_contract_code_key(address: Address) -> StateKey {
+    let mut key = b"astrolune/contract/code/v3/".to_vec();
+    key.extend_from_slice(address.as_bytes());
+    StateKey(key)
+}
+
+/// Scopes native Trocto state without sharing historical contract keys.
+#[must_use]
+pub fn trocto_contract_state_key(address: Address, local: &[u8]) -> StateKey {
+    let mut key = b"astrolune/contract/state/v3/".to_vec();
+    key.extend_from_slice(address.as_bytes());
+    key.extend_from_slice(types::hash::domain_hash(b"astrolune.contract.key.v3", local).as_bytes());
     StateKey(key)
 }
 

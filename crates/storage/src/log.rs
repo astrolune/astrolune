@@ -12,11 +12,12 @@ use crate::{
         RetentionRecord, RetentionState,
     },
     snapshot,
+    writer_lock::WriterLock,
 };
 use state::InMemoryState;
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions, TryLockError},
+    fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
@@ -52,7 +53,7 @@ struct Location {
 pub struct AppendOnlyStorage {
     path: PathBuf,
     file: File,
-    _lock: File,
+    _lock: WriterLock,
     end: u64,
     tip: Hash256,
     state: InMemoryState,
@@ -98,17 +99,7 @@ impl AppendOnlyStorage {
         ] {
             reject_symlink(candidate)?;
         }
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(sidecar(&path, ".lock"))
-            .map_err(|_| StorageError::Io)?;
-        lock.try_lock().map_err(|e| match e {
-            TryLockError::WouldBlock => StorageError::Locked,
-            TryLockError::Error(_) => StorageError::Io,
-        })?;
+        let lock = WriterLock::acquire(&sidecar(&path, ".lock"))?;
         // Resolve an interrupted compaction before the header or head is trusted.
         finish_compaction(&path)?;
         let retention = read_retention(&path)?;

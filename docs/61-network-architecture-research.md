@@ -12,8 +12,10 @@ to Rust code or network rules. Original candidates are described in
 [document 62](62-original-architecture-proposals.md).
 
 Subsequent implementation: the state-backend portion of P1 is described in
-[document 63](63-incremental-state.md). The observations and measurements below
-remain the research baseline at the revision stated above.
+[document 63](63-incremental-state.md), and precise code access plus readiness
+dispatch are described in [document 64](64-trocto-native-llvm.md). The research
+tables and measurements below retain the revision stated above; the separate
+implementation update distinguishes them from current execution semantics.
 
 ## Implications for the project
 
@@ -49,7 +51,11 @@ execution path.
 | Cached state commitments | Reuses unchanged subtrees; insertion and deletion affect sorted-leaf positions | Preserve existing roots and proof formats, with explicit fallback |
 | Separate propagation and execution metrics | Identifies the actual bottleneck; bandwidth alone does not establish executed throughput | Measure successful finalized user operations and every completion stage |
 
-## What the code actually implements
+## Implementation at the research revision
+
+This table records the October 14 baseline. Its write-only scheduling and
+between-wave barriers have since been replaced for canonical code access and
+mixed dependency plans, as described in the following update.
 
 | Area | Verified implementation | Implication |
 |---|---|---|
@@ -64,10 +70,32 @@ execution path.
 | Limits | Producer defaults to 256 tx/block; reference state is limited to 1,048,576 entries and a 64 MiB snapshot | Larger throughput/state experiments require coordinated limit changes, not a single constant edit |
 
 Document 56 contains historical observations, some predating the AOT cache.
-Current code and the fresh run take precedence. A `prefetch` method does not
+The run below records this research revision; current behavior is described in
+the implementation update. A `prefetch` method does not
 establish a performance benefit: it is a no-op in `InMemoryState`.
 
-## Fresh local baseline
+## Subsequent execution implementation
+
+The October 31 implementation retains the transaction order fixed by consensus
+and changes when independent work can start:
+
+| Area | Current implementation | Compatibility and limit |
+|---|---|---|
+| Scheduling | Canonical ABI-v2 and Trocto ABI-v3 calls read only their exact immutable code key; other declared keys and deployments remain writes | Shared code with disjoint writable state can run together; shared writable state and sender dependencies remain ordered |
+| Mixed execution | A readiness DAG releases jobs when their own predecessors complete, without a whole-wave barrier; workers read frozen declared-key overlays | RAW/WAR/WAW, sender order, canonical output positions and atomic publication are retained; deterministic failures replay serially |
+| Worker lifetime | One bounded scoped pool is reused within a block attempt; linear dependency paths can share a private session | Single-wide-wave batching and entirely serial fusion remain; threads and speculative state do not persist across blocks |
+| Native contracts | Explicit committed runtime profile 3 executes checked Trocto source through isolated LLVM workers | Historical ABI-v2 bytes and domains retain their interpretation; native infrastructure failures remain local `NativeUnavailable` errors without a fallback backend |
+
+The [readiness comparison](assets/trocto-readiness-2026-10-31/comparison.json)
+switches only wave/ready dispatch in an isolated source copy with identical
+fixtures. For 44 payments in a 16-wave dependency shape, four-worker median
+changed from 1.4465 ms to 1.1710 ms (1.235x), while two workers regressed from
+1.4423 ms to 1.6334 ms. Unchanged controls fluctuated 5–15% under background
+load. These seven-round local samples establish neither a general speedup nor
+network TPS. The raw before/after logs, source artifacts and reproduction
+metadata remain linked from that comparison.
+
+## Local research baseline (October 14)
 
 [Full log](assets/architecture-research-2026-10-14/baseline.log) and
 [machine-readable results with environment metadata](assets/architecture-research-2026-10-14/baseline.json).
@@ -93,7 +121,9 @@ of batch means.
 The execution benchmark's `shared_code` fixture shares the code key **and writes
 to the same contract key `k`**. Its 16 singleton waves cannot be attributed solely
 to overly conservative code access. Evaluating a read/write optimization requires
-a new fixture: one code key, distinct senders, and disjoint state keys.
+a separate fixture: one code key, distinct senders, and disjoint state keys.
+That fixture and its later [scheduler comparison](assets/trocto-architecture-2026-10-31/comparison.json)
+are now available; they do not change the October 14 baseline below.
 
 This run measures neither p99, durable commit, nor network TPS. The log's `ops/s`
 counts complete benchmark operations, each of which may contain many transactions.
@@ -111,7 +141,10 @@ rustup run 1.99.0 cargo bench --locked -p state -p execution
 
 ## Development priorities
 
-These are selected directions for the next stage, not optimizations already implemented.
+These are the priorities selected at the research revision, with their original
+acceptance criteria. Precise code access, readiness dispatch and the state-backend
+portion of P1 subsequently landed. Cross-block worker lifetime, an E2E benchmark
+environment and distributed performance qualification remain separate work.
 
 | Priority | Change | Compatibility and acceptance criteria |
 |---|---|---|
@@ -126,8 +159,10 @@ These are selected directions for the next stage, not optimizations already impl
 
 Full signed read/write lists change the wire format and lease validation, so they
 require a separate versioned proposal. Deriving a read-only code key from verified
-Call semantics may be possible without changing the format. Even then,
-differential tests must come first, including deploy→call and call→later conflict.
+Call semantics is now implemented without changing historical transaction bytes.
+Differential tests cover deploy→call, call→later conflicts, complete outputs,
+resource charges, first-error order and rollback. Broader signed read/write modes
+still require their own versioned proposal and qualification.
 
 Global state partitioning, a new ownership model, changes to finality rules,
 and delayed state roots require separate versioned designs and qualification.
@@ -180,7 +215,7 @@ computation, transmission, or durable commit costs.
 
 ## Outcome of this stage
 
-The architecture assessment and local baseline are complete. Development
-priorities and two specific research designs have been selected. Further
-implementation, novelty validation, external audit, and distributed qualification
-remain outstanding.
+The architecture assessment and its local baseline are complete. The original
+priorities and research designs remain recorded above. Later state and execution
+implementation is distinguished from that baseline; novelty validation, external
+audit, further development and distributed qualification remain outstanding.

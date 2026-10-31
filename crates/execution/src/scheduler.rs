@@ -5,7 +5,7 @@
 
 use state::{AccessMode, StateLease};
 use std::collections::BTreeMap;
-use transaction::{ContractAction, ContractPayload, contract_code_key};
+use transaction::{ContractAction, ContractPayload, contract_code_key, trocto_contract_code_key};
 use types::{StateKey, Transaction, TransactionLane};
 
 use crate::wave::{ExecutionPlan, ExecutionWave};
@@ -55,6 +55,56 @@ impl ExecutionScheduler for SerialScheduler {
 /// balance effects, even when their declared keys differ.
 pub struct GreedyScheduler;
 
+impl GreedyScheduler {
+    /// Exact block-order conflict predecessors for readiness-driven execution.
+    ///
+    /// Independent transactions need not wait for unrelated transactions in an
+    /// earlier wave. Each predecessor index is smaller than its transaction,
+    /// and each list is sorted and unique. Code readers depend on the last
+    /// writer; code writers depend on every reader since the last writer.
+    #[must_use]
+    pub fn dependencies(&self, transactions: &[Transaction]) -> Vec<Vec<usize>> {
+        #[derive(Default)]
+        struct History {
+            writer: Option<usize>,
+            readers: Vec<usize>,
+        }
+        let mut histories: BTreeMap<&StateKey, History> = BTreeMap::new();
+        let mut senders = BTreeMap::new();
+        let mut dependencies = Vec::with_capacity(transactions.len());
+        for (index, tx) in transactions.iter().enumerate() {
+            let read_only = read_only_code(tx);
+            let mut previous = Vec::new();
+            for key in &tx.access_list {
+                if let Some(history) = histories.get(key) {
+                    previous.extend(history.writer);
+                    if access_mode(key, read_only.as_ref()) == AccessMode::Write {
+                        previous.extend(&history.readers);
+                    }
+                }
+            }
+            previous.extend(senders.insert(tx.sender, index));
+            previous.sort_unstable();
+            previous.dedup();
+            dependencies.push(previous);
+            // Update after collection so repeated declarations never introduce
+            // self edges, even in an invalid in-memory transaction.
+            for key in &tx.access_list {
+                let history = histories.entry(key).or_default();
+                if access_mode(key, read_only.as_ref()) == AccessMode::Read {
+                    if history.readers.last() != Some(&index) {
+                        history.readers.push(index);
+                    }
+                } else {
+                    history.writer = Some(index);
+                    history.readers.clear();
+                }
+            }
+        }
+        dependencies
+    }
+}
+
 #[derive(Clone, Copy)]
 struct KeyHistory {
     writer: Option<usize>,
@@ -65,14 +115,15 @@ fn read_only_code(transaction: &Transaction) -> Option<StateKey> {
     if transaction.lane != TransactionLane::Contracts
         // The canonical header is eight bytes plus a 32-byte public key. Avoid
         // copying a deployment's potentially large code merely to classify it.
-        || !transaction.payload.starts_with(b"ALCON002")
+        || !(transaction.payload.starts_with(b"ALCON002") || transaction.payload.starts_with(b"ALCON003"))
         || transaction.payload.get(40) != Some(&1)
     {
         return None;
     }
     match ContractPayload::decode(&transaction.payload).ok()?.action {
         ContractAction::Call { address, .. } => Some(contract_code_key(address)),
-        ContractAction::Deploy(_) => None,
+        ContractAction::CallTrocto { address, .. } => Some(trocto_contract_code_key(address)),
+        ContractAction::Deploy(_) | ContractAction::DeployTrocto(_) => None,
     }
 }
 

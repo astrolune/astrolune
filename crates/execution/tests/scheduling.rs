@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use execution::{ExecutionScheduler, GreedyScheduler, SerialScheduler};
 use state::{AccessMode, AccessRequest, StateLease};
-use transaction::{ContractAction, ContractPayload, contract_code_key};
+use transaction::{ContractAction, ContractPayload, contract_code_key, trocto_contract_code_key};
 use types::{Address, Resources, StateKey, Transaction};
 
 fn transaction(sender: u8, keys: &[u8]) -> Transaction {
@@ -124,6 +124,65 @@ fn a_writer_waits_for_the_highest_prior_reader_wave() {
             .map(|wave| &wave.transaction_indexes)
             .collect::<Vec<_>>(),
         vec![&vec![0, 2], &vec![1], &vec![3], &vec![4]]
+    );
+}
+
+#[test]
+fn native_calls_share_only_the_native_immutable_code_key() {
+    let target = Address([9; 32]);
+    let native = trocto_contract_code_key(target);
+    let historical = contract_code_key(target);
+    let calls: Vec<_> = [1, 2]
+        .into_iter()
+        .map(|sender| {
+            let mut tx = transaction(sender, &[sender]);
+            tx.lane = types::TransactionLane::Contracts;
+            tx.access_list.push(native.clone());
+            tx.payload = ContractPayload {
+                public_key: [sender; 32],
+                action: ContractAction::CallTrocto {
+                    address: target,
+                    input: vec![0; 8],
+                    keys: vec![],
+                },
+            }
+            .to_bytes();
+            tx
+        })
+        .collect();
+    assert_eq!(
+        GreedyScheduler.plan(&calls).waves[0].transaction_indexes,
+        vec![0, 1]
+    );
+    assert!(
+        GreedyScheduler
+            .lease(&calls[0])
+            .covers(&native, AccessMode::Read)
+    );
+    let mut foreign = calls[0].clone();
+    foreign.access_list.push(historical.clone());
+    assert!(
+        GreedyScheduler
+            .lease(&foreign)
+            .covers(&historical, AccessMode::Write)
+    );
+    let mut malformed = calls[0].clone();
+    malformed.payload.push(0);
+    assert!(
+        GreedyScheduler
+            .lease(&malformed)
+            .covers(&native, AccessMode::Write)
+    );
+    let mut deploy = calls[0].clone();
+    deploy.payload = ContractPayload {
+        public_key: [1; 32],
+        action: ContractAction::DeployTrocto(b"fn call(input: u64) -> u64 { input }".to_vec()),
+    }
+    .to_bytes();
+    assert!(
+        GreedyScheduler
+            .lease(&deploy)
+            .covers(&native, AccessMode::Write)
     );
 }
 
@@ -360,6 +419,67 @@ fn generated_plans_are_complete_conflict_free_and_match_serial_writes() {
                     .conflicts_with(&GreedyScheduler.lease(&transactions[later]))
                 {
                     assert!(positions[earlier] < positions[later]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn readiness_dependencies_preserve_every_conflict_without_whole_wave_edges() {
+    let mut slow = transaction(1, &[1]);
+    slow.access_list.push(contract_code_key(Address([7; 32])));
+    let fast = transaction(2, &[2]);
+    let dependent = transaction(3, &[2]);
+    assert_eq!(
+        GreedyScheduler.dependencies(&[slow, fast, dependent]),
+        vec![vec![], vec![], vec![1]]
+    );
+    for seed in 0u64..256 {
+        let mut state = seed;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 32) as usize
+        };
+        let transactions: Vec<_> = (0..32)
+            .map(|_| {
+                let sender = u8::try_from(next() % 8).unwrap();
+                let key = u8::try_from(next() % 8).unwrap();
+                if next() % 3 == 0 {
+                    contract_call(sender, key, &[key]).0
+                } else {
+                    transaction(sender, &[key])
+                }
+            })
+            .collect();
+        let dependencies = GreedyScheduler.dependencies(&transactions);
+        let mut ancestry = vec![vec![false; transactions.len()]; transactions.len()];
+        for (index, previous) in dependencies.iter().enumerate() {
+            assert!(previous.windows(2).all(|pair| pair[0] < pair[1]));
+            for &predecessor in previous {
+                assert!(predecessor < index);
+                ancestry[index][predecessor] = true;
+                let (prior, current) = ancestry.split_at_mut(index);
+                for (known, inherited) in current[0]
+                    .iter_mut()
+                    .zip(&prior[predecessor])
+                    .take(predecessor)
+                {
+                    *known |= inherited;
+                }
+            }
+            for earlier in 0..index {
+                if transactions[earlier].sender == transactions[index].sender
+                    || GreedyScheduler
+                        .lease(&transactions[earlier])
+                        .conflicts_with(&GreedyScheduler.lease(&transactions[index]))
+                {
+                    assert!(
+                        ancestry[index][earlier],
+                        "seed {seed}, {earlier} -> {index}"
+                    );
                 }
             }
         }
